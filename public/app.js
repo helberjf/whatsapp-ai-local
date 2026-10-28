@@ -1,0 +1,265 @@
+(() => {
+  'use strict';
+  const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
+  let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
+  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map();
+  let historyQueue=Promise.resolve();
+  const statuses={open:'Em aberto',pending:'Pendente',closed:'Concluído'};
+  const time=value=>value?new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';
+  const dateTime=value=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
+  const initials=name=>String(name || '?').split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase();
+  const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
+  function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
+  async function api(route,method='GET',input) {
+    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(30000)});
+    const result=await response.json();if(!response.ok) throw new Error(result.error || 'Não foi possível completar a operação.');return result;
+  }
+  function notice(message,success=false) {$('notice').textContent=message;$('notice').classList.toggle('success',success);$('notice').hidden=!message;}
+  function showConnection(value) {
+    connection=value;const online=value.state==='connected';
+    $('connection-short').textContent=online?'Conectado':value.state==='connecting'?'Conectando':'Desconectado';$('connection-menu').classList.toggle('connected',online);
+    $('connection-heading').textContent=online?'WhatsApp conectado':'Conexão WhatsApp';
+    $('connected-phone').textContent=online?phoneLabel(value.phone):'Nenhuma conta conectada';
+    $('panel-connection-state').textContent=online?'Conectado':value.state==='connecting'?'Aguardando leitura do QR Code':value.reachable?'Pronto para conectar':'Conector indisponível';
+    $('panel-connection-phone').textContent=$('connected-phone').textContent;
+    $('sync-label').textContent=online?'Atualização automática':'Aguardando conexão';
+    $('connection-badge').textContent=online?'Conectado':value.state==='connecting'?'Aguardando leitura':value.reachable?'Pronto para conectar':'Conector indisponível';
+    $('connection-badge').classList.toggle('connected',online);
+    $('connection-title').textContent=online?'Seu WhatsApp está conectado':value.reachable?'Conecte sua conta':'Inicie o conector local';
+    $('connection-description').textContent=online?`Conta ${value.phone?'+'+value.phone:'conectada'} · sessão salva neste computador.`:value.reachable?'Abra o QR Code aqui e faça a leitura pelo celular.':'Abra Iniciar WhatsApp.cmd e aguarde o Docker ficar pronto.';
+    $('connect').hidden=online;$('connect').disabled=!value.reachable || qrBusy;$('disconnect').hidden=!online;
+    $('new-chat').disabled=!online;$('send').disabled=!online || sending;
+    if(online && $('qr-dialog').open) {$('qr-dialog').close();notice('WhatsApp conectado. Suas conversas aparecerão conforme forem sincronizadas.',true);}
+  }
+  function renderChats() {
+    const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
+    const filtered=chats.filter(chat=>(!$('unread-only').checked || chat.unread>0) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
+    const unreadCount=chats.filter(chat=>chat.unread>0).length,pendingCount=chats.filter(chat=>chat.status==='pending').length;
+    $('metric-total').textContent=chats.length;$('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=chats.filter(chat=>chat.status==='closed').length;$('chat-count').textContent=filtered.length;
+    $('filter-total-count').textContent=chats.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
+    $('filter-all').classList.toggle('active',!status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
+    $('filter-all').setAttribute('aria-pressed',String(!status && !$('unread-only').checked));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
+    const fragment=document.createDocumentFragment();
+    for(const chat of filtered) {
+      const button=el('button','chat-item'+(selected?.jid===chat.jid?' selected':''));button.type='button';button.setAttribute('aria-pressed',String(selected?.jid===chat.jid));
+      button.append(el('span','avatar',initials(chat.name)));
+      const copy=el('span','chat-text'),title=el('span','chat-title');title.append(el('strong','',chat.name));
+      if(['pending','closed'].includes(chat.status)) title.append(el('span','chat-status '+chat.status,statuses[chat.status]));
+      title.append(el('time','',time(chat.lastMessage?.timestamp)));
+      const preview=el('span','chat-preview');preview.append(el('p','',chat.lastMessage?.text || (chat.lastMessage?.type && chat.lastMessage.type!=='text'?'Anexo recebido':statuses[chat.status])));
+      if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
+      copy.append(title,preview);button.append(copy);button.addEventListener('click',()=>selectChat(chat));fragment.append(button);
+    }
+    if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
+    $('chat-list').replaceChildren(fragment);
+  }
+  function mergeMessages(records) {const all=new Map(messages.map(item=>[item.id,item]));let changed=false;for(const message of records) {if(JSON.stringify(all.get(message.id))!==JSON.stringify(message)) changed=true;all.set(message.id,message);}messages=[...all.values()].sort((a,b)=>a.timestamp-b.timestamp);return changed;}
+  function renderMessages(keepScroll=false,forceBottom=false) {
+    const container=$('messages'),nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<90,oldHeight=container.scrollHeight,oldTop=container.scrollTop;
+    const fragment=document.createDocumentFragment();
+    for(const message of messages) {
+      const row=el('article','message'+(message.fromMe?' mine':''));
+      if(message.type!=='text') {
+        const cached=mediaUrls.get(selected.jid+'|'+message.id);
+        if(cached && ['image','sticker','audio','video'].includes(message.type)) {
+          const media=el(message.type==='audio'?'audio':message.type==='video'?'video':'img');media.src=cached.url;
+          if(media.tagName==='IMG') media.alt=message.text || 'Imagem da conversa';else {media.controls=true;media.preload='none';}row.append(media);
+        } else {
+          const button=el('button','text-button',message.type==='document'?'↓ Baixar '+(message.fileName || 'documento'):'↗ Abrir '+({image:'imagem',audio:'áudio',video:'vídeo',sticker:'figurinha'}[message.type] || 'anexo'));button.type='button';
+          const messageJid=selected.jid;button.addEventListener('click',()=>loadMedia(message,messageJid,button));row.append(button);
+        }
+      }
+      if(message.text) row.append(el('p','',message.text));
+      const ack=!message.fromMe?'': ['READ','PLAYED',4,5].includes(message.status)?' · Lida':['DELIVERY_ACK','DELIVERED',3].includes(message.status)?' · Entregue':['ERROR','FAILED',0].includes(message.status)?' · Falha':['PENDING',1].includes(message.status)?' · Enviando':' · Enviada';
+      const meta=el('time','message-meta',time(message.timestamp)+ack);if(message.timestamp) meta.title=dateTime(message.timestamp);row.append(meta);fragment.append(row);
+    }
+    if(!messages.length) fragment.append(el('p','muted','Ainda não há mensagens sincronizadas nesta conversa.'));
+    container.replaceChildren(fragment);$('older').hidden=page>=pages;$('history-info').textContent=messages.length?`${messages.length} mensagens carregadas`:'';
+    if(keepScroll) container.scrollTop=oldTop+container.scrollHeight-oldHeight;
+    else if(nearBottom || forceBottom) container.scrollTop=container.scrollHeight;
+  }
+  async function loadMedia(message,jid,button) {
+    button.disabled=true;button.textContent='Carregando…';
+    try {
+      const result=await api(`/media?jid=${encodeURIComponent(jid)}&id=${encodeURIComponent(message.id)}`);
+      const raw=result.base64.replace(/^data:[^,]*,/,'');if(!/^[A-Za-z0-9+/=\r\n]+$/.test(raw)) throw new Error('Mídia retornada em formato inválido.');
+      const bytes=Uint8Array.from(atob(raw),char=>char.charCodeAt(0)),url=URL.createObjectURL(new Blob([bytes],{type:result.mimeType}));
+      const key=jid+'|'+message.id;if(mediaUrls.has(key)) URL.revokeObjectURL(mediaUrls.get(key).url);mediaUrls.set(key,{url});
+      if(['image','audio','video','sticker'].includes(message.type)) {if(selected?.jid===jid) renderMessages();}
+      else {const link=el('a');link.href=url;link.download=result.fileName || message.fileName || 'anexo';document.body.append(link);link.click();link.remove();button.disabled=false;button.textContent='↓ Baixar novamente';}
+    } catch(error) {button.disabled=false;button.textContent='Tentar abrir anexo';notice(error.message);}
+  }
+  function loadMessages(older=false) {
+    const jid=selected?.jid,version=selection;if(!jid) return Promise.resolve();
+    // A fila pertence à seleção atual: respostas antigas não podem desfazer o cursor do polling.
+    const operation=historyQueue.then(()=>{if(selected?.jid!==jid || selection!==version) return;return fetchMessagesPage(jid,version,older);});
+    historyQueue=operation.catch(()=>{});return operation;
+  }
+  async function fetchMessagesPage(jid,version,older) {
+    const nextPage=older?page+1:1;
+    const result=await api(`/messages?jid=${encodeURIComponent(jid)}&page=${nextPage}`);
+    if(selected?.jid!==jid || version!==selection) return;
+    // Mais de uma página pode chegar enquanto a aba está oculta. Retome a paginação antes da lacuna.
+    const knownIds=new Set(messages.map(message=>message.id));
+    if(!older && knownIds.size && result.messages.length && !result.messages.some(message=>knownIds.has(message.id))) page=1;
+    const changed=mergeMessages(result.messages);if(older) page=result.page;pages=result.pages;
+    if(changed || !historyLoaded || older) {renderMessages(older,!historyLoaded);historyLoaded=true;}
+    const unread=result.messages.filter(message=>!message.fromMe && message.key?.fromMe===false && message.key.remoteJid===jid && !readIds.has(jid+'|'+message.id));
+    if(unread.length && document.visibilityState==='visible') {
+      await api('/read','POST',{jid,keys:unread.map(message=>message.key)});
+      if(selected?.jid===jid) {unread.forEach(message=>readIds.add(jid+'|'+message.id));const chat=chats.find(item=>item.jid===jid);if(chat) chat.unread=0;renderChats();}
+    }
+  }
+  async function loadContact(jid=selected?.jid) {
+    if(!jid) return;const version=selection,detail=await api('/contact?jid='+encodeURIComponent(jid));if(selected?.jid!==jid || version!==selection) return;
+    $('contact-status').value=detail.status;$('contact-labels').value=detail.labels.join(', ');
+    const fragment=document.createDocumentFragment();for(const note of detail.notes) {const row=el('article','note');row.append(el('p','',note.text),el('time','',dateTime(note.at)));fragment.append(row);}$('notes').replaceChildren(fragment);
+  }
+  async function selectChat(chat) {
+    if(sending) return;
+    if(selected) drafts.set(selected.jid,$('message-text').value);
+    selected=chat;selection++;editRevision++;historyQueue=Promise.resolve();historyLoaded=false;messages=[];page=1;pages=1;attachment=null;pendingSend=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;$('send-status').textContent='';
+    $('conversation-empty').hidden=true;$('conversation-content').hidden=false;$('contact-empty').hidden=true;$('contact-details').hidden=false;
+    $('app-shell').classList.toggle('has-chat',true);
+    $('contact-name').textContent=chat.name;$('contact-phone').textContent=chat.jid.endsWith('@lid')?'Identificador privado do WhatsApp':phoneLabel(chat.jid.split('@')[0]);$('contact-avatar').textContent=initials(chat.name);$('message-text').value=drafts.get(chat.jid) || '';
+    $('details-contact-name').textContent=chat.name;$('details-contact-phone').textContent=$('contact-phone').textContent;renderTemplateShortcuts();
+    renderChats();renderMessages();$('messages').replaceChildren(el('p','muted','Carregando histórico…'));
+    $('contact-status').value=chat.status || 'open';$('contact-labels').value=(chat.labels || []).join(', ');$('notes').replaceChildren();
+    try {await Promise.all([loadMessages(),loadContact(chat.jid)]);}catch(error) {notice(error.message);}
+  }
+  function renderTemplates() {
+    $('quick-template').replaceChildren(el('option','','Escolher uma resposta…'));$('quick-template').firstElementChild.value='';
+    templates.forEach((template,index)=>{const option=el('option','',template.name);option.value=String(index);$('quick-template').append(option);});
+    renderTemplateShortcuts();
+  }
+  function insertTemplate(template) {
+    if(!selected || !template) return;
+    $('message-text').value=[$('message-text').value,template.body].filter(Boolean).join('\n');editRevision++;pendingSend=null;$('message-text').focus();
+  }
+  function renderTemplateShortcuts() {
+    $('template-count').textContent=templates.length;
+    const fragment=document.createDocumentFragment();
+    for(const template of templates) {
+      const button=el('button','template-shortcut');button.type='button';button.disabled=!selected;button.title=selected?'Inserir no rascunho':'Selecione uma conversa para inserir esta resposta';
+      button.append(el('strong','',template.name),el('small','',template.body));button.addEventListener('click',()=>insertTemplate(template));fragment.append(button);
+    }
+    if(!templates.length) fragment.append(el('div','template-empty','Suas mensagens mais usadas podem ficar aqui. Adicione uma resposta para começar.'));
+    $('template-shortcuts').replaceChildren(fragment);
+  }
+  async function sync() {
+    if(syncing || document.visibilityState==='hidden') return;syncing=true;
+    try {
+      const value=await api('/connection');showConnection(value);
+      if(value.state==='connected') {
+        chats=await api('/chats');renderChats();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
+      } else if(!selected) renderChats();
+    } catch(error) {notice(error.message);}finally {syncing=false;}
+  }
+  async function refreshQr() {
+    if(qrBusy || !$('qr-dialog').open) return;qrBusy=true;$('renew-qr').disabled=true;$('connect').disabled=true;
+    clearTimeout(qrTimer);
+    try {
+      const result=await api('/connect','POST',{});
+      if(!$('qr-dialog').open) return;
+      if(result.state==='connected') {showConnection(result);await sync();return;}
+      if(result.base64) {$('qr-image').src=result.base64;$('qr-image').hidden=false;$('qr-status').textContent='Aponte a câmera do celular para este QR Code.';}
+      else {$('qr-image').hidden=true;$('qr-image').removeAttribute('src');$('qr-status').textContent='Preparando QR Code. Aguarde alguns segundos…';}
+      qrTimer=setTimeout(refreshQr,result.base64?20000:3000);
+    } catch(error) {$('qr-image').hidden=true;$('qr-status').textContent=error.message;qrTimer=setTimeout(refreshQr,8000);}
+    finally {qrBusy=false;$('renew-qr').disabled=false;$('connect').disabled=!connection?.reachable;}
+  }
+  function openQr() {if($('connection-dialog').open) $('connection-dialog').close();if(!$('qr-dialog').open) $('qr-dialog').showModal();$('qr-status').textContent='Gerando seu QR Code…';refreshQr();}
+  $('connection-menu').addEventListener('click',()=>$('connection-dialog').showModal());
+  $('connect').addEventListener('click',openQr);$('renew-qr').addEventListener('click',refreshQr);
+  $('qr-dialog').addEventListener('close',()=>{clearTimeout(qrTimer);$('qr-image').hidden=true;$('qr-image').removeAttribute('src');});
+  document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>$(button.dataset.close).close()));
+  $('refresh').addEventListener('click',()=>{notice('');sync();});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible') sync();});
+  $('disconnect').addEventListener('click',async()=>{
+    if(!confirm('Desconectar este computador do WhatsApp? Para usar novamente será necessário ler outro QR Code. O histórico salvo será mantido.')) return;
+    $('disconnect').disabled=true;
+    try {await api('/disconnect','POST',{});await sync();notice('Conta desconectada. A sessão foi encerrada no conector.');}catch(error) {notice(error.message);}finally {$('disconnect').disabled=false;}
+  });
+  for(const id of ['search','unread-only','status-filter']) $(id).addEventListener(id==='search'?'input':'change',renderChats);
+  $('older').addEventListener('click',async()=>{$('older').disabled=true;try {await loadMessages(true);}catch(error) {notice(error.message);}finally {$('older').disabled=false;}});
+  $('quick-template').addEventListener('change',()=>{if($('quick-template').value==='') return;insertTemplate(templates[Number($('quick-template').value)]);$('quick-template').value='';});
+  $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;});
+  $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && (event.ctrlKey || event.metaKey)) {event.preventDefault();$('composer').requestSubmit();}});
+  $('attachment').addEventListener('change',()=>{
+    const file=$('attachment').files[0];editRevision++;pendingSend=null;
+    if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
+    attachment=file || null;$('attachment-name').textContent=file?file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file;$('message-text').required=!attachment;
+  });
+  $('remove-attachment').addEventListener('click',()=>{editRevision++;attachment=null;pendingSend=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;});
+  const fileBase64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));reader.readAsDataURL(file);});
+  $('composer').addEventListener('submit',async event=>{
+    event.preventDefault();if(!selected || sending || connection?.state!=='connected') return;
+    const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,submittedRevision=editRevision;if(!file && !text) return;
+    sending=true;$('send').disabled=true;$('send-status').textContent='Enviando…';
+    try {
+      let submitted=pendingSend;
+      if(!submitted) {
+        const requestId=crypto.randomUUID();
+        submitted=file?{route:'/send-media',input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType:file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':'document',requestId}}:{route:'/send',input:{jid,text,requestId}};
+        if(editRevision===submittedRevision) pendingSend=submitted;
+      }
+      await api(submitted.route,'POST',submitted.input);if(pendingSend===submitted) pendingSend=null;
+      if(editRevision===submittedRevision) {$('message-text').value='';drafts.delete(jid);attachment=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;}
+      $('send-status').textContent='Mensagem aceita pelo conector. O status será atualizado no histórico.';
+      await loadMessages();
+    } catch(error) {$('send-status').textContent=error.message+' Confira a conversa antes de tentar outro envio.';}
+    finally {sending=false;$('send').disabled=connection?.state!=='connected';}
+  });
+  $('new-chat').addEventListener('click',()=>{$('new-error').textContent='';$('new-dialog').showModal();});
+  $('new-form').addEventListener('submit',async event=>{
+    event.preventDefault();const button=event.submitter;button.disabled=true;
+    try {const chat=await api('/resolve-phone','POST',{phone:$('new-phone').value});$('new-dialog').close();await selectChat({...chat,status:'open',labels:[],unread:0});}catch(error) {$('new-error').textContent=error.message;}finally {button.disabled=false;}
+  });
+  function toggleContact(value) {detailsOpen=value;$('app-shell').classList.toggle('details-open',detailsOpen);$('show-contact').setAttribute('aria-expanded',String(detailsOpen || matchMedia('(min-width:1001px)').matches));}
+  function showPanel(section) {
+    for(const name of ['attendance','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
+  }
+  const navIds=['nav-overview','nav-conversations','nav-pending','nav-closed','settings','nav-connection','nav-settings'];
+  function setNavigation(id) {for(const name of navIds) {$(name).classList.toggle('active',name===id);if(name===id) $(name).setAttribute('aria-current','page');else $(name).removeAttribute('aria-current');}}
+  function applyFilter(status='',unread=false,nav='nav-conversations') {$('search').value='';$('status-filter').value=status;$('unread-only').checked=unread;setNavigation(nav);renderChats();}
+  $('nav-overview').addEventListener('click',()=>applyFilter('',false,'nav-overview'));
+  $('nav-conversations').addEventListener('click',()=>{applyFilter();$('search').focus();});
+  $('nav-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
+  $('nav-closed').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
+  $('metric-total-button').addEventListener('click',()=>applyFilter('',false,'nav-overview'));
+  $('metric-unread-button').addEventListener('click',()=>applyFilter('',true));
+  $('metric-pending-button').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
+  $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
+  $('filter-all').addEventListener('click',()=>applyFilter());$('filter-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
+  $('toggle-filters').addEventListener('click',()=>{$('advanced-filters').hidden=!$('advanced-filters').hidden;$('toggle-filters').setAttribute('aria-expanded',String(!$('advanced-filters').hidden));});
+  for(const section of ['attendance','templates','connection']) $('tab-'+section).addEventListener('click',()=>showPanel(section));
+  $('nav-connection').addEventListener('click',()=>$('connection-dialog').showModal());
+  $('manage-connection').addEventListener('click',()=>$('connection-dialog').showModal());
+  $('nav-settings').addEventListener('click',()=>{setNavigation('nav-settings');showPanel('connection');toggleContact(true);});
+  $('refresh-top').addEventListener('click',()=>{notice('');sync();});
+  $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
+  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
+  $('contact-form').addEventListener('submit',async event=>{
+    event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
+    try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice('Atendimento salvo.',true);}catch(error) {notice(error.message);}finally {button.disabled=false;}
+  });
+  $('note-form').addEventListener('submit',async event=>{
+    event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
+    try {await api('/notes','POST',{jid,text:$('note-text').value});if(selected?.jid===jid) {$('note-text').value='';await loadContact(jid);}}catch(error) {notice(error.message);}finally {button.disabled=false;}
+  });
+  function addTemplateRow(template={name:'',body:''}) {
+    if($('template-list').children.length>=30) return;
+    const row=el('div','template-row'),nameLabel=el('label','field','Nome'),name=el('input');name.value=template.name;name.maxLength=80;name.required=true;name.className='template-name';nameLabel.append(name);
+    const bodyLabel=el('label','field','Mensagem'),body=el('textarea');body.value=template.body;body.rows=3;body.maxLength=4000;body.required=true;body.className='template-body';bodyLabel.append(body);
+    const remove=el('button','text-button','Remover resposta');remove.type='button';remove.addEventListener('click',()=>row.remove());row.append(nameLabel,bodyLabel,remove);$('template-list').append(row);
+  }
+  function openSettings() {$('settings-error').textContent='';$('template-list').replaceChildren();templates.forEach(addTemplateRow);$('settings-dialog').showModal();}
+  $('settings').addEventListener('click',openSettings);$('configure-templates').addEventListener('click',openSettings);
+  $('add-template').addEventListener('click',()=>addTemplateRow());
+  $('settings-form').addEventListener('submit',async event=>{
+    event.preventDefault();const button=event.submitter;button.disabled=true;
+    try {const result=await api('/settings','PATCH',{templates:[...$('template-list').children].map(row=>({name:row.querySelector('.template-name').value,body:row.querySelector('.template-body').value}))});templates=result.templates;renderTemplates();$('settings-dialog').close();notice('Respostas rápidas salvas.',true);}catch(error) {$('settings-error').textContent=error.message;}finally {button.disabled=false;}
+  });
+  (async()=>{try {templates=(await api('/settings')).templates;renderTemplates();}catch(error) {notice(error.message);}await sync();if(new URLSearchParams(location.search).has('conectar') && connection?.reachable && connection.state!=='connected') openQr();})();
+  setInterval(sync,4000);
+})();

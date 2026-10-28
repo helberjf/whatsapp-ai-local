@@ -1,0 +1,8 @@
+{
+  "name": "whatsapp-central",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Central WhatsApp local com pareamento por QR Code e Evolution API",
+  "scripts": { "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start.ps1", "serve": "node server.cjs", "test": "node --test tests/*.test.cjs", "configure": "node scripts/configure.cjs", "shortcut": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/shortcut.ps1" },
+  "engines": { "node": ">=22" }
+}
