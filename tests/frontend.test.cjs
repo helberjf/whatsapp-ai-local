@@ -228,7 +228,7 @@ test('dashboard mostra quatro contagens reais e navegação filtra os atendiment
   assert.equal(browser.get('metric-unread').textContent,'2');
   assert.equal(browser.get('metric-pending').textContent,'1');
   assert.equal(browser.get('metric-closed').textContent,'1');
-  assert.equal(browser.get('connected-phone').textContent,'+55 11 00000-0000');
+  assert.equal(browser.get('panel-connection-phone').textContent,'+55 11 00000-0000');
   await browser.get('nav-pending').emit('click');
   assert.equal(browser.get('chat-list').children.length,1);
   assert.match(browser.get('chat-list').textContent,/Bruno/);

@@ -53,7 +53,7 @@ try {
   $ready=$false
   for($attempt=0;$attempt -lt 30;$attempt++) {if(Test-Central) {$ready=$true;break};Start-Sleep -Milliseconds 500}
   if(-not $ready) {throw 'A central não respondeu na porta 8766. Consulte data/server.err.log.'}
-  Write-Output ('WhatsApp Local pronto: '+$centralUrl)
+  Write-Output ('Whats AI pronto: '+$centralUrl)
   if(-not $NoBrowser) {Start-Process ($centralUrl+'?conectar=1')}
 } catch {Write-Error $_.Exception.Message;exit 1}
 finally {if($hasMutex) {$taskMutex.ReleaseMutex()};$taskMutex.Dispose()}
