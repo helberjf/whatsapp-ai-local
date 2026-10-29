@@ -524,6 +524,27 @@
     renderContacts();notice(`${list.length} contato(s) atualizado(s).`,true);
   }));
 
+  // ---------- Parecer humano nas respostas automáticas ----------
+  const HUMAN_FIELDS={'human-read-min':'readMinSeconds','human-read-max':'readMaxSeconds','human-ms-min':'typingMinMsPerChar','human-ms-max':'typingMaxMsPerChar','human-max':'maxTypingSeconds'};
+  const humanForm=()=>({typing:$('human-typing').checked,randomDelay:$('human-random').checked,...Object.fromEntries(Object.entries(HUMAN_FIELDS).map(([id,key])=>[key,$(id).value]))});
+  function humanExample() {
+    const config=humanForm(),chars=200;
+    const wait=config.randomDelay?`espera de ${config.readMinSeconds} a ${config.readMaxSeconds} s`:'sem espera',typing=config.typing?`mostra "digitando…" por ${Math.min(config.maxTypingSeconds,Math.round(chars*config.typingMinMsPerChar/1000))} a ${Math.min(config.maxTypingSeconds,Math.round(chars*config.typingMaxMsPerChar/1000))} s`:'não mostra "digitando…"';
+    $('human-example').textContent=`Exemplo: numa resposta de ${chars} letras a central ${wait}, ${typing} e então envia.`;
+  }
+  async function refreshHuman() {
+    const config=await api('/humanize');
+    $('human-typing').checked=config.typing;$('human-random').checked=config.randomDelay;
+    for(const [id,key] of Object.entries(HUMAN_FIELDS)) $(id).value=config[key];
+    humanExample();
+  }
+  for(const id of ['human-typing','human-random',...Object.keys(HUMAN_FIELDS)]) $(id).addEventListener('input',humanExample);
+  $('human-save').addEventListener('click',async()=>{
+    $('human-save').disabled=true;
+    try {await api('/humanize','PUT',humanForm());await refreshHuman();$('human-status').textContent='Salvo. Vale para as próximas respostas automáticas.';}
+    catch(error) {$('human-status').textContent=error.message;}finally {$('human-save').disabled=false;}
+  });
+
   // ---------- Navegação ----------
   for(const [id,page] of [['nav-contacts','page-contacts'],['nav-knowledge','page-knowledge'],['nav-products','page-products'],['nav-ai','page-ai']]) $(id).addEventListener('click',()=>C.showView(page,id));
   $('metric-products-button').addEventListener('click',()=>C.showView('page-products','nav-products'));
@@ -532,7 +553,7 @@
     view=name;
     if(name==='page-knowledge') guard(refreshKb)();
     if(name==='page-products') guard(refreshProducts)();
-    if(name==='page-ai') {guard(refreshAi)();guard(refreshAssistant)();}
+    if(name==='page-ai') {guard(refreshAi)();guard(refreshAssistant)();guard(refreshHuman)();}
     if(name==='page-contacts') renderContacts();
   });
   C.hooks.sync.push(()=>{if(view==='page-contacts') renderContacts();});

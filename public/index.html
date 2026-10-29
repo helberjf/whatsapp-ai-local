@@ -181,6 +181,15 @@
             <p class="muted">Instruções que a IA segue em todas as respostas. Edite, desative, remova ou adicione novas (por exemplo, uma regra para cada serviço).</p>
             <div id="rules-list" class="rules-list"></div>
             <div class="form-actions"><button id="rule-add" class="button secondary" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Nova regra</button><button id="rules-save" class="button primary" type="button">Salvar regras</button></div><p id="rules-status" class="form-status" role="status"></p></section>
+          <section class="panel pad" aria-labelledby="human-title"><h2 id="human-title"><svg class="icon green-ink" aria-hidden="true"><use href="#i-user"/></svg> Parecer humano ao responder</h2>
+            <p class="muted">Vale para as respostas automáticas (robô de palavras-chave e IA automática). O que você digita e envia manualmente não muda.</p>
+            <label class="check"><input id="human-typing" type="checkbox"> Mostrar "digitando…" no WhatsApp do cliente antes de enviar</label>
+            <label class="check"><input id="human-random" type="checkbox"> Esperar um tempo aleatório antes de começar a responder</label>
+            <div class="field-row"><label class="field">Espera mínima (s)<input id="human-read-min" inputmode="numeric"></label><label class="field">Espera máxima (s)<input id="human-read-max" inputmode="numeric"></label></div>
+            <div class="field-row"><label class="field">Digitação mínima (ms por letra)<input id="human-ms-min" inputmode="numeric"></label><label class="field">Digitação máxima (ms por letra)<input id="human-ms-max" inputmode="numeric"></label></div>
+            <label class="field">Máximo de "digitando…" (s)<input id="human-max" inputmode="numeric"></label>
+            <p id="human-example" class="muted"></p><p id="human-status" class="form-status" role="status"></p>
+            <div class="form-actions"><button id="human-save" class="button primary" type="button">Salvar</button></div></section>
         </div>
       </section>
     </div>
