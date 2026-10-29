@@ -46,3 +46,31 @@ test('falhas de provedor, conexão e abertura de credencial não refletem segred
   }
   const f=await fixture(t,{credentials:{has:async()=>true,get:async()=>{throw new Error('PRIVATE');},set:async()=>{},remove:async()=>{}}});await f.ai.save({provider:'anthropic',model:'test'});await assert.rejects(f.ai.complete({system:'Teste',user:'Olá'}),error=>error.status===503&&!error.message.includes('PRIVATE'));assert.equal(f.seen.length,0);
 });
+
+test('configuração antiga usa seleção automática de hardware por padrão',async t=>{
+  const f=await fixture(t,{legacy:{provider:'ollama',model:'test-local',baseUrl:''}});assert.equal((await f.ai.config()).ollamaNumGpu,null);
+});
+
+test('preferência CPU do Ollama persiste após reinício e só envia a opção local sem chave',async t=>{
+  const f=await fixture(t);await f.ai.save({provider:'openai',model:'test',apiKey:'sk-PRIVATE'});
+  const saved=await f.ai.save({provider:'ollama',model:'test-local',ollamaNumGpu:0});assert.equal(saved.ollamaNumGpu,0);assert.equal((await f.metadata()).ollamaNumGpu,0);assert.doesNotMatch(JSON.stringify(saved),/sk-PRIVATE|apiKey/);assert.doesNotMatch(JSON.stringify(await f.metadata()),/sk-PRIVATE|apiKey/);
+  const seen=[],restarted=createAi(f.directory,async(url,options)=>{seen.push({url,options});return Response.json({message:{content:'ok'}});},{credentials:f.vault});
+  try {assert.equal((await restarted.config()).ollamaNumGpu,0);assert.equal(await restarted.complete({system:'Teste',user:'Olá'}),'ok');const request=seen[0],body=JSON.parse(request.options.body);assert.equal(request.url,'http://127.0.0.1:11434/api/chat');assert.equal(body.options.num_gpu,0);assert.equal(request.options.headers.Authorization,undefined);assert.doesNotMatch(JSON.stringify(request),/sk-PRIVATE/);}finally {await restarted.close();}
+});
+
+test('salvar o mesmo modelo mantém CPU e seleção automática explícita retira a opção',async t=>{
+  const seen=[],f=await fixture(t,{fetchImpl:async(url,options)=>{seen.push(JSON.parse(options.body));return Response.json({message:{content:'ok'}});}});
+  await f.ai.save({provider:'ollama',model:'test-local',ollamaNumGpu:0});assert.equal((await f.ai.save({provider:'ollama',model:'test-local'})).ollamaNumGpu,0);
+  assert.equal((await f.ai.save({provider:'ollama',model:'test-local',ollamaNumGpu:null})).ollamaNumGpu,null);assert.equal((await f.metadata()).ollamaNumGpu,null);await f.ai.complete({system:'Teste',user:'Olá'});assert.equal(Object.hasOwn(seen[0].options,'num_gpu'),false);
+});
+
+test('trocar modelo ou provedor limpa CPU salvo e nunca aplica a opção a outro provedor',async t=>{
+  const f=await fixture(t);await f.ai.save({provider:'ollama',model:'first',ollamaNumGpu:0});assert.equal((await f.ai.save({provider:'ollama',model:'second'})).ollamaNumGpu,null);
+  assert.equal((await f.ai.save({provider:'ollama',model:'third',ollamaNumGpu:0})).ollamaNumGpu,0);
+  assert.equal((await f.ai.save({provider:'custom',model:'third',baseUrl:'https://example.test/v1',ollamaNumGpu:0})).ollamaNumGpu,null);await f.ai.complete({system:'Teste',user:'Olá'});assert.equal(JSON.parse(f.seen[0].options.body).options,undefined);
+  assert.equal((await f.ai.save({provider:'ollama',model:'third'})).ollamaNumGpu,null);
+});
+
+test('seleção de hardware rejeita opções diferentes de CPU zero ou automático nulo',async t=>{
+  const f=await fixture(t);for(const ollamaNumGpu of [1,-1,'0',false,{},[]])await assert.rejects(f.ai.save({provider:'ollama',model:'test-local',ollamaNumGpu}),error=>error.status===422);assert.equal(f.seen.length,0);
+});

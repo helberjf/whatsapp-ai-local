@@ -313,13 +313,38 @@
   });
 
   // ---------- Assistente de IA (configuração) ----------
-  let lastDefaultModel='';
+  let lastDefaultModel='',localBusy=false,localCheck=0;
+  function showLocalState(state) {
+    const cpu=$('ai-local-cpu').checked,ready=state.running && state.loaded && (!cpu || state.executionMode==='cpu'),missing=state.running && !state.modelInstalled;
+    const selected=ai?.provider==='ollama' && ai.model===state.model && (ai.ollamaNumGpu===0)===cpu && (!ai.baseUrl || /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):11434(?:\/v1)?\/?$/.test(ai.baseUrl));
+    $('ai-local-state').textContent=ready?'Pronta para usar':missing?'Modelo não instalado':state.running?'Ollama ligado':'Desligada';
+    $('ai-local-state').dataset.ready=String(ready);
+    $('ai-local-description').textContent=ready?`${state.model} carregado ${state.executionMode==='cpu'?'na CPU. As respostas podem ser mais lentas':'neste computador'}. ${selected?'A IA local está pronta para responder.':'Clique em Usar IA local para selecionar este modelo no assistente.'}`:missing?`Instale o modelo ${state.model} no Ollama ou escolha um dos modelos disponíveis: ${state.models.join(', ') || 'nenhum'}.`:state.running?`Clique para carregar ${state.model} e deixá-lo pronto para usar.`:state.installed?'Ollama instalado. Clique para iniciar em segundo plano e carregar o modelo.':'Instale o Ollama neste computador e volte aqui para ligar a IA local.';
+    $('ai-local-start').disabled=localBusy || (ready && selected);$('ai-local-start').textContent=ready?(selected?'IA local pronta':'Usar IA local'):'Ligar IA local';
+  }
+  async function refreshLocalAi() {
+    $('ai-local-controls').hidden=$('ai-provider').value!=='ollama';if($('ai-local-controls').hidden || localBusy) return;
+    const version=++localCheck,model=$('ai-model').value.trim() || ai.providers.ollama.model,baseUrl=$('ai-base').value.trim();$('ai-local-state').textContent='Verificando…';$('ai-local-refresh').disabled=true;
+    try {const state=await api('/ai/local?model='+encodeURIComponent(model)+'&baseUrl='+encodeURIComponent(baseUrl)+'&device='+($('ai-local-cpu').checked?'cpu':'auto'));if(version===localCheck && !localBusy) showLocalState(state);}
+    catch(error) {if(version===localCheck && !localBusy) {$('ai-local-state').textContent='Verifique a configuração';$('ai-local-description').textContent=error.message;$('ai-local-start').disabled=false;}}
+    finally {if(version===localCheck && !localBusy) $('ai-local-refresh').disabled=false;}
+  }
+  $('ai-local-refresh').addEventListener('click',refreshLocalAi);
+  $('ai-local-start').addEventListener('click',async()=>{
+    if(localBusy) return;localBusy=true;localCheck++;const fields=['ai-provider','ai-model','ai-base','ai-key','ai-save','ai-test','ai-clear','ai-local-start','ai-local-refresh','ai-local-cpu'];for(const id of fields) $(id).disabled=true;
+    $('ai-local-state').textContent='Preparando…';$('ai-local-state').dataset.ready='false';$('ai-local-start').textContent='Ligando IA local…';$('ai-local-description').textContent='Iniciando o Ollama e carregando o modelo. A primeira carga pode demorar um pouco.';
+    let result;
+    try {result=await api('/ai/local/start','POST',{model:$('ai-model').value.trim() || ai.providers.ollama.model,baseUrl:$('ai-base').value.trim(),device:$('ai-local-cpu').checked?'cpu':'auto'},180000);ai=result.config;renderAi();renderCounters();$('ai-status').textContent='IA local pronta. Configuração do Ollama salva.';}
+    catch(error) {$('ai-local-state').textContent='Não foi possível ligar';$('ai-local-description').textContent=error.message;}
+    finally {localBusy=false;for(const id of fields) $(id).disabled=false;if(result) showLocalState(result);else $('ai-local-start').textContent='Tentar ligar IA local';}
+  });
+  for(const id of ['ai-model','ai-base','ai-local-cpu']) $(id).addEventListener('input',()=>{if(!localBusy) {localCheck++;$('ai-local-refresh').disabled=false;$('ai-local-start').disabled=false;$('ai-local-start').textContent='Ligar IA local';$('ai-local-state').textContent='Configuração alterada';$('ai-local-state').dataset.ready='false';}});
   function renderAi() {
     if(!ai) return;
     const options=document.createDocumentFragment();
     for(const [id,item] of Object.entries(ai.providers)) {const option=el('option','',item.label);option.value=id;options.append(option);}
     $('ai-provider').replaceChildren(options);$('ai-provider').value=ai.provider;
-    $('ai-model').value=ai.model;$('ai-base').value=ai.baseUrl;$('ai-key').value='';lastDefaultModel=ai.providers[ai.provider].model;
+    $('ai-model').value=ai.model;$('ai-base').value=ai.baseUrl;$('ai-key').value='';$('ai-local-cpu').checked=ai.ollamaNumGpu===0;lastDefaultModel=ai.providers[ai.provider].model;
     syncProviderHints();
     $('ai-key-hint').textContent=ai.hasKey?'Uma chave está salva neste computador. Cole outra para trocar.':'A chave fica só neste computador e nunca volta para a tela.';
     $('ai-clear').hidden=!ai.hasKey;
@@ -328,6 +353,7 @@
     const item=ai.providers[$('ai-provider').value];
     $('ai-model').placeholder=item.model || 'nome do modelo';$('ai-base').placeholder=item.baseUrl || 'https://seu-servidor/v1';
     $('ai-key').placeholder=item.key?'Cole a chave para salvar ou trocar':'Opcional para este provedor';
+    refreshLocalAi();
   }
   $('ai-provider').addEventListener('change',()=>{
     const item=ai.providers[$('ai-provider').value];

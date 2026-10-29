@@ -17,6 +17,7 @@ const {createKnowledgeRoutes}=require('./lib/knowledge-routes.cjs');
 const {createAssistantService}=require('./lib/assistant.cjs');
 const assistantCore=require('./lib/assistant-core.cjs');
 const {createTriggerService}=require('./lib/triggers.cjs');
+const {createLocalAi}=require('./lib/local-ai.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
@@ -30,6 +31,7 @@ function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
   const dataDir=options.storeDir || path.join(root,'data');
   const credentials=options.credentials || createCredentialStore(dataDir);
+  const localAi=options.localAi || createLocalAi();
   const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
   const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules,credentials});
   const assistant=createAssistantService({store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
@@ -72,6 +74,8 @@ function createWhatsAppServer(options={}) {
       }
       if(!route.startsWith('/api/')) return json(res,404,{error:'Endereço não encontrado.'});
       const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
+      if(route==='/api/ai/local' && req.method==='GET') return json(res,200,await localAi.status({...(url.searchParams.has('model')?{model:url.searchParams.get('model')}:{}),baseUrl:url.searchParams.get('baseUrl') || '',device:url.searchParams.get('device') || 'auto'}));
+      if(route==='/api/ai/local/start' && req.method==='POST') {const input=await readBody(req),state=await localAi.start(input);const config=await extra.services.ai.save({provider:'ollama',model:state.model,baseUrl:'http://127.0.0.1:11434',ollamaNumGpu:input.device==='cpu'?0:null});return json(res,200,{...state,config});}
       if(route==='/api/triggers' && ['GET','PUT'].includes(req.method)) return json(res,200,req.method==='GET'?await triggers.settings():await triggers.saveSettings(await readBody(req)));
       if(route==='/api/triggers/simulate' && req.method==='POST') return json(res,200,await triggers.simulate(await readBody(req)));
       if(route==='/api/triggers/executions' && req.method==='GET') return json(res,200,await triggers.executions());

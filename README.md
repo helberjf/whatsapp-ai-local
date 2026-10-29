@@ -112,6 +112,10 @@ The knowledge base accepts text-bearing **PDF, DOCX, TXT, Markdown, CSV, and JSO
 
 Retrieval splits documents into passages and ranks lexical matches with **BM25** after Portuguese-oriented normalization. This is keyword-based retrieval, not embedding-based semantic search. Relevance percentages are normalized retrieval scores, not calibrated confidence estimates. Without an AI provider, the application can still show the matching source passages.
 
+In **Assistente de IA**, select **Ollama (local)** and click **Ligar IA local** to start the installed runtime in the background and load the chosen model. The status changes to **Pronta para usar** after the model is confirmed in memory. This selects the local provider without changing automatic-reply switches. The button uses loopback only, never downloads missing models automatically, and shows an installation message if Ollama or the model is missing. If the GPU has insufficient memory, select **Usar CPU** and start again. This saves the CPU preference for subsequent Ollama answers; CPU inference may be slower.
+
+![Local AI startup controls with fictional demo data](docs/screenshots/local-ai.png)
+
 Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
 
 ## Architecture

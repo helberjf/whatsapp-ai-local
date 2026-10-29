@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-async function browser({audience='classified',enabled=false,save}={}) {
+async function browser({audience='classified',enabled=false,save,aiConfig={},localState={installed:true,running:true,loaded:true,modelInstalled:true,model:'qwen2.5:7b',models:['qwen2.5:7b'],starting:false}}={}) {
   const nodes=new Map(),requests=[],prompts=[];let settings={audience,enabled,rules:[],counts:{draft:0,auto:0},log:[],ai:true};
   function element(tag='div',className='',text) {
     let id='',ownText=text||'';const listeners=new Map();
@@ -21,9 +21,11 @@ async function browser({audience='classified',enabled=false,save}={}) {
   }
   const get=id=>{if(!nodes.has(id)){const item=element();item.id=id;}return nodes.get(id);};
   const panel=element('section');panel.append(get('assistant-enabled'),get('assistant-summary'),get('assistant-status'));
-  const hooks={open:[],sync:[],select:[],view:[]},ai={configured:true,provider:'openai',model:'test',baseUrl:'',hasKey:false,providers:{openai:{label:'OpenAI',model:'test',baseUrl:'',key:true}}};
+  const hooks={open:[],sync:[],select:[],view:[]};let ai={configured:true,provider:'openai',model:'test',baseUrl:'',hasKey:false,providers:{openai:{label:'OpenAI',model:'test',baseUrl:'',key:true},ollama:{label:'Ollama (local)',model:'qwen2.5:7b',baseUrl:'http://127.0.0.1:11434',key:false}},...aiConfig};
   const api=async(route,method='GET',input)=>{
     requests.push({route,method,input});if(route==='/kb')return {documents:[]};if(route==='/products')return {products:[]};if(route==='/ai')return ai;
+    if(route.startsWith('/ai/local?'))return structuredClone(localState);
+    if(route==='/ai/local/start' && method==='POST'){ai={...ai,provider:'ollama',model:input.model,baseUrl:'http://127.0.0.1:11434'};return {...structuredClone(localState),config:ai};}
     if(route==='/assistant'){if(method==='PUT'){if(save)await save(input);settings={...settings,...input};}return structuredClone(settings);}throw Error('Unexpected '+route);
   };
   const C={$:get,el:element,api,notice(){},dateTime:String,initials:()=>'',phoneLabel:String,chats:()=>[],selected:()=>null,hooks,showView(){}};
@@ -45,4 +47,20 @@ test('failed audience save keeps chosen audience visible and saved settings inta
 });
 test('enabling automatic replies names the saved audience in its existing confirmation',async()=>{
   const b=await browser({audience:'all'});b.get('assistant-enabled').checked=true;await b.get('assistant-enabled').emit('change');assert.match(b.prompts[0],/todos os contatos/i);assert.match(b.prompts[0],/Desligada|pausa/i);
+});
+
+test('already loaded local AI can be selected and saved when another provider is configured',async()=>{
+  const b=await browser();b.get('ai-provider').value='ollama';await b.get('ai-provider').emit('change');await settle();
+  assert.equal(b.get('ai-local-start').disabled,false);assert.equal(b.requests.some(item=>item.method==='POST'),false);
+  await b.get('ai-local-start').emit('click');const started=b.requests.find(item=>item.route==='/ai/local/start');assert.equal(started.input.model,'qwen2.5:7b');assert.equal(b.get('ai-provider').value,'ollama');assert.equal(b.get('ai-local-start').disabled,true);assert.equal(b.get('assistant-enabled').checked,false);assert.equal(b.requests.some(item=>item.route==='/assistant' && item.method==='PUT'),false);
+});
+
+test('loaded local AI stays selectable when its model differs from the saved local model',async()=>{
+  const b=await browser({aiConfig:{provider:'ollama',model:'other-local',baseUrl:'http://127.0.0.1:11434'}});b.get('ai-model').value='qwen2.5:7b';await b.get('ai-model').emit('input');await b.get('ai-local-refresh').emit('click');
+  assert.equal(b.get('ai-local-start').disabled,false);
+});
+
+test('loaded local AI is marked ready once the same local target is already saved',async()=>{
+  const b=await browser({aiConfig:{provider:'ollama',model:'qwen2.5:7b',baseUrl:'http://127.0.0.1:11434'}});
+  assert.equal(b.get('ai-local-start').disabled,true);assert.equal(b.get('ai-local-state').textContent,'Pronta para usar');assert.equal(b.requests.some(item=>item.method!=='GET'),false);
 });
