@@ -7,6 +7,10 @@
 .main-nav .nav-divider{display:none}
 .chat-title strong{font-size:15px}.chat-preview p{font-size:12px}
 .main-content{min-height:0;min-width:0}
+.local-ai-card{border:1px solid #24644e;background:linear-gradient(125deg,#112e26,#101c20);padding:18px;border-radius:12px;margin:10px 0 15px}
+.local-ai-heading{display:flex;align-items:center;gap:12px}.local-ai-icon{display:grid;place-items:center;width:42px;height:42px;flex-shrink:0;border-radius:12px;background:#124b35;color:#42e3a3;font-size:25px}
+.local-ai-heading h3{margin:0 0 5px;font-size:15px}.local-ai-state{font-size:12px;color:#d5c69b}.local-ai-state[data-ready=true]{color:#4ae3ab}
+.local-ai-card .muted{font-size:12px;line-height:1.75;margin:12px 0}.local-ai-card>small{display:block;color:#9ab4aa;font-size:11px;line-height:1.6;margin-top:12px}.local-ai-card .form-actions{margin-top:8px;gap:14px}
 .topbar,.top-card,.top-card-copy{min-width:0}
 .top-card-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .metrics{flex-shrink:0}

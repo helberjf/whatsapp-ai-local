@@ -1,6 +1,6 @@
 # Testing and validation
 
-Verified on Windows on **2026-10-29**: **226 Node tests** and **8 Playwright tests** passed. Browser checks cover 1440×960, 1133×637 and 390×844 layouts, media playback, safe links, trigger creation, audio attachments, contact details, deletion confirmation and timer options. Connector operations were exercised against fixtures; no real messages were sent or deleted for verification. The local Docker stack was healthy and the existing WhatsApp session remained connected.
+Verified on Windows on **2026-10-29**: **243 Node tests** and **9 Playwright tests** passed. Browser checks cover 1440×960, 1133×637 and 390×844 layouts, media playback, safe links, trigger creation, audio attachments, contact details, deletion confirmation and timer options, plus local AI startup and an explicit CPU mode. Connector operations were exercised against fixtures; no real messages were sent or deleted for verification. The local Docker stack was healthy and the existing WhatsApp session remained connected. Live local-AI validation confirmed `qwen2.5:7b` loaded on CPU after a GPU memory allocation error, using an empty request and preserving automatic-reply settings.
 
 The project separates automated fixture validation from operations against a real linked WhatsApp account. Automated tests and the portfolio demo use fictional contacts, isolated temporary stores, and controlled connector responses. They must not be pointed at production data or used to send test messages to real contacts.
 
@@ -52,12 +52,13 @@ npm run demo
 
 Open [the local demo](http://127.0.0.1:8876/). The demo uses an OS temporary directory, a fake Evolution connector, controlled AI responses, and disabled background reply workers. It does not read the real account's `data/` directory or connect to Docker or external AI services. A visible demo banner identifies the fixture. Stop it with **Ctrl+C** to remove its temporary data during normal shutdown.
 
-The README screenshots are captured from this environment:
+The README screenshots are captured from this environment. Normal browser runs write artifacts to ignored `test-results/`; to refresh documentation images, set `WHATSAPP_CAPTURE_DOCS=1` for the test process:
 
 - [`screenshots/workspace.png`](screenshots/workspace.png): conversation layout, fictional contacts, and attendance panel.
 - [`screenshots/media.png`](screenshots/media.png): sample media and message controls.
 - [`screenshots/triggers.png`](screenshots/triggers.png): trigger conditions and response composer.
 - [`screenshots/knowledge.png`](screenshots/knowledge.png): sample knowledge and grounded answer workflow.
+- [`screenshots/local-ai.png`](screenshots/local-ai.png): local runtime readiness and CPU option.
 
 Screenshots demonstrate the UI state, not real-account delivery. Never replace them with captures that expose real messages, names, phone numbers, QR codes, session tokens, or keys.
 
