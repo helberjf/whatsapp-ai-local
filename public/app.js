@@ -6,7 +6,7 @@
   const runHooks=(name,...args)=>{for(const hook of hooks[name]) try {hook(...args);}catch {}};
   const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
   let transcriptionSettings=null,transcriptionSettingsLoading=null;
-  let historyQueue=Promise.resolve(),syncTask=Promise.resolve(),namesSyncing=false,forwardState=null,deleteState=null,attachmentKind=null;
+  let historyQueue=Promise.resolve(),syncTask=Promise.resolve(),namesSyncing=false,forwardState=null,deleteState=null,attachmentKind=null,attachmentSelectionKind=null,activeMessageMenu=null;
   const statuses={open:'Em aberto',pending:'Pendente',closed:'Concluído'};
   const time=value=>value?new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';
   const dateTime=value=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
@@ -171,11 +171,15 @@
   }
   function videoCard(message,jid) {
     const key=jid+'|'+message.id;if(videoViews.has(key)) return videoViews.get(key).card;
-    const card=el('section','video-card'),label=el('div','media-card-label','Vídeo'),load=el('button','video-load','▶ Carregar vídeo'),player=el('video','video-player'),status=el('p','media-status');
-    card.setAttribute('aria-label','Mensagem de vídeo');load.type='button';player.controls=true;player.preload='none';player.playsInline=true;player.hidden=true;player.setAttribute('aria-label','Reproduzir vídeo');status.hidden=true;status.setAttribute('role','status');
+    const card=el('section','video-card'),label=el('div','media-card-label','Vídeo'),load=el('button','video-load','▶ Reproduzir vídeo'),player=el('video','video-player'),status=el('p','media-status');
+    card.setAttribute('aria-label','Mensagem de vídeo');load.type='button';load.setAttribute('aria-label','Reproduzir vídeo');player.controls=true;player.preload='metadata';player.playsInline=true;player.hidden=true;player.setAttribute('aria-label','Player de vídeo');status.hidden=true;status.setAttribute('role','status');
     const view={card,player,loading:false};videoViews.set(key,view);
-    load.addEventListener('click',async()=>{if(view.loading) return;view.loading=true;load.disabled=true;load.textContent='Carregando vídeo…';status.hidden=true;
-      try {const media=await fetchMedia(message,jid);player.src=media.url;player.hidden=false;load.hidden=true;}
+    load.addEventListener('click',async()=>{if(view.loading) return;const version=selection;view.loading=true;load.disabled=true;load.textContent='Carregando vídeo…';status.hidden=true;
+      try {const media=await fetchMedia(message,jid);player.src=media.url;player.hidden=false;load.hidden=true;player.load?.();
+        if(selected?.jid===jid && selection===version) {for(const other of document.querySelectorAll('audio,video')) if(other!==player && !other.paused) other.pause?.();
+          try {await player.play?.();}catch(error) {status.textContent=error.name==='NotAllowedError'?'Vídeo carregado. Toque no ▶ do player para iniciar.':'Toque no ▶ do player para reproduzir. Se o formato não abrir, use Baixar vídeo.';status.hidden=false;}
+        }
+      }
       catch(error) {status.textContent=error.message;status.hidden=false;load.textContent='↻ Tentar carregar vídeo';}
       finally {view.loading=false;load.disabled=false;}
     });
@@ -205,7 +209,18 @@
   }
   function messageActions(message,jid) {
     const menu=el('details','message-actions'),toggle=el('summary','message-menu-toggle','⌄'),options=el('div','message-menu'),forward=el('button','message-forward','Encaminhar'),copy=el('button','message-copy','Copiar texto');
-    toggle.setAttribute('aria-label','Opções da mensagem');forward.type='button';forward.disabled=message.canForward===false;if(forward.disabled) forward.title='Este tipo de mensagem não pode ser encaminhado.';copy.type='button';copy.disabled=!messageCopyText(message,jid);
+    toggle.setAttribute('aria-label','Opções da mensagem');options.setAttribute('popover','manual');forward.type='button';forward.disabled=message.canForward===false;if(forward.disabled) forward.title='Este tipo de mensagem não pode ser encaminhado.';copy.type='button';copy.disabled=!messageCopyText(message,jid);
+    menu.addEventListener('toggle',()=>{
+      if(!menu.open) {if(activeMessageMenu?.menu===menu) closeMessageMenu();return;}
+      if(activeMessageMenu?.menu!==menu) closeMessageMenu();activeMessageMenu={menu,options};
+      try {options.showPopover?.();}catch {}
+      if(!toggle.getBoundingClientRect) return;
+      const anchor=toggle.getBoundingClientRect(),box=options.getBoundingClientRect(),region=$('messages').getBoundingClientRect(),width=globalThis.innerWidth,height=globalThis.innerHeight;
+      const left=Math.max(8,region.left+4),right=Math.min(width-8,region.right-4),top=Math.max(8,region.top+4),bottom=Math.min(height-8,region.bottom-4);
+      const x=Math.max(left,Math.min(message.fromMe?anchor.right-box.width:anchor.left,right-box.width));
+      const y=Math.max(top,Math.min(anchor.bottom+6+box.height>bottom?anchor.top-box.height-6:anchor.bottom+6,bottom-box.height));
+      options.style.left=x+'px';options.style.top=y+'px';
+    });
     messageCopyViews.set(jid+'|'+message.id,{jid,message,button:copy});
     forward.addEventListener('click',()=>{if(message.canForward===false) return;menu.open=false;openForward(message,jid);});
     copy.addEventListener('click',async()=>{const text=messageCopyText(message,jid);if(!text) return;menu.open=false;try {await navigator.clipboard.writeText(text);notice('Texto copiado.',true);}catch {notice('Não foi possível copiar. Selecione o texto da mensagem para copiar.');}});
@@ -215,6 +230,10 @@
     }
     menu.append(toggle,options);return menu;
   }
+  function closeMessageMenu() {const active=activeMessageMenu;activeMessageMenu=null;if(active){active.menu.open=false;try{active.options.hidePopover?.();}catch{}}}
+  document.addEventListener('pointerdown',event=>{if(activeMessageMenu && !activeMessageMenu.menu.contains(event.target)) closeMessageMenu();});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape') closeMessageMenu();});
+  $('messages').addEventListener('scroll',closeMessageMenu);globalThis.addEventListener?.('resize',closeMessageMenu);
   $('delete-confirm').addEventListener('click',async()=>{
     const state=deleteState;if(!state || state.busy || !$('delete-dialog').open) return;state.busy=true;$('delete-confirm').disabled=true;$('delete-error').textContent='';
     try {await api('/messages/delete','POST',{jid:state.jid,messageId:state.messageId,requestId:state.requestId});deletedMessages.add(state.jid+'|'+state.messageId);if(selected?.jid===state.jid) renderMessages(true);if(deleteState===state) {$('delete-dialog').close();deleteState=null;}notice('Mensagem apagada para todos.',true);}
@@ -302,7 +321,7 @@
       if(!removed) row.append(messageActions(message,selected.jid));const meta=el('time','message-meta',time(message.timestamp)+ack);if(message.timestamp) meta.title=dateTime(message.timestamp);row.append(meta);fragment.append(row);
     }
     if(!messages.length) fragment.append(el('p','muted','Ainda não há mensagens sincronizadas nesta conversa.'));
-    container.replaceChildren(fragment);$('older').hidden=page>=pages;$('history-info').textContent=messages.length?`${messages.length} mensagens carregadas`:'';
+    closeMessageMenu();container.replaceChildren(fragment);$('older').hidden=page>=pages;$('history-info').textContent=messages.length?`${messages.length} mensagens carregadas`:'';
     if(keepScroll) container.scrollTop=oldTop+container.scrollHeight-oldHeight;
     else if(nearBottom || forceBottom) container.scrollTop=container.scrollHeight;
   }
@@ -439,13 +458,17 @@
   $('older').addEventListener('click',async()=>{$('older').disabled=true;try {await loadMessages(true);}catch(error) {notice(error.message);}finally {$('older').disabled=false;}});
   $('quick-template').addEventListener('change',()=>{if($('quick-template').value==='') return;insertTemplate(templates[Number($('quick-template').value)]);$('quick-template').value='';});
   $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;});
-  $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && (event.ctrlKey || event.metaKey)) {event.preventDefault();$('composer').requestSubmit();}});
+  $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && !event.shiftKey && !event.altKey && !event.isComposing && event.keyCode!==229 && !event.repeat) {event.preventDefault();$('composer').requestSubmit();}});
   function setAttachment(file,kind=null) {
     editRevision++;pendingSend=null;
     if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
-    attachment=file || null;attachmentKind=kind;$('attachment-name').textContent=file?(kind==='sticker'?'Figurinha · ':'')+file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file;$('message-text').required=!attachment;
+    attachment=file || null;attachmentKind=kind;$('attachment-name').textContent=file?(kind==='sticker'?'Figurinha · ':'')+file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file;$('message-text').required=!attachment;if(file) $('message-text').focus();
   }
-  $('attachment').addEventListener('change',()=>setAttachment($('attachment').files[0]));
+  $('attachment').addEventListener('change',()=>{const kind=attachmentSelectionKind;attachmentSelectionKind=null;setAttachment($('attachment').files[0],kind);});
+  $('attachment').addEventListener('cancel',()=>{attachmentSelectionKind=null;});
+  $('attachment-toggle').addEventListener('click',()=>{if(selected) $('attachment-dialog').showModal();else notice('Abra uma conversa para anexar um arquivo.');});
+  for(const [id,accept,kind] of [['attach-media','image/*,video/*',null],['attach-audio','audio/*',null],['attach-document','','document']]) $(id).addEventListener('click',()=>{$('attachment-dialog').close();attachmentSelectionKind=kind;$('attachment').accept=accept;$('attachment').click();});
+  $('attach-sticker').addEventListener('click',()=>{$('attachment-dialog').close();$('sticker-file').click();});
   $('sticker-file').addEventListener('change',()=>{const file=$('sticker-file').files[0];if(!file) return;if(!['image/webp','image/png','image/jpeg'].includes(file.type) || file.size>1024*1024) {notice('Escolha uma figurinha WEBP, PNG ou JPG de até 1 MB.');return;}setAttachment(file,'sticker');$('sticker-file').value='';});
   const emojiNames=[['😀','Sorriso'],['😊','Feliz'],['😂','Rindo'],['😍','Apaixonado'],['🥰','Carinho'],['😎','Óculos'],['🤔','Pensando'],['😅','Alívio'],['😢','Triste'],['😮','Surpresa'],['👍','Positivo'],['👎','Negativo'],['👋','Olá'],['🙏','Obrigado'],['👏','Palmas'],['🤝','Acordo'],['❤️','Coração'],['💚','Coração verde'],['🎉','Festa'],['✅','Confirmado'],['✨','Brilho'],['🔥','Fogo'],['📦','Pacote'],['📅','Agenda'],['✈️','Avião'],['💬','Conversa'],['☀️','Sol'],['🌙','Lua']];
   for(const [emoji,label] of emojiNames) {const button=el('button','emoji-choice',emoji);button.type='button';button.setAttribute('aria-label',label);button.addEventListener('click',()=>{const editor=$('message-text'),start=Number.isInteger(editor.selectionStart)?editor.selectionStart:editor.value.length,end=Number.isInteger(editor.selectionEnd)?editor.selectionEnd:start;editor.value=editor.value.slice(0,start)+emoji+editor.value.slice(end);editRevision++;pendingSend=null;$('emoji-dialog').close();editor.focus();editor.setSelectionRange?.(start+emoji.length,start+emoji.length);});$('emoji-grid').append(button);}
@@ -461,14 +484,14 @@
   const fileBase64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));reader.readAsDataURL(file);});
   $('composer').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected || sending || connection?.state!=='connected') return;
-    const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,submittedRevision=editRevision;if(!file && !text) return;
+    const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,kind=attachmentKind,submittedRevision=editRevision;if(!file && !text) return;
     sending=true;$('send').disabled=true;$('send-status').textContent='Enviando…';
     try {
       let submitted=pendingSend;
       if(!submitted) {
         const requestId=crypto.randomUUID();
-        if(file && attachmentKind==='sticker' && text) throw new Error('Figurinhas não têm legenda. Remova o texto ou envie-o separadamente.');
-        submitted=file?{route:attachmentKind==='sticker'?'/send-sticker':'/send-media',input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType:file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':'document',requestId}}:{route:'/send',input:{jid,text,requestId}};
+        if(file && kind==='sticker' && text) throw new Error('Figurinhas não têm legenda. Remova o texto ou envie-o separadamente.');
+        submitted=file?{route:kind==='sticker'?'/send-sticker':'/send-media',input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType:kind==='document'?'document':file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':'document',requestId}}:{route:'/send',input:{jid,text,requestId}};
         if(editRevision===submittedRevision) pendingSend=submitted;
       }
       await api(submitted.route,'POST',submitted.input);if(pendingSend===submitted) pendingSend=null;
@@ -583,5 +606,5 @@
   setInterval(sync,4000);
   setInterval(pollTranscriptions,2000);
   // Ponte para pages.js (base de conhecimento, produtos, IA e CRM).
-  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,selected:()=>selected,connection:()=>connection};
+  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,selected:()=>selected,connection:()=>connection,contextSnapshot:()=>({jid:selected?.jid || null,selection,revision:editRevision,lastMessageId:messages.at(-1)?.id || null,lastTextId:messages.filter(message=>message.type==='text'&&!message.deleted&&message.canForward!==false&&message.text?.trim()).at(-1)?.id || null})};
 })();

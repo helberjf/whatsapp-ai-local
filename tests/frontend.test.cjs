@@ -39,7 +39,7 @@ function element(tag='div',fragment=false) {
       return Promise.all((listeners.get(type)||[]).map(listener=>listener({preventDefault(){},target:this,...event})));
     },
     setAttribute(){},removeAttribute(){},scrollIntoView(){},focus(){},
-    showModal() {this.open=true;},close() {this.open=false;}
+    showModal() {this.open=true;},close() {this.open=false;},requestSubmit(){return this.emit('submit');},click(){return this.emit('click');}
   };
 }
 
@@ -52,7 +52,7 @@ function message(number) {
 }
 
 const pagesFile=path.join(__dirname,'..','public','pages.js');
-async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({deleted:true}),onMessages=async()=>{},onForward=async()=>message(2),onContactsSync=async()=>({total:1,named:1}),onMedia=async()=>({base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'}),scheduleModule,FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false,withPages=false,kbDocs=[],catalog=[]}={}) {
+async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({deleted:true}),onAssistantDraft=async()=>({text:'Sugestão contextual'}),onMessages=async()=>{},onForward=async()=>message(2),onContactsSync=async()=>({total:1,named:1}),onMedia=async()=>({base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'}),scheduleModule,FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false,withPages=false,kbDocs=[],catalog=[]}={}) {
   const nodes=new Map(),intervals=[],requests=[],copied=[];
   let history=historyRecords || Array.from({length:count},(_,index)=>message(index+1));
   let transcriptionSettings={defaultProvider:'whisper',whisperModel:'base',language:'pt',aiConfigured,aiModel:'gpt-transcribe'};
@@ -89,6 +89,7 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
       await onSend(input);
       output={...message(history.length+1),text:input.text || input.caption || ''};
     } else if(url.pathname==='/api/messages/delete') output=await onDelete(input);
+    else if(url.pathname==='/api/assistant/draft') output=await onAssistantDraft(input);
     else if(url.pathname==='/api/contact/details') output={name:'Ana',phone:'5511998765432',about:'Atendimento',capabilities:{disappearingMessages:false}};
     else if(url.pathname==='/api/read') output={read:true};
     else if(url.pathname==='/api/media') output=await onMedia();
@@ -162,6 +163,26 @@ test('emojis entram no rascunho sem enviar a mensagem',async()=>{
   await browser.get('emoji-toggle').emit('click');assert.equal(browser.get('emoji-dialog').open,true);
   assert.ok(browser.get('emoji-grid').children.length>10);await browser.get('emoji-grid').children[0].emit('click');
   assert.match(browser.get('message-text').value,/Olá.+/u);assert.equal(browser.requests.some(req=>req.path==='/api/send'),false);
+});
+
+test('Enter envia uma vez e Shift+Enter ou composição preservam o rascunho',async()=>{
+  const b=await createBrowser(),editor=b.get('message-text');editor.value='Enviar pelo teclado';await editor.emit('input');let prevented=false;
+  await editor.emit('keydown',{key:'Enter',preventDefault(){prevented=true;}});await settle();assert.equal(prevented,true);assert.equal(b.requests.filter(r=>r.path==='/api/send').length,1);
+  editor.value='Linha que continua';await editor.emit('input');for(const extra of [{shiftKey:true},{isComposing:true},{keyCode:229},{repeat:true}]) {let prevented=false;await editor.emit('keydown',{key:'Enter',...extra,preventDefault(){prevented=true;}});assert.equal(prevented,false);}
+  assert.equal(b.requests.filter(r=>r.path==='/api/send').length,1);assert.equal(editor.value,'Linha que continua');
+});
+test('arquivo escolhido como Documento preserva essa categoria mesmo quando é imagem',async()=>{
+  class Reader {readAsDataURL(){this.result='data:image/png;base64,aGVsbG8=';this.onload();}}
+  const b=await createBrowser({FileReader:Reader});await b.get('attach-document').emit('click');b.get('attachment').files=[{name:'original.png',size:5,type:'image/png'}];await b.get('attachment').emit('change');await b.get('composer').emit('submit');
+  assert.equal(b.requests.find(r=>r.path==='/api/send-media').input.mediaType,'document');
+});
+test('sugestão atrasada não aparece no contato selecionado depois',async()=>{
+  const other='5511998765433@s.whatsapp.net',started=deferred(),finish=deferred(),b=await createBrowser({withPages:true,chatRecords:[{jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:other,name:'Bruno',unread:0,status:'open',labels:[]}],onAssistantDraft:async()=>{started.resolve();await finish.promise;return {text:'Resposta exclusiva da Ana'};}});
+  const pending=b.get('ai-suggest').emit('click');await started.promise;await b.selectChat(1);finish.resolve();await pending;assert.doesNotMatch(b.get('message-text').value,/Resposta exclusiva/);assert.match(b.get('notice').textContent,/conversa|contato/i);
+});
+test('sugestão atrasada preserva o rascunho alterado durante a geração',async()=>{
+  const started=deferred(),finish=deferred(),b=await createBrowser({withPages:true,onAssistantDraft:async()=>{started.resolve();await finish.promise;return {text:'Resposta antiga'};}});
+  const pending=b.get('ai-suggest').emit('click');await started.promise;b.get('message-text').value='Minha nova edição';await b.get('message-text').emit('input');finish.resolve();await pending;assert.equal(b.get('message-text').value,'Minha nova edição');
 });
 
 test('remover uma figurinha permite enviar texto normalmente',async()=>{

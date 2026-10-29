@@ -14,6 +14,7 @@ async function createDemo({port=8876}={}) {
   const histories=jids.map((_,i)=>[raw(i,'hello-'+i,'Olá! Queria saber mais sobre os produtos e serviços.',false,600),raw(i,'reply-'+i,'Olá! Posso ajudar com o catálogo e os detalhes do seu projeto.',true,500),raw(i,'question-'+i,i===0?'Pode compartilhar uma demonstração?':'Qual é o prazo de entrega?',false,100+i)]);
   histories[0].push({...raw(0,'demo-audio','',false,90),message:{audioMessage:{mimetype:'audio/wav',seconds:3,ptt:true}}},raw(0,'demo-link','Conheça o catálogo: https://example.com/catalog e os detalhes em www.example.org.',true,80),{...raw(0,'demo-video','',true,70),message:{videoMessage:{caption:'Demonstração do produto · vídeo de teste',mimetype:'video/mp4',fileName:'product-demo.mp4'}}});
   histories[0]=histories[0].slice(-3);
+  histories[0].push(raw(0,'demo-short','Maneiro',false,60));
   const store=createStore(directory);
   await store.update(data=>{for(let i=0;i<jids.length;i++) data.contacts[jids[i]]={status:i===3?'closed':i===1?'pending':'open',labels:i<3?['Cliente','Interesse']:[],notes:[],crm:{stage:i===1?'negotiating':'new',notes:'Contato fictício para demonstração.',history:[]}};data.settings.templates=[{name:'Welcome',body:'Olá! Obrigado pelo contato. Como posso ajudar?'}];});
   await createStore(directory,{file:'ai.json',initial:{}}).update(data=>Object.assign(data,{provider:'ollama',model:'demo-local',baseUrl:'http://127.0.0.1:11434',apiKey:''}));
@@ -37,14 +38,15 @@ async function createDemo({port=8876}={}) {
   };
   const keys=new Map(),credentials={has:async name=>keys.has(name),get:async name=>keys.get(name)||null,set:async(name,value)=>{keys.set(name,value);},remove:async name=>{keys.delete(name);},close:async()=>{keys.clear();}};
   let localLoaded=false;const localState=input=>({installed:true,running:true,model:input.model || 'demo-local',modelInstalled:true,loaded:localLoaded,executionMode:input.device==='cpu'?'cpu':'gpu',models:['demo-local'],starting:false}),localAi={status:async input=>localState(input),start:async input=>{localLoaded=true;return localState(input);}};
-  const server=createWhatsAppServer({demo:true,storeDir:directory,credentials,localAi,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async()=>new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. O prazo demonstrativo é de 2 a 4 dias úteis.'}}))});
+  const aiCalls=[];
+  const server=createWhatsAppServer({demo:true,storeDir:directory,credentials,localAi,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{aiCalls.push(JSON.parse(options.body));return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. O prazo demonstrativo é de 2 a 4 dias úteis.'}}));}});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`,html=await(await fetch(base)).text(),token=html.match(/name="whatsapp-session" content="([a-f0-9]+)"/)[1];
   const api=async(route,input)=>{const response=await fetch(base+'/api'+route,{method:'POST',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify(input)});if(!response.ok) throw Error('Demo fixture failed: '+route);return response.json();};
   await api('/kb',{name:'Product guide.txt',text:'Studio Headphones: comfortable wireless headphones with 24-hour battery life. Price BRL 249.90. Delivery in 2 to 4 business days. Warranty: 12 months. Web Design: responsive personal websites, quoted individually.'});
   await api('/products',{name:'Studio Headphones',kind:'produto',category:'Audio',description:'Wireless headphones with 24-hour battery life and comfortable ear cushions.',price:249.90,stock:18,active:true,warranty:'12 months',sku:'DEMO-001'});
   await api('/products',{name:'Web Design',kind:'servico',category:'Services',description:'Responsive websites tailored to your project.',price:null,stock:null,active:true,sku:'DEMO-002'});
-  return {server,base,directory,async close(){await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await Promise.all([server.scheduler.idle(),server.triggers.idle(),server.assistant.idle()]);if(path.dirname(directory)!==os.tmpdir() || !path.basename(directory).startsWith('whatsapp-central-demo-')) throw Error('Unsafe demo cleanup path');await fs.rm(directory,{recursive:true,force:true});}};
+  return {server,base,directory,aiCalls,async close(){await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await Promise.all([server.scheduler.idle(),server.triggers.idle(),server.assistant.idle()]);if(path.dirname(directory)!==os.tmpdir() || !path.basename(directory).startsWith('whatsapp-central-demo-')) throw Error('Unsafe demo cleanup path');await fs.rm(directory,{recursive:true,force:true});}};
 }
 function wave() {
   const rate=16000,samples=rate*3,buffer=Buffer.alloc(44+samples*2);
