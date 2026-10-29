@@ -28,8 +28,8 @@ Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal s
 ## What it does
 
 - **Conversations:** search and filter by name, phone, labels, unread state, and attendance status; load earlier messages; preserve drafts and scroll position during refreshes.
-- **Messaging:** send text and attachments, insert quick replies, copy message text, forward supported content, use emoji, send stickers, create polls, and delete your own messages for everyone when the connector accepts the request.
-- **Media:** load audio on demand with seek and playback speed controls; play video; display supported images and documents; transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **Messaging:** one attachment button for photos, videos, audio, documents and stickers; **Enter** sends and **Shift+Enter** inserts a line break. Insert quick replies, copy message text, forward supported content, use emoji, create polls, and delete your own messages for everyone when the connector accepts the request.
+- **Media:** load audio on demand with seek and playback speed controls; start video with one explicit play action; display supported images and documents; transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
 - **Contacts and CRM:** maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
 - **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
 - **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
@@ -93,6 +93,8 @@ Automatic replies start **disabled**. Saving rules, selecting an AI audience, or
 Trigger rules are evaluated in list order, and the first matching rule supplies the response sequence. Business hours include selected weekdays and an IANA time zone, with overnight schedules supported. An absence reply is triggered by an incoming message **outside** those hours; it is not a proactive scheduled broadcast. Optional inactivity means elapsed time since the preceding conversation message, not time since opening the interface.
 
 Text responses accept `{name}` or `{nome}` to insert the contact's available display name. If a usable name is unavailable, the Portuguese fallback is “você”; private identifiers are not treated as names.
+
+**Sugerir com IA** reads up to the latest 14 text messages from both sides of the selected conversation (bounded to 12,000 characters), including conversations where the last message was sent by the operator. The catalog and retrieved knowledge supplement that dialogue. A delayed suggestion is not inserted into a different chat or a draft edited during generation. Manual suggestions remain separate from automatic-reply eligibility.
 
 AI audience options have distinct meanings:
 

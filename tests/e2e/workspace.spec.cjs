@@ -53,3 +53,22 @@ test('local AI starts from the assistant page without enabling automatic replies
   await page.locator('#ai-local-cpu').check();await expect(page.locator('#ai-local-start')).toBeEnabled();await page.locator('#ai-local-start').click();await expect(page.locator('#ai-local-description')).toContainText('CPU');await expect(page.locator('#ai-local-cpu')).toBeChecked();await expect(page.locator('#assistant-enabled')).not.toBeChecked();
   await page.screenshot({path:capturePath('local-ai.png')});
 });
+test('short-message arrow menu stays visible inside the conversation',async({page})=>{
+  await page.setViewportSize({width:1133,height:637});await openChat(page);const row=page.locator('.message').filter({hasText:'Maneiro'});await row.locator('.message-menu-toggle').click();const menu=row.locator('.message-menu');await expect(menu).toBeVisible();
+  const region=await page.locator('#messages').boundingBox(),box=await menu.boundingBox();expect(box.x).toBeGreaterThanOrEqual(region.x+2);expect(box.y+box.height).toBeLessThanOrEqual(region.y+region.height-2);
+  expect(await menu.evaluate(node=>{const r=node.getBoundingClientRect();return Boolean(document.elementFromPoint(r.left+20,r.top+20)?.closest('.message-menu'));})).toBe(true);
+  await page.screenshot({path:capturePath('message-menu.png')});await page.locator('#message-text').click();await expect(menu).not.toBeVisible();
+});
+test('one attachment button handles files and Enter sends while Shift+Enter adds a line',async({page})=>{
+  await openChat(page);await expect(page.locator('.composer-tools .attach-button')).toHaveCount(0);await expect(page.locator('#attachment-toggle')).toHaveCount(1);await page.locator('#attachment-toggle').click();await expect(page.locator('#attachment-dialog')).toBeVisible();
+  const chooser=page.waitForEvent('filechooser');await page.locator('#attach-media').click();await(await chooser).setFiles(path.join(__dirname,'..','fixtures','demo.mp4'));await expect(page.locator('#attachment-info')).toContainText('demo.mp4');
+  await page.locator('#message-text').fill('Vídeo de exemplo');await page.locator('#message-text').press('Enter');await expect(page.locator('#attachment-info')).not.toBeVisible();
+  await page.locator('#message-text').fill('Primeira linha');await page.locator('#message-text').press('Shift+Enter');await page.locator('#message-text').pressSequentially('Segunda linha');await expect(page.locator('#message-text')).toHaveValue('Primeira linha\nSegunda linha');
+});
+test('video action starts playback after an explicit click',async({page})=>{
+  await openChat(page);await page.getByRole('button',{name:'Reproduzir vídeo',exact:true}).click();await expect.poll(()=>page.locator('video').evaluate(node=>node.currentTime)).toBeGreaterThan(.1);await expect.poll(()=>page.locator('video').evaluate(node=>node.error?.code || null)).toBe(null);
+});
+test('manual AI suggestion uses both sides even after the operator sends the latest message',async({page,demo})=>{
+  await openChat(page);await page.locator('#message-text').fill('Qual data você prefere?');await page.locator('#message-text').press('Enter');await expect(page.locator('#message-text')).toHaveValue('');await expect(page.locator('#send')).toBeEnabled();await page.locator('#ai-suggest').click();await expect(page.locator('#message-text')).toHaveValue(/Studio Headphones/);
+  const turns=demo.aiCalls.at(-1).messages;expect(turns.some(turn=>turn.role==='assistant' && turn.content.includes('Qual data você prefere?'))).toBe(true);expect(turns.some(turn=>turn.role==='user' && turn.content.includes('Maneiro'))).toBe(true);expect(turns[0].content).toContain('histórico recente');
+});

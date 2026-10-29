@@ -500,9 +500,11 @@
   C.hooks.open.push(applyDraft);C.hooks.sync.push(applyDraft);
   $('ai-suggest').addEventListener('click',guard(async()=>{
     const selected=C.selected();if(!selected) {notice('Abra uma conversa primeiro.');return;}
-    $('ai-suggest').disabled=true;notice('A IA está preparando a resposta…');
+    const snapshot=C.contextSnapshot?.(),originalText=$('message-text').value;
+    $('ai-suggest').disabled=true;notice('A IA está lendo as mensagens recentes da conversa…');
     try {
-      const result=await api('/assistant/draft','POST',{jid:selected.jid},undefined,180000);
+      const result=await api('/assistant/draft','POST',{jid:selected.jid},180000),current=C.contextSnapshot?.();
+      if(C.selected()?.jid!==selected.jid || $('message-text').value!==originalText || (snapshot && current && (current.selection!==snapshot.selection || current.revision!==snapshot.revision || current.lastMessageId!==snapshot.lastMessageId)) || (result.contextLastId && current?.lastTextId && result.contextLastId!==current.lastTextId)) {notice('A conversa ou o rascunho mudou. Clique em Sugerir com IA para gerar uma sugestão atualizada.');return;}
       if(result.handoff) {notice('A IA sugere chamar um atendente: não há resposta segura na base.');return;}
       if(!result.text) {notice('A IA não gerou uma resposta.');return;}
       C.insertDraft(result.text);notice('Sugestão inserida no editor. Revise antes de enviar.',true);
