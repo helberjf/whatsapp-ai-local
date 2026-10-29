@@ -14,6 +14,8 @@ const {createAutomationService}=require('./lib/automation.cjs');
 const {createScheduler}=require('./lib/scheduler.cjs');
 const {prepareForward}=require('./lib/forwarding.cjs');
 const {createKnowledgeRoutes}=require('./lib/knowledge-routes.cjs');
+const {createAssistantService}=require('./lib/assistant.cjs');
+const assistantCore=require('./lib/assistant-core.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
@@ -26,7 +28,9 @@ async function readBody(req) {
 function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
   const dataDir=options.storeDir || path.join(root,'data');
-  const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json')});
+  const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
+  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules});
+  const assistant=createAssistantService({store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
   const credentials=createCredentialStore(dataDir);
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
@@ -100,7 +104,7 @@ function createWhatsAppServer(options={}) {
         const input=await readBody(req);
         if(input.status!==undefined && !['open','pending','closed'].includes(input.status)) throw new ApiError('Situação inválida.',422);
         if(input.labels!==undefined && (!Array.isArray(input.labels) || input.labels.length>10 || input.labels.some(label=>typeof label!=='string' || !label.trim() || label.length>40))) throw new ApiError('Use até 10 etiquetas de até 40 caracteres.',422);
-        return json(res,200,await store.update(data=>{const contact=data.contacts[jid]={...contactDefault(),...data.contacts[jid]};if(input.status!==undefined) contact.status=input.status;if(input.labels!==undefined) contact.labels=[...new Set(input.labels.map(label=>label.trim()))];return contact;}));
+        return json(res,200,await store.update(data=>{const contact=data.contacts[jid]={...contactDefault(),...data.contacts[jid]};if(input.status!==undefined) contact.status=input.status;if(input.labels!==undefined) contact.labels=[...new Set(input.labels.map(label=>label.trim()))];if(input.aiMode!==undefined) assistant.applyMode(contact,input.aiMode);return contact;}));
       }
       if(route==='/api/settings' && ['GET','PATCH'].includes(req.method)) {
         if(req.method==='GET') return json(res,200,(await store.read()).settings);
@@ -135,14 +139,14 @@ function createWhatsAppServer(options={}) {
         const media=await client.media(jid,id);if(typeof media.base64!=='string') throw new ApiError('Mídia indisponível. Abra a mensagem no celular.');
         return json(res,200,{base64:media.base64,mimeType:media.mimetype || 'application/octet-stream',fileName:media.fileName || 'anexo'});
       }
-      const handled=await extra(req,route,url,readBody);if(handled) return json(res,handled.status,handled.body);
+      const handled=(await extra(req,route,url,readBody)) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
       return json(res,404,{error:'Endereço não encontrado.'});
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });
   server.transcriptions=transcriptions;
   server.scheduler=scheduler;
-  server.on('listening',()=>{automation.start();scheduler.start();});
-  server.on('close',()=>{automation.stop();scheduler.stop();credentials.close().catch(()=>{});});
+  server.on('listening',()=>{automation.start();scheduler.start();assistant.start();});
+  server.on('close',()=>{automation.stop();scheduler.stop();assistant.stop();credentials.close().catch(()=>{});});
   return server;
 }
 if(require.main===module) {

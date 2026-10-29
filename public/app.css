@@ -90,3 +90,9 @@ details.more{border:1px solid var(--line);border-radius:10px;padding:10px 12px;m
 @media(max-width:900px){.field-row.three,.field-row.four{grid-template-columns:1fr 1fr}}
 
 .panel-list.tall{max-height:52vh;margin-top:12px}
+
+/* ===== v4: IA no atendimento ===== */
+.button.compact{min-height:28px;padding:4px 10px;font-size:10px;margin:0 3px 8px auto}.quick-reply{margin-right:6px}
+.chat-status.ai{background:#1d1a31;color:#c4b2ff;border:1px solid #302a52}
+.check.big{font-size:13px;font-weight:550;margin:12px 0}.log-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto}.log-row{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid #15211d;border-radius:8px;background:#0a1411;font-size:12px}
+.rules-list{display:flex;flex-direction:column;gap:10px;max-height:55vh;overflow:auto;margin:10px 0}.rule-card{border:1px solid var(--line);border-radius:10px;padding:10px;background:#0a1411}.rule-card.off{opacity:.55}.rule-card textarea{width:100%;margin-top:8px;padding:8px 9px;border:1px solid #25352f;border-radius:6px;background:#0c1613;color:var(--ink);font-size:12px;resize:vertical}.rule-head{display:flex;align-items:center;gap:10px}.rule-head .cell-input{flex:1}

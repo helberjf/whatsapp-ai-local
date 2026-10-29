@@ -2,7 +2,7 @@
   'use strict';
   const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
-  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[]};
+  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
   const runHooks=(name,...args)=>{for(const hook of hooks[name]) try {hook(...args);}catch {}};
   const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
   let transcriptionSettings=null,transcriptionSettingsLoading=null;
@@ -50,6 +50,7 @@
       const avatar=el('span','avatar',initials(chat.name));globalThis.WhatsAppAvatars?.decorate?.(avatar,chat);button.append(avatar);
       const copy=el('span','chat-text'),title=el('span','chat-title');title.append(el('strong','',chat.name));
       if(['pending','closed'].includes(chat.status)) title.append(el('span','chat-status '+chat.status,statuses[chat.status]));
+      if(chat.aiMode==='draft' || chat.aiMode==='auto') title.append(el('span','chat-status ai',chat.aiDraft && chat.lastMessage && !chat.lastMessage.fromMe?'IA: rascunho pronto':chat.aiMode==='auto'?'IA automática':'IA rascunho'));
       title.append(el('time','',time(chat.lastMessage?.timestamp)));
       const preview=el('span','chat-preview');preview.append(el('p','',chat.lastMessage?.text || (chat.lastMessage?.type && chat.lastMessage.type!=='text'?'Anexo recebido':statuses[chat.status])));
       if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
@@ -278,7 +279,7 @@
   }
   async function loadContact(jid=selected?.jid) {
     if(!jid) return;const version=selection,detail=await api('/contact?jid='+encodeURIComponent(jid));if(selected?.jid!==jid || version!==selection) return;
-    $('contact-status').value=detail.status;$('contact-labels').value=detail.labels.join(', ');
+    $('contact-status').value=detail.status;$('contact-ai').value=detail.aiMode || 'off';$('contact-labels').value=detail.labels.join(', ');
     const fragment=document.createDocumentFragment();for(const note of detail.notes) {const row=el('article','note');row.append(el('p','',note.text),el('time','',dateTime(note.at)));fragment.append(row);}$('notes').replaceChildren(fragment);
   }
   function contactPhone(chat) {return chat.phone?phoneLabel(chat.phone):chat.jid.endsWith('@lid')?'Identificador privado do WhatsApp':phoneLabel(chat.jid.split('@')[0]);}
@@ -297,8 +298,8 @@
     globalThis.WhatsAppFeatures?.onSelectChat?.(chat);
     globalThis.WhatsAppSchedule?.onSelectChat?.(chat);
     renderChats();renderMessages();$('messages').replaceChildren(el('p','muted','Carregando histórico…'));
-    $('contact-status').value=chat.status || 'open';$('contact-labels').value=(chat.labels || []).join(', ');$('notes').replaceChildren();
-    try {await Promise.all([loadMessages(),loadContact(chat.jid),loadTranscriptions(chat.jid)]);}catch(error) {notice(error.message);}
+    $('contact-status').value=chat.status || 'open';$('contact-ai').value=chat.aiMode || 'off';$('contact-labels').value=(chat.labels || []).join(', ');$('notes').replaceChildren();
+    try {await Promise.all([loadMessages(),loadContact(chat.jid),loadTranscriptions(chat.jid)]);runHooks('open',chat);}catch(error) {notice(error.message);}
   }
   function renderTemplates() {
     $('quick-template').replaceChildren(el('option','','Escolher uma resposta…'));$('quick-template').firstElementChild.value='';
@@ -443,7 +444,7 @@
   $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
-    try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice('Atendimento salvo.',true);}catch(error) {notice(error.message);}finally {button.disabled=false;}
+    try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice('Atendimento salvo.',true);}catch(error) {notice(error.message);}finally {button.disabled=false;}
   });
   $('note-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;

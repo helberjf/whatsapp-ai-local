@@ -11,14 +11,14 @@ Desenvolvimento de sistemas web e aplicativos de acordo com a necessidade do neg
 ## 3. Sistemas prontos para implantar
 Sistemas já desenvolvidos que podem ser instalados e personalizados para a empresa do cliente, com identidade visual e configurações próprias. A lista completa está no documento "Sistemas prontos".
 
-## 4. Venda de passagens aéreas
-Cotação e emissão de passagens para Europa, Brasil e Estados Unidos, com opção de emissão com milhas ou em dinheiro. Detalhes no documento "Passagens aéreas".
+## 4. Venda de passagens aéreas (Brasil e Mundo)
+Cotação e emissão de passagens no Brasil e para o mundo (Europa, Estados Unidos e outros destinos), com opção de emissão com milhas ou em dinheiro. Detalhes no documento "Passagens aéreas".
 
-## 5. Importação de produtos da China
-Serviço de importação sob demanda: busca de fornecedores, negociação, compra, frete internacional, desembaraço e entrega. Detalhes no documento "Importação da China".
+## 5. Importação de produtos (Europa, China e EUA)
+Serviço de importação sob demanda: busca de fornecedores ou lojas, negociação, compra, frete internacional, desembaraço e entrega. Detalhes no documento "Importação de produtos".
 
 ## Como pedir um orçamento
-O cliente informa o que precisa e o atendente retorna com a proposta. Para sites e sistemas: objetivo, público, funcionalidades desejadas, referências e prazo desejado. Para passagens e importação: veja os dados necessários em cada documento.
+O cliente informa o que precisa e o atendente retorna com a proposta. Para sites e sistemas: objetivo, público, funcionalidades desejadas, referências e prazo desejado. Para passagens e importação (Europa, China ou EUA): veja os dados necessários em cada documento.
 
 ## Importante
 - Preços, prazos e condições são sempre confirmados pelo atendente na proposta.
