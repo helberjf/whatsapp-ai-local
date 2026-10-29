@@ -391,9 +391,34 @@
   document.addEventListener('click',event=>{if(!event.target.closest?.('.global-search')) $('global-results').hidden=true;});
 
   // ---------- Atendimento automático, regras e classificação de contatos ----------
-  let assistant=null,rulesDraft=[];
+  let assistant=null,rulesDraft=[],audienceSelect=null,audienceSave=null;
   const MODE_LABEL={off:'Desligada',draft:'Rascunho',auto:'Automática'};
   const ACTION_LABEL={draft:'Rascunho preparado',sent:'Resposta enviada',handoff:'Chamou atendente',error:'Erro'};
+  const AUDIENCE_LABEL={classified:'Apenas contatos classificados',all:'Todos os contatos',new:'Apenas conversas novas'};
+  const AUDIENCE_HINT={
+    classified:'A IA prepara rascunhos ou responde conforme a classificação de cada contato. Respostas automáticas exigem a chave geral ligada.',
+    all:'Com a chave geral ligada, a IA atende todos os contatos individuais, inclusive quem já conversou com você. Contatos em “Desligada”, em rascunho ou com automações pausadas mantêm sua escolha.',
+    new:'Com a chave geral ligada, a IA atende conversas iniciadas depois da ativação, sem histórico anterior. Contatos admitidos continuam atendidos nas próximas mensagens, sem histórico anterior de mensagens recebidas ou enviadas. Estar salvo na agenda não define se um contato é novo. Contatos em “Desligada”, em rascunho ou com automações pausadas mantêm sua escolha.'
+  };
+  function renderAudienceHint() {if(audienceSelect) $('assistant-audience-hint').textContent=AUDIENCE_HINT[audienceSelect.value] || AUDIENCE_HINT.classified;}
+  function buildAudienceControls() {
+    const anchor=$('assistant-summary');if(!anchor?.parentNode) return;
+    const box=el('div','assistant-audience-controls'),label=el('label','field','Quem a IA pode atender?');
+    audienceSelect=el('select');audienceSelect.id='assistant-audience';audienceSelect.setAttribute('aria-describedby','assistant-audience-hint');
+    for(const [value,text] of Object.entries(AUDIENCE_LABEL)) {const option=el('option','',text);option.value=value;audienceSelect.append(option);}
+    audienceSelect.value='classified';audienceSelect.addEventListener('change',renderAudienceHint);label.append(audienceSelect);
+    const hint=el('p','muted');hint.id='assistant-audience-hint';
+    audienceSave=textButton('Salvar público','button secondary',async()=>{
+      if(!assistant || audienceSave.disabled) return;
+      audienceSave.disabled=true;const audience=audienceSelect.value;$('assistant-audience-status').textContent='Salvando público…';
+      try {assistant=await api('/assistant','PUT',{audience});renderAssistant();$('assistant-audience-status').textContent='Público salvo.'+(assistant.enabled?' Vale para as próximas mensagens.':' A chave geral continua desligada.');}
+      catch(error) {$('assistant-audience-status').textContent=error.message;}
+      finally {audienceSave.disabled=false;}
+    });audienceSave.id='assistant-audience-save';
+    const status=el('p','form-status assistant-audience-status');status.id='assistant-audience-status';status.setAttribute('role','status');
+    box.append(label,hint,audienceSave,status);anchor.parentNode.insertBefore(box,anchor);renderAudienceHint();
+  }
+  buildAudienceControls();
   async function refreshAssistant() {assistant=await api('/assistant');rulesDraft=assistant.rules.map(rule=>({...rule}));renderAssistant();}
   function renderRules() {
     const fragment=document.createDocumentFragment();
@@ -412,7 +437,8 @@
   function renderAssistant() {
     if(!assistant) return;
     $('assistant-enabled').checked=assistant.enabled;
-    $('assistant-summary').textContent=`Contatos em rascunho: ${assistant.counts.draft} · em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.');
+    if(audienceSelect) {audienceSelect.value=assistant.audience || 'classified';renderAudienceHint();}
+    $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.');
     const names=new Map(C.chats().map(chat=>[chat.jid,chat.name])),fragment=document.createDocumentFragment();
     for(const entry of assistant.log) {
       const row=el('li','log-row'),who=names.get(entry.jid) || phoneLabel(entry.jid.split('@')[0]);
@@ -424,7 +450,8 @@
   }
   $('assistant-enabled').addEventListener('change',async()=>{
     const wanted=$('assistant-enabled').checked;
-    if(wanted && !confirm('Ligar as respostas automáticas? A IA passará a responder sozinha, pelo seu WhatsApp, apenas aos contatos marcados como "Automática".')) {$('assistant-enabled').checked=false;return;}
+    const audience=assistant?.audience || 'classified',target=audience==='all'?'todos os contatos individuais':audience==='new'?'conversas novas sem histórico anterior e suas próximas mensagens':'apenas aos contatos marcados como “Automática”';
+    if(wanted && !confirm('Ligar as respostas automáticas? A IA passará a responder sozinha, pelo seu WhatsApp, a '+target+'. Contatos em “Desligada”, em rascunho ou com automações pausadas mantêm sua escolha.')) {$('assistant-enabled').checked=false;return;}
     try {assistant=await api('/assistant','PUT',{enabled:wanted});renderAssistant();$('assistant-status').textContent=wanted?'Respostas automáticas ligadas.':'Respostas automáticas desligadas: contatos em "Automática" passam a receber só rascunho.';}
     catch(error) {$('assistant-enabled').checked=!wanted;$('assistant-status').textContent=error.message;}
   });

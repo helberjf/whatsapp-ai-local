@@ -52,7 +52,7 @@ function message(number) {
 }
 
 const pagesFile=path.join(__dirname,'..','public','pages.js');
-async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},onForward=async()=>message(2),onContactsSync=async()=>({total:1,named:1}),onMedia=async()=>({base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'}),scheduleModule,FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false,withPages=false,kbDocs=[],catalog=[]}={}) {
+async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({deleted:true}),onMessages=async()=>{},onForward=async()=>message(2),onContactsSync=async()=>({total:1,named:1}),onMedia=async()=>({base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'}),scheduleModule,FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false,withPages=false,kbDocs=[],catalog=[]}={}) {
   const nodes=new Map(),intervals=[],requests=[],copied=[];
   let history=historyRecords || Array.from({length:count},(_,index)=>message(index+1));
   let transcriptionSettings={defaultProvider:'whisper',whisperModel:'base',language:'pt',aiConfigured,aiModel:'gpt-transcribe'};
@@ -84,11 +84,13 @@ async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},
       const descending=history.filter(record=>record.jid===url.searchParams.get('jid')).reverse();
       output={messages:descending.slice((page-1)*50,page*50).reverse(),page,pages:Math.max(1,Math.ceil(history.length/50)),total:history.length};
       await onMessages({page});
-    } else if(['/api/send','/api/send-media'].includes(url.pathname)) {
+    } else if(['/api/send','/api/send-media','/api/send-sticker'].includes(url.pathname)) {
       const input=JSON.parse(options.body);
       await onSend(input);
       output={...message(history.length+1),text:input.text || input.caption || ''};
-    } else if(url.pathname==='/api/read') output={read:true};
+    } else if(url.pathname==='/api/messages/delete') output=await onDelete(input);
+    else if(url.pathname==='/api/contact/details') output={name:'Ana',phone:'5511998765432',about:'Atendimento',capabilities:{disappearingMessages:false}};
+    else if(url.pathname==='/api/read') output={read:true};
     else if(url.pathname==='/api/media') output=await onMedia();
     else if(url.pathname==='/api/kb') output={documents:kbDocs,ai:false};
     else if(url.pathname==='/api/products') output={products:catalog};
@@ -126,6 +128,52 @@ async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},
     }
   };
 }
+
+test('links HTTP ficam clicáveis sem executar HTML ou protocolos de script',async()=>{
+  const browser=await createBrowser({historyRecords:[{...message(1),text:'Veja https://example.com/catalogo?q=1 e www.example.org. <script>alert(1)</script> javascript:alert(1)'}]});
+  const links=descendants(browser.get('messages')).filter(node=>node.tagName==='A');
+  assert.equal(links.length,2);assert.equal(links[0].href,'https://example.com/catalogo?q=1');
+  assert.equal(links[1].href,'https://www.example.org/');assert.equal(links[0].rel,'noopener noreferrer');
+  assert.match(browser.get('messages').textContent,/<script>alert\(1\)<\/script>/);
+});
+
+test('vídeo carregado preserva posição e elemento quando chega outra mensagem',async()=>{
+  const browser=await createBrowser({historyRecords:[{...message(1),type:'video',text:'Vídeo de exemplo'}],onMedia:async()=>({base64:'aGVsbG8=',mimeType:'video/mp4',fileName:'demo.mp4'})});
+  const card=findClass(browser.get('messages'),'video-card');assert.ok(card);
+  await findClass(card,'video-load').emit('click');const player=descendants(card).find(node=>node.tagName==='VIDEO');
+  assert.match(player.src,/^blob:/);assert.notEqual(player.autoplay,true);player.currentTime=12;
+  browser.appendMessages(1);await browser.poll();
+  assert.equal(descendants(browser.get('messages')).find(node=>node.tagName==='VIDEO'),player);assert.equal(player.currentTime,12);
+});
+
+test('apagar mensagem enviada exige confirmação e não envia o rascunho',async()=>{
+  const browser=await createBrowser({historyRecords:[message(1)]});
+  browser.get('message-text').value='Preservar rascunho';await browser.get('message-text').emit('input');
+  const button=findClass(browser.get('messages'),'message-delete');assert.ok(button);await button.emit('click');
+  assert.equal(browser.get('delete-dialog').open,true);assert.equal(browser.requests.some(req=>req.path==='/api/messages/delete'),false);
+  await browser.get('delete-confirm').emit('click');
+  assert.equal(browser.requests.filter(req=>req.path==='/api/messages/delete').length,1);
+  assert.equal(browser.get('message-text').value,'Preservar rascunho');
+  assert.match(browser.get('messages').textContent,/Mensagem apagada/);
+});
+
+test('emojis entram no rascunho sem enviar a mensagem',async()=>{
+  const browser=await createBrowser();browser.get('message-text').value='Olá';await browser.get('message-text').emit('input');
+  await browser.get('emoji-toggle').emit('click');assert.equal(browser.get('emoji-dialog').open,true);
+  assert.ok(browser.get('emoji-grid').children.length>10);await browser.get('emoji-grid').children[0].emit('click');
+  assert.match(browser.get('message-text').value,/Olá.+/u);assert.equal(browser.requests.some(req=>req.path==='/api/send'),false);
+});
+
+test('remover uma figurinha permite enviar texto normalmente',async()=>{
+  const browser=await createBrowser();browser.get('sticker-file').files=[{name:'figurinha.webp',size:50,type:'image/webp'}];await browser.get('sticker-file').emit('change');await browser.get('remove-attachment').emit('click');
+  browser.get('message-text').value='Texto após remover a figurinha';await browser.get('message-text').emit('input');await browser.get('composer').emit('submit');
+  assert.equal(browser.requests.filter(req=>req.path==='/api/send').length,1);assert.doesNotMatch(browser.get('send-status').textContent,/não têm legenda/);
+});
+
+test('enquetes recebidas mostram as opções sem tentar baixar mídia',async()=>{
+  const browser=await createBrowser({historyRecords:[{...message(1),type:'poll',poll:{name:'Qual opção?',options:['Primeira','Segunda'],selectableCount:1},text:'Qual opção?'}]});
+  assert.ok(findClass(browser.get('messages'),'poll-card'));assert.match(browser.get('messages').textContent,/Primeira/);assert.match(browser.get('messages').textContent,/Segunda/);assert.equal(browser.requests.some(req=>req.path==='/api/media'),false);
+});
 
 test('confirmar envio não apaga o próximo rascunho digitado durante a requisição',async()=>{
   const started=deferred(),finish=deferred();

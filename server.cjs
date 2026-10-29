@@ -16,6 +16,7 @@ const {prepareForward}=require('./lib/forwarding.cjs');
 const {createKnowledgeRoutes}=require('./lib/knowledge-routes.cjs');
 const {createAssistantService}=require('./lib/assistant.cjs');
 const assistantCore=require('./lib/assistant-core.cjs');
+const {createTriggerService}=require('./lib/triggers.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
@@ -28,13 +29,14 @@ async function readBody(req) {
 function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
   const dataDir=options.storeDir || path.join(root,'data');
+  const credentials=options.credentials || createCredentialStore(dataDir);
   const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
-  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules});
+  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules,credentials});
   const assistant=createAssistantService({store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
-  const credentials=createCredentialStore(dataDir);
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
   const crm=createCrmService({store}),automation=createAutomationService({store,client});
+  const triggers=createTriggerService({store,client,now:options.now || Date.now});
   const scheduler=createScheduler({store,client,now:options.now || Date.now});
   const requests=new Map();
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
@@ -62,13 +64,27 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
+        if(file==='index.html' && options.demo) content=content.replace('<body>','<body class="demo-mode"><div class="demo-banner" role="status">DEMO · Fictional contacts · No real WhatsApp connection</div>');
         res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});return res.end(content);
       }
       if(!route.startsWith('/api/')) return json(res,404,{error:'Endereço não encontrado.'});
       const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
+      if(route==='/api/triggers' && ['GET','PUT'].includes(req.method)) return json(res,200,req.method==='GET'?await triggers.settings():await triggers.saveSettings(await readBody(req)));
+      if(route==='/api/triggers/simulate' && req.method==='POST') return json(res,200,await triggers.simulate(await readBody(req)));
+      if(route==='/api/triggers/executions' && req.method==='GET') return json(res,200,await triggers.executions());
+      if(route==='/api/contact/details' && req.method==='GET') return json(res,200,await client.contactDetails(assertJid(url.searchParams.get('jid'))));
+      if(route==='/api/messages/delete' && req.method==='POST') {const input=await readBody(req),jid=assertJid(input.jid),id=textField(input.messageId,200,'Mensagem');return json(res,200,await sendOnce(input,()=>client.deleteMessage(jid,id)));}
+      if(route==='/api/messages/disappearing' && req.method==='POST') {const input=await readBody(req);return json(res,200,await client.disappearingMessages(assertJid(input.jid),input.expiration));}
+      if(route==='/api/send-sticker' && req.method==='POST') {
+        const input=await readBody(req),jid=assertJid(input.jid),mime=input.mimeType;
+        if(!['image/webp','image/png','image/jpeg'].includes(mime) || typeof input.base64!=='string' || (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64) || input.base64.length%4!==0)) throw new ApiError('Envie uma figurinha WEBP, PNG ou JPG de até 1 MB.',422);
+        const bytes=Buffer.from(input.base64,'base64'),valid=bytes.length>0 && bytes.length<=1024*1024 && (mime==='image/webp'?bytes.toString('ascii',0,4)==='RIFF' && bytes.toString('ascii',8,12)==='WEBP':mime==='image/png'?bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):bytes[0]===255 && bytes[1]===216 && bytes[2]===255);
+        if(!valid || input.caption) throw new ApiError('Figurinha inválida. Envie WEBP, PNG ou JPG de até 1 MB e sem legenda.',422);
+        return json(res,200,await sendOnce(input,()=>client.sendSticker(jid,input)));
+      }
       if(route==='/api/scheduled-messages' && req.method==='GET') return json(res,200,await scheduler.list(url.searchParams.get('jid')));
       if(route==='/api/scheduled-messages' && req.method==='POST') return json(res,201,await scheduler.create(await readBody(req)));
       const scheduledMatch=route.match(/^\/api\/scheduled-messages\/([a-zA-Z0-9_-]{8,100})(\/cancel)?$/);
@@ -130,7 +146,7 @@ function createWhatsAppServer(options={}) {
       }
       if(req.method==='POST' && route==='/api/send-media') {
         const input=await readBody(req),jid=assertJid(input.jid);
-        if(!['image','video','audio','document'].includes(input.mediaType) || typeof input.base64!=='string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64) || !input.base64 || Buffer.byteLength(input.base64,'base64')>10*1024*1024) throw new ApiError('Anexo inválido. Envie um arquivo de até 10 MB.',422);
+        if(!['image','video','audio','document'].includes(input.mediaType) || typeof input.base64!=='string' || (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64) || input.base64.length%4!==0) || !input.base64 || Buffer.byteLength(input.base64,'base64')>10*1024*1024) throw new ApiError('Anexo inválido. Envie um arquivo de até 10 MB.',422);
         textField(input.fileName,200,'Nome do arquivo');if(typeof input.mimeType!=='string' || !/^[\w.+-]+\/[\w.+-]+$/.test(input.mimeType) || (input.caption!==undefined && (typeof input.caption!=='string' || input.caption.length>4000))) throw new ApiError('Tipo ou legenda do arquivo inválido.',422);
         return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,input)));
       }
@@ -145,8 +161,12 @@ function createWhatsAppServer(options={}) {
   });
   server.transcriptions=transcriptions;
   server.scheduler=scheduler;
-  server.on('listening',()=>{automation.start();scheduler.start();assistant.start();});
-  server.on('close',()=>{automation.stop();scheduler.stop();assistant.stop();credentials.close().catch(()=>{});});
+  server.triggers=triggers;server.assistant=assistant;
+  let replyTimer=null,replyTick=null;
+  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await triggers.tick();await automation.tick();await assistant.tick();})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
+  server.on('listening',()=>{triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();}});
+  server.cleanup=Promise.resolve();
+  server.on('close',()=>{clearInterval(replyTimer);triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.ai.close()]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

@@ -1,131 +1,200 @@
 # WhatsApp Central
 
-Aplicativo pessoal para usar sua conta do WhatsApp neste computador Windows. Adaptado do módulo Evolution API do `menu-hospede`, com interface escura, menu lateral, resumo das conversas e painel de organização. Os dados e a sessão ficam neste computador; o projeto não inclui planos, cobrança ou gestão de usuários.
+A local WhatsApp workspace for individual customer conversations, contact management, scheduled messages, automatic replies, and answers grounded in a product catalog and knowledge base.
 
-## Abrir
+Built with vanilla JavaScript and Node.js, with Evolution API running in Docker. The application is designed for a single Windows user: no hosted account, subscription layer, or public web server is required. The interface is in Brazilian Portuguese.
 
-Use o atalho **WhatsApp Central** na área de trabalho ou dê dois cliques em **Abrir WhatsApp.cmd**, na pasta deste projeto. O iniciador prepara a configuração na primeira execução, inicia o Docker Desktop, sobe os serviços locais, inicia a central em segundo plano e abre [o webapp](http://127.0.0.1:8766/).
+## Preview
 
-Nesta máquina, o projeto fica em `C:\Users\default.LAPTOP-K8F2QHAF\projects\whatsapp-central`. Para recriar o botão em outro computador, execute **Criar atalho na area de trabalho.cmd**. Também é possível usar `npm start` para iniciar os serviços e abrir o webapp. `npm run serve` executa somente o servidor Node, quando o conector já está ativo.
+These screenshots use the isolated demo with fictional contacts and sample content. They contain no production conversations, phone numbers, or credentials.
 
-No primeiro uso, abra **Conexão → Conectar WhatsApp**. O QR aparece na tela do computador. No celular, vá em **WhatsApp → Aparelhos conectados → Conectar aparelho** e leia o QR. Depois do pareamento, o indicador muda para **Conectado** e a sessão fica salva. Reabrir a central normalmente não exige outro QR.
+| Conversation workspace | Audio, video, and message actions |
+| --- | --- |
+| ![Dark conversation workspace with contact list and customer details](docs/screenshots/workspace.png) | ![Message media controls in the demo conversation](docs/screenshots/media.png) |
+| Automatic reply editor | Knowledge base |
+| ![Split trigger editor with conditions and response composer](docs/screenshots/triggers.png) | ![Knowledge documents and grounded answer workflow](docs/screenshots/knowledge.png) |
 
-Requisitos: Windows, Node.js 22 ou mais recente, Docker Desktop com engine Linux e internet. Esses componentes já estavam instalados neste computador e foram usados na verificação.
+## Try the demo
 
-## Conversas
+The demo needs Node.js 22 or later. It uses a temporary data directory and an in-process fake connector; it does not pair with WhatsApp, contact an AI provider, or send real messages. Background reply workers are disabled.
 
-- Lista com busca por nome, telefone ou etiqueta, filtro de não lidas e situação.
-- Em janela ampla, menu lateral, indicadores reais e três áreas: lista, conversa e painel de organização. Até 760 px, selecione uma conversa e use **←** para voltar à lista.
-- Texto de 14 px nas mensagens e 16 px nos contatos; balões recebidos escuros e enviados verdes.
-- Texto e anexos de até 10 MB. **Ctrl+Enter** envia; as respostas rápidas apenas preenchem o editor.
-- O painel reúne situação, etiquetas, notas, respostas rápidas e conexão. Em janelas menores, o botão de detalhes abre esse painel. As notas não são enviadas ao contato.
-- As fotos dos contatos carregam conforme aparecem na lista. Quando a privacidade do contato impede o acesso, as iniciais continuam visíveis.
-- Os nomes disponíveis nos contatos do WhatsApp são carregados automaticamente, com cache de cinco minutos. Em **Conexão**, use **Atualizar nomes do WhatsApp** para buscar novamente. O conector pode entregar nome de perfil em vez do nome da agenda; identificadores privados sem correspondência explícita continuam numéricos. Nomes não são adivinhados a partir desses identificadores.
-- Os quatro indicadores usam uma faixa compacta para dar mais altura às conversas.
-- Cada áudio aparece em um card: **Carregar áudio** prepara o player, que oferece reprodução, posição, duração e velocidades **1×, 1,5× e 2×**. O áudio é baixado ao clicar; a transcrição continua disponível separadamente.
-- A seta **⌄** em cada mensagem abre **Copiar texto** e **Encaminhar**. A cópia de áudio usa a transcrição disponível. Para encaminhar, escolha o destinatário e confirme no diálogo. Textos, imagens, áudios, vídeos, documentos e figurinhas são suportados, com anexos de até 10 MB. Tipos especiais como contato, localização e mensagem de sistema permanecem no WhatsApp original.
-- **Carregar mensagens anteriores** pagina o histórico sincronizado. A primeira sincronização depende do WhatsApp; ela não garante a importação de todo o histórico antigo. Identificadores privados `@lid` podem aparecer quando o WhatsApp ainda não disponibilizou o nome/telefone.
+```powershell
+npm ci
+npm run demo
+```
 
-O escopo é atendimento individual. Além do editor manual, o robô opcional pode responder às palavras-chave configuradas por você. Disparos, grupos e regras de cobrança/renovação do Mapa Hóspede não fazem parte desta central.
+Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal shutdown removes its temporary data. The demo does not read or change the production `data/` directory or Docker volumes.
 
-## Mensagens programadas
+## What it does
 
-Abra **Mensagens programadas** no menu ou **Programar** no editor da conversa. Escolha o destinatário, escreva o texto, informe a data/hora e clique em **Programar mensagem**. O horário é convertido do fuso deste computador e salvo como um instante com fuso definido. A lista permite editar, cancelar e remarcar; mensagens em envio, enviadas ou sem confirmação não podem ser alteradas.
+- **Conversations:** search and filter by name, phone, labels, unread state, and attendance status; load earlier messages; preserve drafts and scroll position during refreshes.
+- **Messaging:** send text and attachments, insert quick replies, copy message text, forward supported content, use emoji, send stickers, create polls, and delete your own messages for everyone when the connector accepts the request.
+- **Media:** load audio on demand with seek and playback speed controls; play video; display supported images and documents; transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **Contacts and CRM:** maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
+- **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
+- **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
+- **AI assistance:** request a draft or opt into automatic answers. Choose classified contacts, all eligible contacts, or genuinely new conversations admitted after activation. Use the catalog, retrieved knowledge, and editable service rules as context.
+- **Knowledge and products:** import supported documents, inspect retrieved passages, manage product and service cards, and review AI-suggested catalog imports before saving.
 
-O agendamento funciona com o navegador fechado, desde que **computador, central e WhatsApp estejam ligados e conectados**. Se estiver sem conexão no horário, o sistema aguarda por até 15 minutos. Depois desse prazo, marca **Não enviada · remarcar**, sem mandar uma mensagem muito atrasada. A programação é preservada ao reiniciar.
+Disappearing-message timers use native WhatsApp settings through the included connector extension. The interface checks connector capability and reports unavailable or unconfirmed operations; it does not simulate disappearing messages by removing local bubbles.
 
-O envio é reservado em disco antes de chamar o conector. Se a central for interrompida durante essa etapa ou o envio não for confirmado, aparece **Envio sem confirmação**. Confira a conversa antes de programar novamente; não há repetição automática de um envio incerto.
+## Run with your WhatsApp account
 
-Nesta versão, o agendamento é para **texto**. Anexos do editor não são incluídos. O rascunho original é limpo somente quando corresponde ao texto programado e continua sem alterações; edições posteriores permanecem no editor.
+### Requirements
 
-O encaminhamento preserva o conteúdo original, enviado como uma nova mensagem. A Evolution 2.3.7 não expõe o selo nativo “Encaminhada”; a central não simula esse selo. Falhas ao carregar a origem permitem nova tentativa; após o envio começar, a proteção contra duplicação mantém o mesmo identificador.
+- Windows with PowerShell.
+- Node.js **22 or later** and npm.
+- Docker Desktop configured for **Linux containers**.
+- Internet access and a WhatsApp account available for linked-device pairing.
+- Optional: Python, FFmpeg, and OpenAI Whisper for local audio transcription. Ollama is a separate optional installation for local AI answers.
 
-## Transcrever áudios
+### First start
 
-No balão de áudio, use **Transcrever**. O padrão é **Whisper local**, modelo **base**, em português. A transcrição aparece no próprio balão e pode ser copiada. Fechar a conversa não cancela o processamento. Os resultados ficam salvos localmente e reaparecem ao abrir a conversa.
+```powershell
+npm ci
+npm start
+```
 
-Em **Transcrição de áudios**, escolha o modelo e o idioma. `tiny` usa menos recursos; modelos maiores exigem mais memória e tempo de CPU. A instalação desta máquina já possui Python, Whisper, FFmpeg e o modelo base. O processamento aceita áudios de até **10 MB e 10 minutos**, com um áudio por vez e até 20 na fila. Os arquivos temporários são apagados depois do processamento. Uma interrupção marca o trabalho como falho; uma nova tentativa depende do seu clique.
+The Windows launcher creates local connector credentials if none exist, starts Docker Desktop when needed, brings up the containers, starts the application in the background, and opens [WhatsApp Central](http://127.0.0.1:8766/). Existing configuration and pairing data are preserved.
 
-Em outra instalação Windows, instale FFmpeg no PATH e prepare o Python:
+In **Conexão WhatsApp**, choose **Conectar WhatsApp**. On the phone, open **Linked devices → Link a device**, then scan the QR code shown on the computer. Pairing survives ordinary restarts while its Docker volumes remain intact.
+
+Other entry points:
+
+| Command or launcher | Purpose |
+| --- | --- |
+| `npm run configure` | Generate missing initial configuration without replacing existing secrets. |
+| `npm run serve` | Run only the Node server when configuration and the connector are already available. |
+| `npm run shortcut` | Create the Windows desktop shortcut. |
+| `Abrir WhatsApp.cmd` / `Iniciar WhatsApp.cmd` | Start the local stack and open the application. |
+| `Parar WhatsApp.cmd` | Stop the application and containers while preserving data. |
+| `Ativar inicio com Windows.cmd` | Opt into starting the services at Windows sign-in. |
+| `Desativar inicio com Windows.cmd` | Remove that sign-in shortcut. |
+
+The application listens on `127.0.0.1:8766`; Evolution API is published on `127.0.0.1:8767`. PostgreSQL and Redis have no published Windows ports. Keep the computer awake, Node running, Docker active, and WhatsApp connected for scheduling and automatic replies to work with the browser closed.
+
+### Local transcription
+
+Install FFmpeg on the Windows `PATH`, then prepare Whisper:
 
 ```powershell
 python -m pip install openai-whisper
 python -c "import whisper; whisper.load_model('base')"
 ```
 
-O segundo comando baixa o modelo. Para usar outro modelo, substitua `base` pelo nome escolhido. A central procura Python 3.10 em `%LOCALAPPDATA%\Programs\Python\Python310\python.exe` e, depois, `python.exe` no PATH. Defina `WHATSAPP_WHISPER_PYTHON` ou `WHATSAPP_FFMPEG` antes de abrir a central para indicar executáveis diferentes.
+The second command downloads the model. Configure model and language in **Transcrição de áudios**; the default is local Whisper `base` in Portuguese. Set `WHATSAPP_WHISPER_PYTHON` or `WHATSAPP_FFMPEG` before launching if the executables are in another location. The application first checks the standard Python 3.10 installation path, then `python.exe` on `PATH`.
 
-**IA (OpenAI)** é uma alternativa selecionada por áudio. Cole sua chave de API na configuração de transcrição. Essa opção envia o áudio à OpenAI usando `gpt-transcribe`; depende de internet e de uma conta de API habilitada. O Whisper local não precisa dessa chave. Não há troca automática do Whisper para a IA em caso de falha.
+Transcription accepts audio up to **10 MB and 10 minutes**, processes one job at a time, and allows up to 20 queued jobs. Temporary audio files are removed after processing. Interrupted or failed jobs require an explicit retry; local failures do not automatically send audio to a cloud provider.
 
-A chave fica **criptografada no banco SQLite `data/credentials.sqlite`**, com DPAPI do Windows no escopo do usuário atual. A interface recebe somente a indicação de chave configurada. O segredo não fica nos argumentos de processos, nos logs nem nos metadados de transcrição. Para trocar de usuário/computador, informe a chave novamente; copiar o banco não transfere a capacidade de descriptografá-la.
+## Automatic replies and scheduling
 
-Referências de integração: [Whisper oficial](https://github.com/openai/whisper) e [transcrição de arquivos da OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text). A pasta `video-mp3-transcript` foi consultada: ela contém conversão com FFmpeg, sem um transcritor pronto.
+Automatic replies start **disabled**. Saving rules, selecting an AI audience, or opening a page does not turn them on. Enable each system's master switch deliberately. The existing keyword automation remains available alongside the richer trigger editor.
 
-## CRM e robô por palavras-chave
+Trigger rules are evaluated in list order, and the first matching rule supplies the response sequence. Business hours include selected weekdays and an IANA time zone, with overnight schedules supported. An absence reply is triggered by an incoming message **outside** those hours; it is not a proactive scheduled broadcast. Optional inactivity means elapsed time since the preceding conversation message, not time since opening the interface.
 
-Abra **CRM** no menu para acompanhar contatos por etapa, anotar observações, definir o próximo contato e abrir a conversa. As mudanças e o histórico ficam neste computador. A organização foi adaptada do CRM do `menu-hospede` para a sua conta pessoal.
+Text responses accept `{name}` or `{nome}` to insert the contact's available display name. If a usable name is unavailable, the Portuguese fallback is “você”; private identifiers are not treated as names.
 
-Em **Automações**, cadastre o nome da regra, palavras ou frases e a resposta. Escolha entre encontrar um trecho ou uma palavra/frase inteira. A comparação ignora maiúsculas e acentos; a primeira regra correspondente prevalece. O simulador mostra o resultado sem enviar nada ao WhatsApp.
+AI audience options have distinct meanings:
 
-O robô começa **desligado e sem regras**. Após salvar suas regras e ativá-lo, ele acompanha mensagens de texto novas mesmo com o navegador fechado, enquanto o computador, Node e Docker estiverem ativos. Mensagens antigas, mensagens suas, grupos e mídias não geram respostas. É possível pausar o robô para um contato no atendimento/CRM. O intervalo mínimo entre respostas ao mesmo contato é configurável.
+| Audience | Eligibility |
+| --- | --- |
+| Classified contacts | Follow each contact's explicit draft or automatic classification. |
+| All contacts | Include eligible individual contacts, including existing conversations, after opt-in. |
+| New conversations | Admit contacts whose first incoming message arrives after activation and has no earlier incoming or outgoing conversation history. Admitted contacts continue to receive help on later messages. Being saved in the address book does not decide eligibility; existing conversations are excluded. |
 
-O identificador da mensagem é reservado em disco antes do envio para evitar duplicação. Se o envio ficar sem confirmação, o registro aparece no histórico e não é reenviado automaticamente. Ao reabrir a central, mensagens do período em que ela esteve desligada não disparam respostas retroativas.
+Explicit **Off**, draft mode, and per-contact automation pauses remain effective. The assistant limits responses per contact, waits at least 20 seconds between answers, and allows at most six responses per hour. Unanswered questions can be handed off to an operator rather than invented. Reply workers coordinate message claims so a trigger, the keyword robot, and the assistant do not all answer the same incoming message. Old messages are not replayed as a catch-up campaign after startup or activation.
 
-## Usar o computador como servidor
+Scheduled jobs support **text only**. They continue while the browser is closed, but the local services must remain available. A disconnected job can wait up to 15 minutes after its due time; older jobs become missed and require rescheduling. Persisted send reservations reduce duplicate sends. If a process stops during delivery, the result can be **uncertain**: check WhatsApp before creating another send. The application does not promise exactly-once delivery across a remote connector.
 
-O Node fica em segundo plano; fechar o navegador não encerra o conector. Mantenha o computador ligado, com internet, sem suspensão e com Docker ativo.
+## Knowledge retrieval and AI
 
-- **Ativar inicio com Windows.cmd** cria um atalho na pasta Inicializar do seu usuário. A central e Docker iniciam ao entrar no Windows, sem abrir o navegador.
-- **Desativar inicio com Windows.cmd** remove apenas esse atalho.
-- **Parar WhatsApp.cmd** para a central e seus três containers, preservando sessão e histórico.
-- **Iniciar WhatsApp.cmd** recupera os serviços e reutiliza a sessão. O botão **Desconectar** encerra o vínculo e exige novo pareamento.
+The knowledge base accepts text-bearing **PDF, DOCX, TXT, Markdown, CSV, and JSON** files up to 10 MB, plus pasted text. Image-only scanned PDFs require OCR outside this application. Documents in [`base-conhecimento/`](base-conhecimento/) can be synchronized into the knowledge base; [`produtos-iniciais.json`](produtos-iniciais.json) supplies the initial catalog for a normal installation.
 
-A central está disponível apenas neste computador, em `127.0.0.1:8766`. A API escuta em `127.0.0.1:8767`; banco e cache não publicam portas no Windows. Não é necessário domínio, roteador ou VPS externa para este uso local.
+Retrieval splits documents into passages and ranks lexical matches with **BM25** after Portuguese-oriented normalization. This is keyword-based retrieval, not embedding-based semantic search. Relevance percentages are normalized retrieval scores, not calibrated confidence estimates. Without an AI provider, the application can still show the matching source passages.
 
-## Base de Conhecimento, Produtos e Assistente de IA
+Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
 
-- **Base de Conhecimento (RAG):** envie PDF, DOCX, TXT, MD, CSV ou JSON (até 10 MB) ou cole um texto. PDFs escaneados (só imagem) não têm texto e são recusados com aviso. Cada documento é dividido em partes e a busca por relevância (BM25, sem acentos nem plural) recupera os trechos certos para cada pergunta. Em **Testar a base** você vê a resposta e os trechos usados. **A base já vem pronta:** os arquivos da pasta `base-conhecimento/` (serviços, sistemas, passagens para Europa, Brasil e EUA, importação da China e regras de atendimento) entram sozinhos ao abrir a central. Edite esses arquivos ou copie novos para a pasta e use **Sincronizar pasta**. Só falta informar a chave de API em **Assistente de IA** para a IA redigir as respostas; sem a chave a base já mostra os trechos encontrados.
-- **Assistente de IA:** informe provedor (OpenAI, Anthropic, Google Gemini, Ollama ou API compatível com OpenAI), modelo e chave. A chave fica em `data/ai.json` e não volta para a tela. Sem IA configurada a base continua funcionando e mostra os trechos encontrados. Ao usar a IA, a pergunta e os trechos (ou os documentos escolhidos na importação) são enviados ao provedor; com Ollama tudo fica neste computador.
-- **Produtos e serviços:** o formulário segue o da loja (`ecommerce`): título, tipo (produto ou serviço), categoria, descrição, preço, estoque, desconto %, garantia, ativo, frete grátis, frete e dimensões e até 5 fotos. A vitrine tem filtros por categoria e tipo e selos de desconto, frete grátis e estoque. O catálogo inicial (`produtos-iniciais.json`: criação de sites e sistemas, passagens para Europa, Brasil e EUA, importação da China e os sistemas prontos) é carregado na primeira abertura, sem preços (aparecem como "sob consulta"); edite para incluir valores. **Usar na conversa** coloca a ficha pronta (e a foto, como anexo) no editor da conversa aberta; você revisa e envia. Também há a aba **Produtos** no painel da conversa.
-- **Importar da base (IA):** a IA lê os documentos escolhidos e propõe a lista de produtos; você revisa, edita e confirma. Itens já cadastrados (mesmo código ou nome) aparecem desmarcados e, se marcados, atualizam o existente. O texto dos documentos é tratado como dado, e a saída da IA é validada antes de aparecer.
-- **Contatos (CRM):** lista de todos os contatos com situação, etiquetas, notas e a classificação de IA; clique para abrir o atendimento. A busca do topo procura em conversas, produtos e documentos.
-- **IA no atendimento:** as respostas usam o **catálogo da aba Produtos** (produtos e serviços ativos), os trechos da base e as **regras de atendimento**, que você edita em **Assistente de IA** (adicionar, editar, desativar e remover; já vêm regras de sites, sistemas, importação Europa/China/EUA e passagens Brasil/Mundo). Em **Contatos** (um a um ou em lote) ou no painel da conversa, classifique cada contato: **Desligada** (padrão), **Rascunho** (a IA deixa a resposta pronta no editor ao chegar uma mensagem nova) ou **Automática** (a IA responde sozinha, só com a chave geral ligada). O botão **Sugerir com IA**, ao lado das respostas rápidas, gera uma sugestão a qualquer momento. Travas: só mensagens de texto recebidas depois da classificação, no máximo 6 respostas por hora e 20 s de intervalo por contato, nunca repete a mesma mensagem, e quando não sabe passa para atendente (situação Pendente e etiqueta Atendente). A atividade aparece na mesma tela.
-- **IA local (Ollama):** com o provedor Ollama e o modelo `qwen2.5:7b` tudo roda neste notebook (RTX 4060, ~40 palavras por segundo), sem chave e sem enviar dados para fora. O contexto é de 8192 tokens.
+## Architecture
 
-A IA apenas sugere ou propõe; nenhuma mensagem é enviada ao cliente sem o seu clique em Enviar.
+```mermaid
+flowchart LR
+    Browser[Vanilla JS browser UI] -->|Loopback HTTP + session token| Node[Node.js HTTP server]
+    Node --> Services[CRM · scheduling · triggers · assistant · knowledge]
+    Services --> Files[Local JSON stores and document/media files]
+    Services --> Vault[SQLite + Windows DPAPI AI credentials]
+    Node --> Evolution[Evolution API + local extension]
+    Evolution --> PostgreSQL[(PostgreSQL)]
+    Evolution --> Redis[(Redis)]
+    Evolution --> WhatsApp[WhatsApp linked device]
+    Services --> Optional[Optional AI endpoint / local Whisper]
+```
 
-## Arquivos e persistência
+| Area | Implementation |
+| --- | --- |
+| Browser | [`public/`](public/): native DOM, CSS, and JavaScript; no frontend framework or build step. |
+| HTTP boundary | [`server.cjs`](server.cjs): request validation, local-origin protections, connector calls, and service routing. |
+| Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
+| Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, and retrieval. |
+| Persistence | [`lib/store.cjs`](lib/store.cjs): serialized updates and atomic JSON replacement; credentials use SQLite separately. |
+| Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
+| Windows lifecycle | [`scripts/`](scripts/): configuration, start/stop, shortcuts, optional sign-in startup, and secret protection. |
 
-- `server.cjs`, `lib/`: servidor HTTP, adaptação Evolution e metadados do atendimento.
-- `public/`: interface sem dependências externas.
-- `infra/compose.yaml`: Evolution API **v2.3.7**, PostgreSQL 16 e Redis 7.
-- `scripts/`: configuração, início, parada e início com Windows.
-- `data/config.json` e `infra/.env`: segredos gerados localmente; não compartilhe esses arquivos.
-- `data/atendimento.json`: notas, etiquetas, respostas rápidas e registros de envio para evitar duplicação.
-- `data/atendimento.json` também guarda CRM, regras e histórico do robô, configurações públicas e resultados de transcrição.
-- `data/atendimento.json` guarda também mensagens programadas, situação de cada envio e identificadores de encaminhamento para evitar duplicação.
-- `data/credentials.sqlite`: chave da OpenAI criptografada com a proteção do usuário Windows.
-- `data/knowledge.json` e `data/knowledge/`: documentos da base de conhecimento. `data/produtos.json` e `data/product-images/`: produtos e fotos. `data/ai.json`: configuração da IA (inclui a chave; não compartilhe).
-- `data/server.log`, `data/server.err.log` e `data/startup.log`: diagnóstico local.
+The runtime has no npm framework dependencies. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
 
-Sessão e mensagens ficam nos volumes Docker `whatsapp-local_instances`, `whatsapp-local_postgres_data` e `whatsapp-local_redis_data`. **Não remova esses volumes nem use `docker compose down -v` para uma parada normal.** Copiar apenas a pasta do projeto não copia o banco nem a sessão desses volumes.
+## Privacy and persistence
 
-O nome interno Docker permanece `whatsapp-local` para reutilizar os volumes e o pareamento existentes durante a mudança de pasta. `data/`, `infra/.env` e atalhos `.lnk` ficam fora do Git. O código pode ser versionado sem publicar os dados da conta.
+This is a local, single-user application, not a hardened multi-user service. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
 
-Neste computador, o Avast inspeciona HTTPS. `scripts/windows-ca.ps1` valida a conexão com o WhatsApp usando a confiança existente do Windows, exporta somente o certificado público da raiz já confiada e o disponibiliza ao Node do conector e da central via `NODE_EXTRA_CA_CERTS`. A validação TLS permanece ativa. Nenhuma chave privada do Windows é exportada.
+AI credentials are encrypted in `data/credentials.sqlite` with **Windows DPAPI for the current Windows user**. The active assistant provider key and the OpenAI transcription key are stored separately; the interface receives only configured/not-configured information. Copying the database to another computer or user does not make those keys decryptable there. On unsupported platforms, credential protection fails explicitly; there is no plaintext fallback.
 
-## Testar e diagnosticar
+For older installations, the application migrates a plaintext assistant key from `data/ai.json` when it is accessed: it saves the protected value, verifies it can be read back, then removes the JSON field atomically. If protection or verification fails, the original file is preserved and the operation returns an error for a later retry. Existing backups are not rewritten by this migration.
+
+Connector and container secrets remain local files (`data/config.json` and `infra/.env`). Those files are excluded from Git, but that exclusion is not encryption. Protect the Windows account and backups; do not share the data directory.
+
+The main local files are:
+
+| Location | Contents |
+| --- | --- |
+| `data/atendimento.json` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, and transcription results. |
+| `data/knowledge.json`, `data/knowledge/` | Knowledge documents and extracted text. |
+| `data/produtos.json`, `data/product-images/` | Catalog and product images. |
+| `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
+| `data/credentials.sqlite` | Separate DPAPI-protected assistant and transcription credentials. |
+| `data/config.json`, `infra/.env` | Generated connector and container configuration. |
+| `data/*.log` | Local diagnostics. |
+
+The connector session and synchronized messages reside in Docker volumes named under `whatsapp-local`. **Do not remove those volumes or use `docker compose down -v` for an ordinary stop.** Backing up the project directory alone does not back up the Docker database and pairing session. The internal Compose name stays stable to retain those volumes.
+
+`data/`, connector environment files, logs, generated credentials, and dependencies are excluded from version control. The committed demo and test fixtures use fictional contacts. On Windows installations with HTTPS inspection, the optional trust helper exports a public certificate from an already trusted Windows root; it keeps TLS verification enabled and does not export a private key.
+
+## Validation
 
 ```powershell
-node --test tests/*.test.cjs
+npm test
+npx playwright install chromium
+npm run test:e2e
+```
+
+The Node suite covers domain behavior, HTTP contracts, persistence, retries and uncertain delivery, frontend state, and credential handling. The browser suite uses an isolated fixture server and fake connectors. Neither suite needs a paired WhatsApp session or sends messages to real contacts. The Windows DPAPI test is skipped on non-Windows platforms.
+
+See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture boundaries, and manual checks. A passing fake-connector test verifies the application contract; it does not prove that an upstream WhatsApp session will accept every operation.
+
+## Current limits
+
+- Individual conversations only; no bulk campaigns, group management, billing, or multi-user permissions.
+- History is limited to what the linked device and connector synchronize. Private `@lid` identifiers may lack a public phone number or address-book name; the application does not guess a mapping.
+- Media and forwarding are limited to supported types and 10 MB. Forwarding recreates content as a new message; Evolution 2.3.7 does not provide the native forwarded badge through this workflow.
+- Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
+- Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
+- A local JSON store is appropriate for this single-user deployment; it is not a shared transactional database for several application processes.
+- Cloud AI answers and imported catalog suggestions require review appropriate to the task. Retrieval is lexical and can miss differently worded information.
+- AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a copied SQLite database alone cannot restore access.
+
+For local diagnostics:
+
+```powershell
 docker compose -f infra/compose.yaml ps
 docker compose -f infra/compose.yaml logs --tail=50 evolution
 ```
 
-Os testes usam um servidor Evolution fictício, sem enviar mensagens reais. O pareamento e o recebimento de conversas foram verificados com sua sessão, após sua leitura do QR em 28/10/2026. Envios de teste para seus contatos não foram realizados.
-
-Na atualização de 28/10/2026, passaram 73 testes da central. Foram verificados Whisper com áudio sintético e áudio real pela interface, fotos reais, CRM, configuração de chave, simulador e preservação de rascunho. A integração OpenAI foi testada por contrato com resposta controlada; o uso real depende da sua chave de API.
-
-A atualização seguinte de agendamento, nomes, áudio e encaminhamento passou **124 testes da central**. O agendamento e os envios foram exercitados com conector controlado; na sessão real foram conferidos nomes, áudio, menu e formulários, sem enviar mensagens de teste para os contatos.
-
-Contrato e infraestrutura conferidos na [fonte oficial da Evolution 2.3.7](https://github.com/evolution-foundation/evolution-api/tree/2.3.7). A origem local permanece sem alterações.
+Inspect `data/server.err.log` for application startup failures. Keep logs and local data private when sharing an issue.
