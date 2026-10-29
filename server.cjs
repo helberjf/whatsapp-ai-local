@@ -59,18 +59,24 @@ function createWhatsAppServer(options={}) {
     return promise;
   }
   const server=http.createServer(async(req,res)=>{
-    for(const [name,value] of Object.entries({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})) res.setHeader(name,value);
+    for(const [name,value] of Object.entries({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' data: blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})) res.setHeader(name,value);
     const hosts=[`127.0.0.1:${req.socket.localPort}`,`localhost:${req.socket.localPort}`];
     if(!hosts.includes(req.headers.host)) return json(res,403,{error:'Endereço local inválido.'});
     if(req.headers.origin && req.headers.origin!==`http://${req.headers.host}`) return json(res,403,{error:'Abra a central no endereço local.'});
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
         if(file==='index.html' && options.demo) content=content.replace('<body>','<body class="demo-mode"><div class="demo-banner" role="status">DEMO · Fictional contacts · No real WhatsApp connection</div>');
         res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});return res.end(content);
+      }
+      const pdfAsset=route.match(/^\/assets\/pdfjs\/(build|cmaps|standard_fonts|wasm|iccs)\/([A-Za-z0-9_.-]+)$/);
+      if(req.method==='GET' && pdfAsset && pdfAsset[2]!=='.' && pdfAsset[2]!=='..' && (pdfAsset[1]!=='build' || ['pdf.min.mjs','pdf.worker.min.mjs'].includes(pdfAsset[2]))) {
+        const vendorRoot=path.dirname(require.resolve('pdfjs-dist/package.json'));
+        try {const content=await fs.readFile(path.join(vendorRoot,pdfAsset[1],pdfAsset[2]));res.writeHead(200,{'Content-Type':pdfAsset[2].endsWith('.mjs')?'text/javascript; charset=utf-8':pdfAsset[2].endsWith('.wasm')?'application/wasm':'application/octet-stream'});return res.end(content);}
+        catch(error) {if(error.code==='ENOENT') return json(res,404,{error:'Arquivo não encontrado.'});throw error;}
       }
       if(!route.startsWith('/api/')) return json(res,404,{error:'Endereço não encontrado.'});
       const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
@@ -178,7 +184,7 @@ if(require.main===module) {
     const config=JSON.parse(await fs.readFile(path.join(root,'data','config.json'),'utf8')),server=createWhatsAppServer({config}),url='http://127.0.0.1:8766/';
     server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`A central já pode estar aberta: ${url}`:error.message);process.exitCode=1;});
     server.listen(8766,'127.0.0.1',()=>{
-      console.log(`WhatsApp Local · ${url}\nSessão preservada no Docker. Não remova os volumes.`);
+      console.log(`Whats AI · ${url}\nSessão preservada no Docker. Não remova os volumes.`);
       if(!process.argv.includes('--no-open')) execFile('powershell.exe',['-NoProfile','-Command',`Start-Process '${url}'`],{windowsHide:true},()=>{});
     });
   })().catch(error=>{console.error(error.code==='ENOENT'?'Abra Iniciar WhatsApp.cmd para configurar o conector.':error.message);process.exitCode=1;});

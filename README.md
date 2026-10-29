@@ -1,4 +1,4 @@
-# WhatsApp Central
+# Whats AI
 
 A local WhatsApp workspace for individual customer conversations, contact management, scheduled messages, automatic replies, and answers grounded in a product catalog and knowledge base.
 
@@ -10,13 +10,15 @@ These screenshots use the isolated demo with fictional contacts and sample conte
 
 | Conversation workspace | Audio, video, and message actions |
 | --- | --- |
-| ![Dark conversation workspace with contact list and customer details](docs/screenshots/workspace.png) | ![Message media controls in the demo conversation](docs/screenshots/media.png) |
+| ![Whats AI with an expanded conversation and sidebar search](docs/screenshots/workspace.png) | ![Message media controls in the demo conversation](docs/screenshots/media.png) |
 | Automatic reply editor | Knowledge base |
 | ![Split trigger editor with conditions and response composer](docs/screenshots/triggers.png) | ![Knowledge documents and grounded answer workflow](docs/screenshots/knowledge.png) |
+| Voice message review | In-app PDF reader |
+| ![Recorded audio preview before explicit sending](docs/screenshots/voice-recorder.png) | ![PDF document rendered locally inside the conversation workspace](docs/screenshots/document-preview.png) |
 
 ## Try the demo
 
-The demo needs Node.js 22 or later. It uses a temporary data directory and an in-process fake connector; it does not pair with WhatsApp, contact an AI provider, or send real messages. Background reply workers are disabled.
+The demo needs Node.js 22.13 or later. It uses a temporary data directory and an in-process fake connector; it does not pair with WhatsApp, contact an AI provider, or send real messages. Background reply workers are disabled.
 
 ```powershell
 npm ci
@@ -27,9 +29,9 @@ Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal s
 
 ## What it does
 
-- **Conversations:** search and filter by name, phone, labels, unread state, and attendance status; load earlier messages; preserve drafts and scroll position during refreshes.
+- **Conversations:** an expanded conversation column with contact/CRM tools available in a closable details panel. Search and filter by name, phone, labels, unread state, and attendance status; preserve drafts and scroll position during refreshes. Open global search from the sidebar or with **Ctrl+K**.
 - **Messaging:** one attachment button for photos, videos, audio, documents and stickers; **Enter** sends and **Shift+Enter** inserts a line break. Insert quick replies, copy message text, forward supported content, use emoji, create polls, and delete your own messages for everyone when the connector accepts the request.
-- **Media:** load audio on demand with seek and playback speed controls; start video with one explicit play action; display supported images and documents; transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **Media:** record voice messages from the composer, review playback, then explicitly send or discard. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, start video with one play action, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
 - **Contacts and CRM:** maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
 - **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
 - **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
@@ -43,7 +45,7 @@ Disappearing-message timers use native WhatsApp settings through the included co
 ### Requirements
 
 - Windows with PowerShell.
-- Node.js **22 or later** and npm.
+- Node.js **22.13 or later** and npm.
 - Docker Desktop configured for **Linux containers**.
 - Internet access and a WhatsApp account available for linked-device pairing.
 - Optional: Python, FFmpeg, and OpenAI Whisper for local audio transcription. Ollama is a separate optional installation for local AI answers.
@@ -55,7 +57,7 @@ npm ci
 npm start
 ```
 
-The Windows launcher creates local connector credentials if none exist, starts Docker Desktop when needed, brings up the containers, starts the application in the background, and opens [WhatsApp Central](http://127.0.0.1:8766/). Existing configuration and pairing data are preserved.
+The Windows launcher creates local connector credentials if none exist, starts Docker Desktop when needed, brings up the containers, starts the application in the background, and opens [Whats AI](http://127.0.0.1:8766/). Existing configuration and pairing data are preserved.
 
 In **Conexão WhatsApp**, choose **Conectar WhatsApp**. On the phone, open **Linked devices → Link a device**, then scan the QR code shown on the computer. Pairing survives ordinary restarts while its Docker volumes remain intact.
 
@@ -65,7 +67,7 @@ Other entry points:
 | --- | --- |
 | `npm run configure` | Generate missing initial configuration without replacing existing secrets. |
 | `npm run serve` | Run only the Node server when configuration and the connector are already available. |
-| `npm run shortcut` | Create the Windows desktop shortcut. |
+| `npm run shortcut` | Create the **Whats AI** desktop shortcut and migrate the previous app shortcut when owned by this project. |
 | `Abrir WhatsApp.cmd` / `Iniciar WhatsApp.cmd` | Start the local stack and open the application. |
 | `Parar WhatsApp.cmd` | Stop the application and containers while preserving data. |
 | `Ativar inicio com Windows.cmd` | Opt into starting the services at Windows sign-in. |

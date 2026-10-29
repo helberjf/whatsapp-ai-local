@@ -1,12 +1,12 @@
 # Testing and validation
 
-Verified on Windows on **2026-10-29**: **255 Node tests** and **13 Playwright tests** passed. Browser checks cover 1440×960, 1133×637 and 390×844 layouts, media playback, safe links, trigger creation, audio attachments, contact details, deletion confirmation and timer options, plus local AI startup and an explicit CPU mode. Connector operations were exercised against fixtures; no real messages were sent or deleted for verification. The local Docker stack was healthy and the existing WhatsApp session remained connected. The updated chat checks also cover unclipped message-action popovers, a single attachment picker, Enter/Shift+Enter behavior, one-click video playback and suggestions based on both sides of the latest dialogue. Live local-AI validation confirmed `qwen2.5:7b` loaded on CPU after a GPU memory allocation error, using an empty request and preserving automatic-reply settings.
+Verified on Windows on **2026-10-29**: **255 Node tests** and **17 Playwright tests** passed. The browser suite covers 1440×960, 1133×637 and 390×844 layouts, media playback, safe links, trigger creation, contact details, deletion confirmation and timer options, plus local AI startup and an explicit CPU mode. New conversation checks cover the expanded message area, sidebar search, in-app image/PDF viewing, microphone recording/review/cancellation, permission denial, and rejection of an HTML payload mislabeled as PDF. Connector operations use fixtures; no real messages are sent or deleted for verification. Existing checks cover unclipped message-action popovers, a single attachment picker, Enter/Shift+Enter behavior, one-click video playback and suggestions based on both sides of the latest dialogue.
 
 The project separates automated fixture validation from operations against a real linked WhatsApp account. Automated tests and the portfolio demo use fictional contacts, isolated temporary stores, and controlled connector responses. They must not be pointed at production data or used to send test messages to real contacts.
 
 ## Run the suites
 
-Use Node.js 22 or later from the repository root:
+Use Node.js 22.13 or later from the repository root:
 
 ```powershell
 npm ci
@@ -59,6 +59,8 @@ The README screenshots are captured from this environment. Normal browser runs w
 - [`screenshots/triggers.png`](screenshots/triggers.png): trigger conditions and response composer.
 - [`screenshots/knowledge.png`](screenshots/knowledge.png): sample knowledge and grounded answer workflow.
 - [`screenshots/local-ai.png`](screenshots/local-ai.png): local runtime readiness and CPU option.
+- [`screenshots/voice-recorder.png`](screenshots/voice-recorder.png): browser microphone recording reviewed before sending, using a synthetic input device.
+- [`screenshots/document-preview.png`](screenshots/document-preview.png): the sample PDF rendered in the local PDF.js reader.
 
 Screenshots demonstrate the UI state, not real-account delivery. Never replace them with captures that expose real messages, names, phone numbers, QR codes, session tokens, or keys.
 

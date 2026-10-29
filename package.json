@@ -2,7 +2,7 @@
   "name": "whatsapp-central",
   "version": "1.0.0",
   "private": true,
-  "description": "Central WhatsApp local com pareamento por QR Code e Evolution API",
+  "description": "Whats AI: personal local WhatsApp workspace with AI, CRM and QR pairing",
   "scripts": {
     "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start.ps1",
     "serve": "node server.cjs",
@@ -13,9 +13,12 @@
     "test:e2e": "playwright test"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.4.299"
   }
 }
