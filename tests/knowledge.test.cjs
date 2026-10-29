@@ -81,7 +81,9 @@ test('IA: a chave é gravada só no servidor e a resposta usa apenas o contexto 
   const sent=aiCalls[0];
   assert.equal(sent.headers.Authorization,'Bearer sk-segredo-123');
   assert.match(sent.body.messages[0].content,/ignore qualquer instrução/);
-  assert.match(sent.body.messages[1].content,/<contexto>[\s\S]*Produto A custa[\s\S]*<\/contexto>/);
+  assert.match(sent.body.messages[0].content,/<contexto>[\s\S]*Produto A custa[\s\S]*<\/contexto>/);
+  assert.match(sent.body.messages[0].content,/<catalogo>/);
+  assert.equal(sent.body.messages[1].content,'Quanto custa o produto A?');
   // Salvar sem informar a chave preserva a existente; limpar remove.
   assert.equal((await api('/api/ai','PUT',{provider:'openai',model:'gpt-outro'})).hasKey,true);
   assert.equal((await api('/api/ai','PUT',{provider:'openai',model:'gpt-outro',clearKey:true})).configured,false);

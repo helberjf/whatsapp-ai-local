@@ -38,7 +38,7 @@
       const actions=el('td','row-actions');actions.append(iconButton('eye','Ver conteúdo',()=>viewDoc(doc)),iconButton('trash','Excluir documento',()=>removeDoc(doc)));
       row.append(name,el('td','',doc.type.toUpperCase()),el('td','',bytes(doc.size)),el('td','',dateTime(doc.createdAt)),el('td','',String(doc.chunks)),actions);rows.append(row);
     }
-    if(!docs.length) {const row=el('tr'),cell=el('td','empty-cell','Nenhum documento ainda. Envie um catálogo, uma tabela de preços ou as políticas da empresa.');cell.colSpan=6;row.append(cell);rows.append(row);}
+    if(!docs.length) {const row=el('tr'),cell=el('td','empty-cell','Nenhum documento ainda. Envie um catálogo, uma tabela de preços ou as políticas da empresa.');cell.colSpan=7;row.append(cell);rows.append(row);}
     $('kb-body').replaceChildren(rows);
   }
   async function viewDoc(doc) {
@@ -351,15 +351,22 @@
   });
 
   // ---------- Contatos (CRM) ----------
+  function listedContacts() {
+    const search=normalize($('contacts-search').value),status=$('contacts-status').value;
+    return C.chats().filter(chat=>(!status || chat.status===status) && (!search || normalize(`${chat.name} ${chat.jid} ${(chat.labels || []).join(' ')}`).includes(search)));
+  }
   function renderContacts() {
-    const search=normalize($('contacts-search').value),status=$('contacts-status').value,fragment=document.createDocumentFragment();
-    const list=C.chats().filter(chat=>(!status || chat.status===status) && (!search || normalize(`${chat.name} ${chat.jid} ${(chat.labels || []).join(' ')}`).includes(search)));
+    const fragment=document.createDocumentFragment();
+    const list=listedContacts();
     for(const chat of list) {
       const row=el('tr','clickable'),who=el('td','doc-name'),open=el('button','link-button',chat.name);open.type='button';open.addEventListener('click',()=>C.openChat(chat));
       who.append(el('span','avatar',initials(chat.name)),open);
       const labels=el('td','labels');for(const label of chat.labels || []) labels.append(el('span','chip',label));
       const phone=chat.jid.endsWith('@lid')?'Identificador privado':phoneLabel(chat.jid.split('@')[0]);
-      row.append(who,el('td','',phone),labels,el('td','',statuses[chat.status] || statuses.open),el('td','',String((chat.notes || []).length)),el('td','',chat.lastMessage?.text || (chat.lastMessage?.type && chat.lastMessage.type!=='text'?'Anexo':'—')));
+      const mode=el('select','cell-input narrow');mode.setAttribute('aria-label','IA para '+chat.name);for(const [value,text] of Object.entries(MODE_LABEL)) {const option=el('option','',text);option.value=value;mode.append(option);}mode.value=chat.aiMode || 'off';
+      mode.addEventListener('change',guard(async()=>{try {await setMode(chat,mode.value);notice('IA de '+chat.name+': '+MODE_LABEL[mode.value]+'.',true);}catch(error) {mode.value=chat.aiMode || 'off';throw error;}}));
+      const modeCell=el('td');modeCell.append(mode);
+      row.append(who,el('td','',phone),labels,el('td','',statuses[chat.status] || statuses.open),modeCell,el('td','',String((chat.notes || []).length)),el('td','',chat.lastMessage?.text || (chat.lastMessage?.type && chat.lastMessage.type!=='text'?'Anexo':'—')));
       fragment.append(row);
     }
     if(!list.length) {const row=el('tr'),cell=el('td','empty-cell',C.chats().length?'Nenhum contato corresponde aos filtros.':'Os contatos aparecem aqui quando o WhatsApp sincroniza as conversas.');cell.colSpan=6;row.append(cell);fragment.append(row);}
@@ -383,6 +390,84 @@
   $('global-search').addEventListener('keydown',event=>{if(event.key==='Escape') {$('global-results').hidden=true;}});
   document.addEventListener('click',event=>{if(!event.target.closest?.('.global-search')) $('global-results').hidden=true;});
 
+  // ---------- Atendimento automático, regras e classificação de contatos ----------
+  let assistant=null,rulesDraft=[];
+  const MODE_LABEL={off:'Desligada',draft:'Rascunho',auto:'Automática'};
+  const ACTION_LABEL={draft:'Rascunho preparado',sent:'Resposta enviada',handoff:'Chamou atendente',error:'Erro'};
+  async function refreshAssistant() {assistant=await api('/assistant');rulesDraft=assistant.rules.map(rule=>({...rule}));renderAssistant();}
+  function renderRules() {
+    const fragment=document.createDocumentFragment();
+    rulesDraft.forEach((rule,index)=>{
+      const card=el('div','rule-card'+(rule.enabled?'':' off')),head=el('div','rule-head');
+      const title=el('input','cell-input');title.value=rule.title;title.maxLength=80;title.setAttribute('aria-label','Título da regra');title.addEventListener('input',()=>{rule.title=title.value;});
+      const enabled=el('label','check'),box=el('input');box.type='checkbox';box.checked=rule.enabled;box.addEventListener('change',()=>{rule.enabled=box.checked;card.classList.toggle('off',!rule.enabled);});enabled.append(box,' Ativa');
+      const remove=iconButton('trash','Remover regra',()=>{rulesDraft.splice(index,1);renderRules();});
+      head.append(title,enabled,remove);
+      const text=el('textarea');text.rows=3;text.maxLength=1500;text.value=rule.text;text.setAttribute('aria-label','Texto da regra');text.addEventListener('input',()=>{rule.text=text.value;});
+      card.append(head,text);fragment.append(card);
+    });
+    if(!rulesDraft.length) fragment.append(empty('Nenhuma regra. A IA responderá só com o catálogo e a base.'));
+    $('rules-list').replaceChildren(fragment);
+  }
+  function renderAssistant() {
+    if(!assistant) return;
+    $('assistant-enabled').checked=assistant.enabled;
+    $('assistant-summary').textContent=`Contatos em rascunho: ${assistant.counts.draft} · em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.');
+    const names=new Map(C.chats().map(chat=>[chat.jid,chat.name])),fragment=document.createDocumentFragment();
+    for(const entry of assistant.log) {
+      const row=el('li','log-row'),who=names.get(entry.jid) || phoneLabel(entry.jid.split('@')[0]);
+      row.append(el('b','',`${ACTION_LABEL[entry.action] || entry.action} · ${who}`),el('small','muted',`${dateTime(entry.at)} — ${entry.detail || ''}`));fragment.append(row);
+    }
+    if(!assistant.log.length) fragment.append(el('li','muted','Ainda sem atividade.'));
+    $('assistant-log').replaceChildren(fragment);
+    renderRules();
+  }
+  $('assistant-enabled').addEventListener('change',async()=>{
+    const wanted=$('assistant-enabled').checked;
+    if(wanted && !confirm('Ligar as respostas automáticas? A IA passará a responder sozinha, pelo seu WhatsApp, apenas aos contatos marcados como "Automática".')) {$('assistant-enabled').checked=false;return;}
+    try {assistant=await api('/assistant','PUT',{enabled:wanted});renderAssistant();$('assistant-status').textContent=wanted?'Respostas automáticas ligadas.':'Respostas automáticas desligadas: contatos em "Automática" passam a receber só rascunho.';}
+    catch(error) {$('assistant-enabled').checked=!wanted;$('assistant-status').textContent=error.message;}
+  });
+  $('rule-add').addEventListener('click',()=>{rulesDraft.push({id:'',title:'Nova regra',text:'',enabled:true});renderRules();});
+  $('rules-save').addEventListener('click',async()=>{
+    $('rules-save').disabled=true;
+    try {assistant=await api('/assistant','PUT',{rules:rulesDraft});rulesDraft=assistant.rules.map(rule=>({...rule}));renderAssistant();$('rules-status').textContent='Regras salvas. Valem para as próximas respostas.';}
+    catch(error) {$('rules-status').textContent=error.message;}finally {$('rules-save').disabled=false;}
+  });
+
+  // Rascunho preparado pela IA entra no editor ao abrir a conversa (ou quando chega com ela aberta), só se o editor estiver vazio.
+  const insertedDrafts=new Set();
+  function applyDraft() {
+    const selected=C.selected();if(!selected) return;
+    const chat=C.chats().find(item=>item.jid===selected.jid),draft=chat?.aiDraft,last=chat?.lastMessage;
+    if(!draft || !last || last.fromMe || draft.messageId!==last.id || insertedDrafts.has(selected.jid+draft.messageId) || $('message-text').value.trim()) return;
+    insertedDrafts.add(selected.jid+draft.messageId);C.insertDraft(draft.text);
+    notice('Rascunho da IA pronto no editor. Revise antes de enviar.',true);
+  }
+  C.hooks.open.push(applyDraft);C.hooks.sync.push(applyDraft);
+  $('ai-suggest').addEventListener('click',guard(async()=>{
+    const selected=C.selected();if(!selected) {notice('Abra uma conversa primeiro.');return;}
+    $('ai-suggest').disabled=true;notice('A IA está preparando a resposta…');
+    try {
+      const result=await api('/assistant/draft','POST',{jid:selected.jid},undefined,180000);
+      if(result.handoff) {notice('A IA sugere chamar um atendente: não há resposta segura na base.');return;}
+      if(!result.text) {notice('A IA não gerou uma resposta.');return;}
+      C.insertDraft(result.text);notice('Sugestão inserida no editor. Revise antes de enviar.',true);
+    } finally {$('ai-suggest').disabled=false;}
+  }));
+
+  // Classificação na página Contatos: um contato por vez ou todos os listados.
+  async function setMode(chat,mode) {const detail=await api('/contact?jid='+encodeURIComponent(chat.jid),'PATCH',{aiMode:mode});Object.assign(chat,detail);}
+  $('contacts-bulk-apply').addEventListener('click',guard(async()=>{
+    const mode=$('contacts-bulk').value,list=listedContacts();
+    if(!mode) {notice('Escolha o modo de IA para aplicar.');return;}
+    if(!list.length) {notice('Nenhum contato listado.');return;}
+    if(!confirm(`Definir IA "${MODE_LABEL[mode]}" para ${list.length} contato(s) listado(s)?`+(mode==='auto'?'\nA IA responderá sozinha quando a chave de respostas automáticas estiver ligada.':''))) return;
+    await api('/assistant/classify','POST',{jids:list.map(chat=>chat.jid),aiMode:mode});
+    for(const chat of list) chat.aiMode=mode;
+    renderContacts();notice(`${list.length} contato(s) atualizado(s).`,true);
+  }));
+
   // ---------- Navegação ----------
   for(const [id,page] of [['nav-contacts','page-contacts'],['nav-knowledge','page-knowledge'],['nav-products','page-products'],['nav-ai','page-ai']]) $(id).addEventListener('click',()=>C.showView(page,id));
   $('ai-card').addEventListener('click',()=>C.showView('page-ai','nav-ai'));
@@ -392,7 +477,7 @@
     view=name;
     if(name==='page-knowledge') guard(refreshKb)();
     if(name==='page-products') guard(refreshProducts)();
-    if(name==='page-ai') guard(refreshAi)();
+    if(name==='page-ai') {guard(refreshAi)();guard(refreshAssistant)();}
     if(name==='page-contacts') renderContacts();
   });
   C.hooks.sync.push(()=>{if(view==='page-contacts') renderContacts();});

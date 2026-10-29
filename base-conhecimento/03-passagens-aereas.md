@@ -1,11 +1,10 @@
-# Passagens aéreas
+# Passagens aéreas (Brasil e Mundo)
 
-Cotação e emissão de passagens aéreas para três destinos principais: **Europa**, **Brasil (voos nacionais)** e **Estados Unidos**. Podemos emitir com milhas ou em dinheiro, e comparar as opções para o cliente escolher a melhor.
+Cotação e emissão de passagens aéreas **no Brasil** (voos nacionais) e **para o mundo** (Europa, Estados Unidos e outros destinos internacionais). Podemos emitir com milhas ou em dinheiro, e comparar as opções para o cliente escolher a melhor.
 
-## Destinos
-- **Europa:** passagens de ida e volta ou somente ida, com diferentes companhias e conexões.
+## Modalidades
 - **Brasil:** voos nacionais entre as principais cidades.
-- **Estados Unidos:** passagens para as principais cidades americanas.
+- **Mundo:** passagens internacionais, com foco em Europa e Estados Unidos, além de outros destinos, de ida e volta ou somente ida, com diferentes companhias e conexões.
 
 ## Como funciona
 1. O cliente informa origem, destino e datas.
