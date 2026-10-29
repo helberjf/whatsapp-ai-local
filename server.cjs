@@ -11,6 +11,8 @@ const {createAudioEngines}=require('./lib/audio-engines.cjs');
 const {createAvatarService}=require('./lib/avatars.cjs');
 const {createCrmService}=require('./lib/crm.cjs');
 const {createAutomationService}=require('./lib/automation.cjs');
+const {createScheduler}=require('./lib/scheduler.cjs');
+const {prepareForward}=require('./lib/forwarding.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
@@ -27,19 +29,22 @@ function createWhatsAppServer(options={}) {
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
   const crm=createCrmService({store}),automation=createAutomationService({store,client});
+  const scheduler=createScheduler({store,client,now:options.now || Date.now});
   const requests=new Map();
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
-  async function sendOnce(input,send) {
+  async function sendOnce(input,send,prepare) {
     const id=textField(input.requestId,100,'Identificador do envio');if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new ApiError('Identificador do envio inválido.',422);
     const hash=createHash('sha256').update(JSON.stringify(input)).digest('hex');
     if(requests.has(id)) {const item=requests.get(id);if(item.hash!==hash) throw new ApiError('Identificador reutilizado com outra mensagem.',409);return item.promise;}
     // Um pedido pendente após falha/reinício nunca é reenviado automaticamente: o WhatsApp pode já tê-lo recebido.
+    let claimed=false;
     const promise=(async()=>{
       const previous=(await store.read()).requests[id];
-      if(previous) {if(previous.hash!==hash) throw new ApiError('Identificador reutilizado.',409);if(previous.result) return previous.result;throw new ApiError('O envio anterior ficou sem confirmação. Confira a conversa antes de tentar novamente.',409);}
+      if(previous) {claimed=true;if(previous.hash!==hash) throw new ApiError('Identificador reutilizado.',409);if(previous.result) return previous.result;throw new ApiError('O envio anterior ficou sem confirmação. Confira a conversa antes de tentar novamente.',409);}
+      const prepared=prepare?await prepare():undefined;
       await store.update(data=>{data.requests[id]={hash,at:Date.now()};const old=Object.keys(data.requests).filter(key=>data.requests[key].at<Date.now()-7*86400000);for(const key of old) delete data.requests[key];});
-      const result=await send();await store.update(data=>{data.requests[id].result=result;});return result;
-    })();
+      claimed=true;const result=await send(prepared);await store.update(data=>{data.requests[id].result=result;});return result;
+    })().catch(error=>{if(!claimed && requests.get(id)?.promise===promise) requests.delete(id);throw error;});
     requests.set(id,{hash,promise});if(requests.size>1000) requests.delete(requests.keys().next().value);
     return promise;
   }
@@ -51,13 +56,20 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
         res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});return res.end(content);
       }
       if(!route.startsWith('/api/')) return json(res,404,{error:'Endereço não encontrado.'});
       const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
+      if(route==='/api/scheduled-messages' && req.method==='GET') return json(res,200,await scheduler.list(url.searchParams.get('jid')));
+      if(route==='/api/scheduled-messages' && req.method==='POST') return json(res,201,await scheduler.create(await readBody(req)));
+      const scheduledMatch=route.match(/^\/api\/scheduled-messages\/([a-zA-Z0-9_-]{8,100})(\/cancel)?$/);
+      if(scheduledMatch && req.method==='PATCH' && !scheduledMatch[2]) return json(res,200,await scheduler.update(scheduledMatch[1],await readBody(req)));
+      if(scheduledMatch && req.method==='POST' && scheduledMatch[2]) {await readBody(req);return json(res,200,await scheduler.cancel(scheduledMatch[1]));}
+      if(req.method==='POST' && route==='/api/contacts/sync') {await readBody(req);return json(res,200,await client.syncContacts(true));}
+      if(req.method==='POST' && route==='/api/forward') {const input=await readBody(req);assertJid(input.sourceJid);assertJid(input.targetJid);return json(res,200,await sendOnce(input,send=>send(),()=>prepareForward(client,input)));}
       if(route==='/api/transcription/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await transcriptions.settings():await transcriptions.saveSettings(await readBody(req)));
       if(req.method==='GET' && route==='/api/transcriptions') return json(res,200,await transcriptions.list(url.searchParams.get('jid')));
       if(req.method==='POST' && route==='/api/transcriptions') return json(res,202,await transcriptions.enqueue(await readBody(req)));
@@ -125,8 +137,9 @@ function createWhatsAppServer(options={}) {
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });
   server.transcriptions=transcriptions;
-  server.on('listening',()=>automation.start());
-  server.on('close',()=>{automation.stop();credentials.close().catch(()=>{});});
+  server.scheduler=scheduler;
+  server.on('listening',()=>{automation.start();scheduler.start();});
+  server.on('close',()=>{automation.stop();scheduler.stop();credentials.close().catch(()=>{});});
   return server;
 }
 if(require.main===module) {

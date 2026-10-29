@@ -20,9 +20,25 @@ Requisitos: Windows, Node.js 22 ou mais recente, Docker Desktop com engine Linux
 - Texto e anexos de até 10 MB. **Ctrl+Enter** envia; as respostas rápidas apenas preenchem o editor.
 - O painel reúne situação, etiquetas, notas, respostas rápidas e conexão. Em janelas menores, o botão de detalhes abre esse painel. As notas não são enviadas ao contato.
 - As fotos dos contatos carregam conforme aparecem na lista. Quando a privacidade do contato impede o acesso, as iniciais continuam visíveis.
+- Os nomes disponíveis nos contatos do WhatsApp são carregados automaticamente, com cache de cinco minutos. Em **Conexão**, use **Atualizar nomes do WhatsApp** para buscar novamente. O conector pode entregar nome de perfil em vez do nome da agenda; identificadores privados sem correspondência explícita continuam numéricos. Nomes não são adivinhados a partir desses identificadores.
+- Os quatro indicadores usam uma faixa compacta para dar mais altura às conversas.
+- Cada áudio aparece em um card: **Carregar áudio** prepara o player, que oferece reprodução, posição, duração e velocidades **1×, 1,5× e 2×**. O áudio é baixado ao clicar; a transcrição continua disponível separadamente.
+- A seta **⌄** em cada mensagem abre **Copiar texto** e **Encaminhar**. A cópia de áudio usa a transcrição disponível. Para encaminhar, escolha o destinatário e confirme no diálogo. Textos, imagens, áudios, vídeos, documentos e figurinhas são suportados, com anexos de até 10 MB. Tipos especiais como contato, localização e mensagem de sistema permanecem no WhatsApp original.
 - **Carregar mensagens anteriores** pagina o histórico sincronizado. A primeira sincronização depende do WhatsApp; ela não garante a importação de todo o histórico antigo. Identificadores privados `@lid` podem aparecer quando o WhatsApp ainda não disponibilizou o nome/telefone.
 
 O escopo é atendimento individual. Além do editor manual, o robô opcional pode responder às palavras-chave configuradas por você. Disparos, grupos e regras de cobrança/renovação do Mapa Hóspede não fazem parte desta central.
+
+## Mensagens programadas
+
+Abra **Mensagens programadas** no menu ou **Programar** no editor da conversa. Escolha o destinatário, escreva o texto, informe a data/hora e clique em **Programar mensagem**. O horário é convertido do fuso deste computador e salvo como um instante com fuso definido. A lista permite editar, cancelar e remarcar; mensagens em envio, enviadas ou sem confirmação não podem ser alteradas.
+
+O agendamento funciona com o navegador fechado, desde que **computador, central e WhatsApp estejam ligados e conectados**. Se estiver sem conexão no horário, o sistema aguarda por até 15 minutos. Depois desse prazo, marca **Não enviada · remarcar**, sem mandar uma mensagem muito atrasada. A programação é preservada ao reiniciar.
+
+O envio é reservado em disco antes de chamar o conector. Se a central for interrompida durante essa etapa ou o envio não for confirmado, aparece **Envio sem confirmação**. Confira a conversa antes de programar novamente; não há repetição automática de um envio incerto.
+
+Nesta versão, o agendamento é para **texto**. Anexos do editor não são incluídos. O rascunho original é limpo somente quando corresponde ao texto programado e continua sem alterações; edições posteriores permanecem no editor.
+
+O encaminhamento preserva o conteúdo original, enviado como uma nova mensagem. A Evolution 2.3.7 não expõe o selo nativo “Encaminhada”; a central não simula esse selo. Falhas ao carregar a origem permitem nova tentativa; após o envio começar, a proteção contra duplicação mantém o mesmo identificador.
 
 ## Transcrever áudios
 
@@ -80,6 +96,7 @@ No Milhas, o link **WhatsApp Local ↗** inicia e abre esta mesma central. O ada
 - `data/config.json` e `infra/.env`: segredos gerados localmente; não compartilhe esses arquivos.
 - `data/atendimento.json`: notas, etiquetas, respostas rápidas e registros de envio para evitar duplicação.
 - `data/atendimento.json` também guarda CRM, regras e histórico do robô, configurações públicas e resultados de transcrição.
+- `data/atendimento.json` guarda também mensagens programadas, situação de cada envio e identificadores de encaminhamento para evitar duplicação.
 - `data/credentials.sqlite`: chave da OpenAI criptografada com a proteção do usuário Windows.
 - `data/server.log`, `data/server.err.log` e `data/startup.log`: diagnóstico local.
 
@@ -100,5 +117,7 @@ docker compose -f infra/compose.yaml logs --tail=50 evolution
 Os testes usam um servidor Evolution fictício, sem enviar mensagens reais. O pareamento e o recebimento de conversas foram verificados com sua sessão, após sua leitura do QR em 28/10/2026. Envios de teste para seus contatos não foram realizados.
 
 Na atualização de 28/10/2026, passaram 73 testes da central e 18 do Milhas. Foram verificados Whisper com áudio sintético e áudio real pela interface, fotos reais, CRM, configuração de chave, simulador e preservação de rascunho. A integração OpenAI foi testada por contrato com resposta controlada; o uso real depende da sua chave de API.
+
+A atualização seguinte de agendamento, nomes, áudio e encaminhamento passou **124 testes da central e 18 do Milhas**. O agendamento e os envios foram exercitados com conector controlado; na sessão real foram conferidos nomes, áudio, menu e formulários, sem enviar mensagens de teste para os contatos.
 
 Contrato e infraestrutura conferidos na [fonte oficial da Evolution 2.3.7](https://github.com/evolution-foundation/evolution-api/tree/2.3.7). A origem local permanece sem alterações.

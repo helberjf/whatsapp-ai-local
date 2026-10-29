@@ -51,7 +51,7 @@ function message(number) {
   };
 }
 
-async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false}={}) {
+async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},onForward=async()=>message(2),onContactsSync=async()=>({total:1,named:1}),onMedia=async()=>({base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'}),scheduleModule,FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false}={}) {
   const nodes=new Map(),intervals=[],requests=[],copied=[];
   let history=historyRecords || Array.from({length:count},(_,index)=>message(index+1));
   let transcriptionSettings={defaultProvider:'whisper',whisperModel:'base',language:'pt',aiConfigured,aiModel:'gpt-transcribe'};
@@ -76,6 +76,8 @@ async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},
     else if(url.pathname==='/api/connection') output={state:'connected',reachable:true,exists:true,phone:'5511000000000',instanceName:'teste'};
     else if(url.pathname==='/api/chats') output=chatRecords || [{jid,name:'Ana',unread:0,status:'open',labels:[],notes:[],lastMessage:history.at(-1)||null}];
     else if(url.pathname==='/api/contact') output={status:'open',labels:[],notes:[]};
+    else if(url.pathname==='/api/contacts/sync') output=await onContactsSync(input);
+    else if(url.pathname==='/api/forward') output=await onForward(input);
     else if(url.pathname==='/api/messages') {
       const page=Number(url.searchParams.get('page')||1);
       const descending=history.filter(record=>record.jid===url.searchParams.get('jid')).reverse();
@@ -86,14 +88,15 @@ async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},
       await onSend(input);
       output={...message(history.length+1),text:input.text || input.caption || ''};
     } else if(url.pathname==='/api/read') output={read:true};
-    else if(url.pathname==='/api/media') output={base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'};
+    else if(url.pathname==='/api/media') output=await onMedia();
     else throw new Error('Requisição inesperada no teste: '+address);
     return {ok:true,json:async()=>output};
   }
+  let requestSequence=0;
   vm.runInNewContext(fs.readFileSync(appFile,'utf8'),{
-    document,fetch:fetchLocal,Intl,Date,Map,Set,URL,URLSearchParams,AbortSignal,FileReader,Blob,Uint8Array,atob,
+    document,fetch:fetchLocal,Intl,Date,Map,Set,URL,URLSearchParams,AbortSignal,FileReader,Blob,Uint8Array,atob,WhatsAppSchedule:scheduleModule,
     navigator:{clipboard:{writeText:async text=>{copied.push(text);}}},
-    crypto:{randomUUID:()=> 'frontend-request-001'},
+    crypto:{randomUUID:()=> 'frontend-request-'+(++requestSequence)},
     setInterval(callback,delay) {intervals.push({callback,delay});return intervals.length;},
     setTimeout,clearTimeout,location:{search:''},matchMedia:()=>({matches:false})
   },{filename:appFile});
@@ -287,15 +290,15 @@ test('polling de transcrição mostra resultado e permite copiar sem recriar o �
     if(method==='POST') {saved=[job(input)];return saved[0];}return saved;
   }});
   let row=browser.get('messages').children[0];
-  await row.children[0].emit('click'); // Abre o player local.
+  await findClass(row,'audio-load').emit('click'); // Abre o player local.
   row=browser.get('messages').children[0];
-  const player=row.children.find(child=>child.tagName==='AUDIO');
+  const player=descendants(row).find(child=>child.tagName==='AUDIO');
   assert.ok(player,'O player precisa continuar funcionando junto à transcrição.');
   await findClass(row,'transcribe-button').emit('click');
   saved=[job({status:'completed',text:'Olá, podemos conversar amanhã?',updatedAt:'2026-10-28T12:01:00.000Z'})];
   await browser.pollTranscriptions();await browser.poll();
   assert.equal(browser.get('messages').children[0],row,'Atualizar transcrição não deve recriar a mensagem.');
-  assert.equal(row.children.find(child=>child.tagName==='AUDIO'),player,'O polling interrompeu o player.');
+  assert.equal(descendants(row).find(child=>child.tagName==='AUDIO'),player,'O polling interrompeu o player.');
   assert.match(row.textContent,/Olá, podemos conversar amanhã\?/);
   await findClass(row,'transcription-copy').emit('click');
   assert.deepEqual(browser.copied,['Olá, podemos conversar amanhã?']);
@@ -360,4 +363,152 @@ test('IA exige configuração, informa envio para OpenAI e só envia ao clicar a
   await browser.get('remove-transcription-key').emit('click');
   assert.equal(browser.requests.filter(request=>request.path==='/api/transcription/settings' && request.method==='PATCH').at(-1).input.removeAiKey,true);
   assert.match(browser.get('transcription-key-status').textContent,/Nenhuma chave/);
+});
+
+test('cartão de áudio carrega por clique, mostra tempo e velocidade e mantém o player após novas mensagens',async()=>{
+  const browser=await createBrowser({historyRecords:[audio()]});
+  const card=findClass(browser.get('messages'),'audio-card');
+  assert.ok(card,'O áudio precisa de um cartão com controles claros.');
+  const player=descendants(card).find(child=>child.tagName==='AUDIO');
+  assert.equal(browser.requests.some(request=>request.path==='/api/media'),false);
+  assert.equal(player.preload,'none');
+  assert.equal(player.controls,true);
+  await findClass(card,'audio-load').emit('click');
+  assert.equal(browser.requests.filter(request=>request.path==='/api/media').length,1);
+  assert.match(player.src,/^blob:/);
+  assert.notEqual(player.autoplay,true,'Carregar o áudio não deve iniciar a reprodução automaticamente.');
+  player.currentTime=12;player.duration=95;await player.emit('timeupdate');
+  assert.equal(findClass(card,'audio-time').textContent,'0:12 / 1:35');
+  const speed=findClass(card,'audio-speed');speed.value='1.5';await speed.emit('change');
+  assert.equal(player.playbackRate,1.5);
+  browser.appendMessages(1);await browser.poll();
+  assert.equal(descendants(browser.get('messages')).find(child=>child.tagName==='AUDIO'),player,'Uma mensagem nova interrompeu o áudio.');
+  assert.equal(player.currentTime,12);
+});
+
+test('erro ao carregar áudio permanece no cartão e só tenta novamente por clique',async()=>{
+  const browser=await createBrowser({historyRecords:[audio()],onMedia:async()=>{throw new Error('Áudio não disponível no conector.');}});
+  const card=findClass(browser.get('messages'),'audio-card');assert.ok(card);
+  await findClass(card,'audio-load').emit('click');
+  assert.match(card.textContent,/Áudio não disponível/);
+  await browser.poll();
+  assert.equal(browser.requests.filter(request=>request.path==='/api/media').length,1);
+  assert.equal(findClass(card,'audio-load').disabled,false);
+});
+
+test('atualizar nomes preserva seleção, telefone conhecido de LID, rascunho e anexo',async()=>{
+  const chats=[{jid:'999999@lid',phone:'5511998765432',name:'Contato',unread:0,status:'open',labels:[]}];
+  const browser=await createBrowser({chatRecords:chats,onContactsSync:async input=>{
+    assert.deepEqual(input,{});chats[0]={...chats[0],name:'Ana da agenda',nameSource:'name'};return {total:1,named:1,lastSyncAt:'2026-10-28T13:00:00Z'};
+  }});
+  browser.get('message-text').value='Rascunho preservado';await browser.get('message-text').emit('input');
+  browser.get('attachment').files=[{name:'imagem.png',size:5,type:'image/png'}];await browser.get('attachment').emit('change');
+  await browser.get('sync-contact-names').emit('click');
+  assert.equal(browser.requests.filter(request=>request.path==='/api/contacts/sync').length,1);
+  assert.equal(browser.get('contact-name').textContent,'Ana da agenda');
+  assert.equal(browser.get('contact-phone').textContent,'+55 11 99876-5432');
+  assert.equal(browser.get('message-text').value,'Rascunho preservado');
+  assert.equal(browser.get('attachment-info').hidden,false);
+  assert.match(browser.get('chat-list').textContent,/Ana da agenda/);
+  browser.get('search').value='11998765432';await browser.get('search').emit('input');
+  assert.equal(browser.get('chat-list').children[0].tagName,'BUTTON','O telefone conhecido deve encontrar a conversa LID.');
+});
+
+test('menu copia texto seguro e usa a transcrição quando o áudio não tem legenda',async()=>{
+  const text='<img src=x onerror=alert(1)> Texto literal';
+  const browser=await createBrowser({historyRecords:[{...message(1),text},audio()],onTranscriptions:async()=>[job({status:'completed',text:'Texto da transcrição'})]});
+  const rows=browser.get('messages').children;
+  const copy=findClass(rows[0],'message-copy');assert.ok(copy,'Falta a ação Copiar texto.');
+  await copy.emit('click');await findClass(rows[1],'message-copy').emit('click');
+  assert.deepEqual(browser.copied,[text,'Texto da transcrição']);
+  assert.equal(descendants(rows[0]).some(child=>child.tagName==='IMG'),false);
+});
+
+test('encaminhar exige destinatário e confirmação, captura a origem e não envia o rascunho',async()=>{
+  const other='5511998765433@s.whatsapp.net',group='123456@g.us';
+  const browser=await createBrowser({historyRecords:[message(1)],chatRecords:[
+    {jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:other,name:'Bruno',unread:0,status:'open',labels:[]},{jid:group,name:'Grupo',unread:0,status:'open',labels:[]}
+  ]});
+  const action=findClass(browser.get('messages'),'message-forward');assert.ok(action,'Falta a ação Encaminhar.');await action.emit('click');
+  assert.equal(browser.get('forward-dialog').open,true);
+  assert.match(browser.get('forward-preview').textContent,/Mensagem 1/);
+  assert.equal(browser.get('forward-confirm').disabled,true);
+  assert.equal(browser.requests.some(request=>request.path==='/api/forward'),false);
+  browser.get('forward-search').value='Bruno';await browser.get('forward-search').emit('input');
+  assert.equal(browser.get('forward-destinations').children.length,1);
+  await browser.get('forward-destinations').children[0].emit('click');
+  assert.equal(browser.requests.some(request=>request.path==='/api/forward'),false);
+  await browser.selectChat(1);browser.get('message-text').value='Rascunho do Bruno';await browser.get('message-text').emit('input');
+  await browser.get('forward-confirm').emit('click');
+  const request=browser.requests.find(request=>request.path==='/api/forward');
+  assert.deepEqual(request.input,{sourceJid:jid,messageId:'1',targetJid:other,requestId:'frontend-request-1'});
+  assert.equal(browser.get('message-text').value,'Rascunho do Bruno');
+  assert.equal(browser.get('forward-dialog').open,false);
+  await browser.get('forward-confirm').emit('click');
+  assert.equal(browser.requests.filter(request=>request.path==='/api/forward').length,1,'Uma confirmação antiga não pode encaminhar de novo após fechar.');
+});
+
+test('encaminhamento bloqueia duplo clique e conserva requestId para repetição explícita após falha',async()=>{
+  const other='5511998765433@s.whatsapp.net',started=deferred(),release=deferred();let attempts=0;
+  const browser=await createBrowser({historyRecords:[message(1)],chatRecords:[
+    {jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:other,name:'Bruno',unread:0,status:'open',labels:[]}
+  ],onForward:async()=>{attempts++;if(attempts===1) {started.resolve();await release.promise;throw new Error('Tempo esgotado');}return message(2);}});
+  browser.get('message-text').value='Não apagar';await browser.get('message-text').emit('input');
+  const action=findClass(browser.get('messages'),'message-forward');assert.ok(action);await action.emit('click');
+  const destinations=browser.get('forward-destinations');
+  await destinations.children.find(button=>button.textContent.includes('Bruno')).emit('click');
+  const first=browser.get('forward-confirm').emit('click');await started.promise;
+  await browser.get('forward-confirm').emit('click');
+  assert.equal(attempts,1);release.resolve();await first;
+  assert.equal(browser.get('forward-dialog').open,true);
+  assert.match(browser.get('forward-error').textContent,/Tempo esgotado/);
+  assert.equal(browser.get('message-text').value,'Não apagar');
+  await browser.poll();assert.equal(attempts,1,'O polling repetiu o encaminhamento sem confirmação.');
+  await browser.get('forward-confirm').emit('click');
+  const inputs=browser.requests.filter(request=>request.path==='/api/forward').map(request=>request.input);
+  assert.equal(inputs[0].requestId,inputs[1].requestId);
+});
+
+test('retornar ao destinatário após resultado incerto conserva a solicitação original',async()=>{
+  const bruno='5511998765433@s.whatsapp.net',carla='5511998765434@s.whatsapp.net';
+  const browser=await createBrowser({historyRecords:[message(1)],chatRecords:[
+    {jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:bruno,name:'Bruno',unread:0,status:'open',labels:[]},{jid:carla,name:'Carla',unread:0,status:'open',labels:[]}
+  ],onForward:async()=>{throw new Error('Tempo esgotado: resultado incerto');}});
+  await findClass(browser.get('messages'),'message-forward').emit('click');
+  const choose=async name=>browser.get('forward-destinations').children.find(button=>button.textContent.includes(name)).emit('click');
+  await choose('Bruno');await browser.get('forward-confirm').emit('click');
+  await choose('Carla');await browser.get('forward-confirm').emit('click');
+  await choose('Bruno');await browser.get('forward-confirm').emit('click');
+  const inputs=browser.requests.filter(request=>request.path==='/api/forward').map(request=>request.input);
+  assert.notEqual(inputs[0].requestId,inputs[1].requestId,'Destinatários diferentes devem ter solicitações separadas.');
+  assert.equal(inputs[0].requestId,inputs[2].requestId,'Voltar ao destinatário original não pode contornar a proteção contra duplicados.');
+});
+
+test('mensagem marcada como incompatível mantém encaminhamento indisponível',async()=>{
+  const browser=await createBrowser({historyRecords:[{...message(1),text:'Contato compartilhado',canForward:false}]});
+  const forward=findClass(browser.get('messages'),'message-forward');assert.ok(forward);
+  assert.equal(forward.disabled,true);
+  await forward.emit('click');
+  assert.equal(browser.get('forward-dialog').open,false,'Uma mensagem incompatível não pode abrir o fluxo de envio.');
+  assert.equal(browser.requests.some(request=>request.path==='/api/forward'),false);
+});
+
+test('áudio sem transcrição mantém Copiar texto indisponível até o resultado chegar',async()=>{
+  let saved=[job()];
+  const browser=await createBrowser({historyRecords:[audio()],onTranscriptions:async()=>saved});
+  const copy=findClass(browser.get('messages'),'message-copy');assert.equal(copy.disabled,true);
+  saved=[job({status:'completed',text:'Resultado novo',updatedAt:'2026-10-28T12:02:00Z'})];await browser.pollTranscriptions();
+  assert.equal(copy.disabled,false);await copy.emit('click');assert.deepEqual(browser.copied,['Resultado novo']);
+});
+
+test('ponte de agendamento preserva edição posterior e limpa apenas o rascunho agendado sem alterações',async()=>{
+  let hooks;const selections=[],refreshes=[];
+  const browser=await createBrowser({scheduleModule:{init:value=>{hooks=value;},onSelectChat:chat=>selections.push(chat),onChats:chats=>refreshes.push(chats)}});
+  assert.ok(hooks);assert.equal(hooks.getSelected().jid,jid);assert.equal(refreshes.length,1);
+  browser.get('message-text').value='Agendar';await browser.get('message-text').emit('input');
+  const snapshot=hooks.getDraft();
+  browser.get('message-text').value='Próximo rascunho';await browser.get('message-text').emit('input');
+  hooks.onScheduled({jid},snapshot);assert.equal(browser.get('message-text').value,'Próximo rascunho');
+  const current=hooks.getDraft();hooks.onScheduled({jid},current);assert.equal(browser.get('message-text').value,'');
+  await browser.get('back-to-chats').emit('click');assert.equal(selections.at(-1),null);
 });
