@@ -16,6 +16,7 @@ const {prepareForward}=require('./lib/forwarding.cjs');
 const {createKnowledgeRoutes}=require('./lib/knowledge-routes.cjs');
 const {createAssistantService}=require('./lib/assistant.cjs');
 const assistantCore=require('./lib/assistant-core.cjs');
+const {createHumanizer}=require('./lib/humanize.cjs');
 const {createTriggerService}=require('./lib/triggers.cjs');
 const {createLocalAi}=require('./lib/local-ai.cjs');
 const root=__dirname;
@@ -34,11 +35,13 @@ function createWhatsAppServer(options={}) {
   const localAi=options.localAi || createLocalAi();
   const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
   const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules,credentials});
-  const assistant=createAssistantService({store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
+  // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
+  const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
+  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
-  const crm=createCrmService({store}),automation=createAutomationService({store,client});
-  const triggers=createTriggerService({store,client,now:options.now || Date.now});
+  const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
+  const triggers=createTriggerService({store,client,now:options.now || Date.now,humanizer});
   const scheduler=createScheduler({store,client,now:options.now || Date.now});
   const requests=new Map();
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
