@@ -2,7 +2,8 @@
   'use strict';
   const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
-  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),messageCopyViews=new Map(),forwardRequestIds=new Map();
+  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[]};
+  const runHooks=(name,...args)=>{for(const hook of hooks[name]) try {hook(...args);}catch {}};
   const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
   let transcriptionSettings=null,transcriptionSettingsLoading=null;
   let historyQueue=Promise.resolve(),syncTask=Promise.resolve(),namesSyncing=false,forwardState=null;
@@ -12,8 +13,8 @@
   const initials=name=>String(name || '?').split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase();
   const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
   function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
-  async function api(route,method='GET',input) {
-    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(30000)});
+  async function api(route,method='GET',input,timeout=30000) {
+    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(timeout)});
     const result=await response.json();if(!response.ok) throw new Error(result.error || 'Não foi possível completar a operação.');return result;
   }
   function notice(message,success=false) {$('notice').textContent=message;$('notice').classList.toggle('success',success);$('notice').hidden=!message;}
@@ -25,6 +26,7 @@
     $('panel-connection-state').textContent=online?'Conectado':value.state==='connecting'?'Aguardando leitura do QR Code':value.reachable?'Pronto para conectar':'Conector indisponível';
     $('panel-connection-phone').textContent=$('connected-phone').textContent;
     $('sync-label').textContent=online?'Atualização automática':'Aguardando conexão';
+    $('status-whatsapp').textContent=online?'Conectado':value.state==='connecting'?'Aguardando QR':'Desconectado';$('dot-whatsapp').classList.toggle('on',online);
     $('connection-badge').textContent=online?'Conectado':value.state==='connecting'?'Aguardando leitura':value.reachable?'Pronto para conectar':'Conector indisponível';
     $('connection-badge').classList.toggle('connected',online);
     $('connection-title').textContent=online?'Seu WhatsApp está conectado':value.reachable?'Conecte sua conta':'Inicie o conector local';
@@ -39,7 +41,7 @@
     const filtered=chats.filter(chat=>(!$('unread-only').checked || chat.unread>0) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
     const unreadCount=chats.filter(chat=>chat.unread>0).length,pendingCount=chats.filter(chat=>chat.status==='pending').length;
     $('metric-total').textContent=chats.length;$('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=chats.filter(chat=>chat.status==='closed').length;$('chat-count').textContent=filtered.length;
-    $('filter-total-count').textContent=chats.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
+    $('filter-total-count').textContent=chats.length;$('nav-chat-count').textContent=chats.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
     $('filter-all').classList.toggle('active',!status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
     $('filter-all').setAttribute('aria-pressed',String(!status && !$('unread-only').checked));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
     const fragment=document.createDocumentFragment();
@@ -315,7 +317,7 @@
       button.append(el('strong','',template.name),el('small','',template.body));button.addEventListener('click',()=>insertTemplate(template));fragment.append(button);
     }
     if(!templates.length) fragment.append(el('div','template-empty','Suas mensagens mais usadas podem ficar aqui. Adicione uma resposta para começar.'));
-    $('template-shortcuts').replaceChildren(fragment);
+    $('template-shortcuts').replaceChildren(fragment);runHooks('select');
   }
   function sync(force=false) {
     if(document.visibilityState==='hidden') return Promise.resolve();
@@ -326,7 +328,7 @@
       if(value.state==='connected') {
         chats=await api('/chats');globalThis.WhatsAppFeatures?.onChats?.(chats);globalThis.WhatsAppSchedule?.onChats?.(chats);
         if(selected) {const updated=chats.find(chat=>chat.jid===selected.jid);if(updated) {const identityChanged=selected.name!==updated.name || contactPhone(selected)!==contactPhone(updated);Object.assign(selected,updated);if(identityChanged) showSelectedIdentity(selected);}}
-        renderChats();if($('forward-dialog').open) renderForwardDestinations();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
+        renderChats();runHooks('sync');if($('forward-dialog').open) renderForwardDestinations();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
       } else if(!selected) renderChats();
     } catch(error) {notice(error.message);}finally {syncing=false;}
     })();return syncTask;
@@ -369,11 +371,19 @@
   $('quick-template').addEventListener('change',()=>{if($('quick-template').value==='') return;insertTemplate(templates[Number($('quick-template').value)]);$('quick-template').value='';});
   $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;});
   $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && (event.ctrlKey || event.metaKey)) {event.preventDefault();$('composer').requestSubmit();}});
-  $('attachment').addEventListener('change',()=>{
-    const file=$('attachment').files[0];editRevision++;pendingSend=null;
+  function setAttachment(file) {
+    editRevision++;pendingSend=null;
     if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
     attachment=file || null;$('attachment-name').textContent=file?file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file;$('message-text').required=!attachment;
-  });
+  }
+  $('attachment').addEventListener('change',()=>setAttachment($('attachment').files[0]));
+  // Usado por produtos e pelo assistente: coloca texto (e foto) no editor sem enviar nada.
+  function insertDraft(text,file) {
+    if(!selected) return false;
+    $('message-text').value=[$('message-text').value,text].filter(Boolean).join('\n');editRevision++;pendingSend=null;
+    if(file) setAttachment(file);
+    $('message-text').focus();return true;
+  }
   $('remove-attachment').addEventListener('click',()=>{editRevision++;attachment=null;pendingSend=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;});
   const fileBase64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));reader.readAsDataURL(file);});
   $('composer').addEventListener('submit',async event=>{
@@ -401,11 +411,19 @@
   });
   function toggleContact(value) {detailsOpen=value;$('app-shell').classList.toggle('details-open',detailsOpen);$('show-contact').setAttribute('aria-expanded',String(detailsOpen || matchMedia('(min-width:1001px)').matches));}
   function showPanel(section) {
-    for(const name of ['attendance','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
+    for(const name of ['attendance','products','assistant','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
   }
-  const navIds=['nav-overview','nav-conversations','nav-pending','nav-closed','settings','nav-connection','nav-settings'];
+  const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','settings','nav-connection','nav-settings'];
+  const pageIds=['page-contacts','page-knowledge','page-products','page-ai'];
+  function showView(view='workspace',nav) {
+    const workspace=view==='workspace';$('metrics').hidden=!workspace;$('workspace').hidden=!workspace;
+    for(const id of pageIds) $(id).hidden=id!==view;
+    if(nav) setNavigation(nav);
+    runHooks('view',view);
+  }
+  function openChat(chat) {showView('workspace','nav-conversations');return selectChat(chat);}
   function setNavigation(id) {for(const name of navIds) {$(name).classList.toggle('active',name===id);if(name===id) $(name).setAttribute('aria-current','page');else $(name).removeAttribute('aria-current');}}
-  function applyFilter(status='',unread=false,nav='nav-conversations') {$('search').value='';$('status-filter').value=status;$('unread-only').checked=unread;setNavigation(nav);renderChats();}
+  function applyFilter(status='',unread=false,nav='nav-conversations') {showView('workspace');$('search').value='';$('status-filter').value=status;$('unread-only').checked=unread;setNavigation(nav);renderChats();}
   $('nav-overview').addEventListener('click',()=>applyFilter('',false,'nav-overview'));
   $('nav-conversations').addEventListener('click',()=>{applyFilter();$('search').focus();});
   $('nav-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
@@ -416,10 +434,10 @@
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
   $('filter-all').addEventListener('click',()=>applyFilter());$('filter-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('toggle-filters').addEventListener('click',()=>{$('advanced-filters').hidden=!$('advanced-filters').hidden;$('toggle-filters').setAttribute('aria-expanded',String(!$('advanced-filters').hidden));});
-  for(const section of ['attendance','templates','connection']) $('tab-'+section).addEventListener('click',()=>showPanel(section));
+  for(const section of ['attendance','products','assistant','templates','connection']) $('tab-'+section).addEventListener('click',()=>showPanel(section));
   $('nav-connection').addEventListener('click',()=>$('connection-dialog').showModal());
   $('manage-connection').addEventListener('click',()=>$('connection-dialog').showModal());
-  $('nav-settings').addEventListener('click',()=>{setNavigation('nav-settings');showPanel('connection');toggleContact(true);});
+  $('nav-settings').addEventListener('click',()=>{showView('workspace','nav-settings');showPanel('connection');toggleContact(true);});
   $('refresh-top').addEventListener('click',()=>{notice('');sync();});
   $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
   $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
@@ -486,4 +504,6 @@
   (async()=>{try {templates=(await api('/settings')).templates;renderTemplates();}catch(error) {notice(error.message);}await sync();if(new URLSearchParams(location.search).has('conectar') && connection?.reachable && connection.state!=='connected') openQr();})();
   setInterval(sync,4000);
   setInterval(pollTranscriptions,2000);
+  // Ponte para pages.js (base de conhecimento, produtos, IA e CRM).
+  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,selected:()=>selected,connection:()=>connection};
 })();
