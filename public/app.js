@@ -177,7 +177,7 @@
           try {await player.play?.();}catch(error) {status.textContent=error.name==='NotAllowedError'?'Vídeo carregado. Toque no ▶ do player para iniciar.':'Toque no ▶ do player para reproduzir. Se o formato não abrir, use Baixar vídeo.';status.hidden=false;}
         }
       }
-      catch(error) {status.textContent=error.message;status.hidden=false;load.textContent='↻ Tentar carregar vídeo';}
+      catch(error) {status.textContent=error.message;status.hidden=false;load.hidden=false;load.textContent='↻ Tentar carregar vídeo';}
       finally {view.loading=false;load.disabled=false;}
     });
     player.addEventListener('error',()=>{status.textContent='Este formato não pode ser reproduzido no navegador. Baixe o arquivo para abrir no seu computador.';status.hidden=false;load.hidden=false;load.textContent='↻ Carregar novamente';});
@@ -325,7 +325,7 @@
   }
   async function fetchMedia(message,jid) {
       const key=jid+'|'+message.id;if(mediaUrls.has(key)) return mediaUrls.get(key);
-      const result=await api(`/media?jid=${encodeURIComponent(jid)}&id=${encodeURIComponent(message.id)}`);
+      const result=await api(`/media?jid=${encodeURIComponent(jid)}&id=${encodeURIComponent(message.id)}`,'GET',undefined,100000);
       const raw=result.base64.replace(/^data:[^,]*,/,'');if(!/^[A-Za-z0-9+/=\r\n]+$/.test(raw)) throw new Error('Mídia retornada em formato inválido.');
       const bytes=Uint8Array.from(atob(raw),char=>char.charCodeAt(0));
       const previewMime=globalThis.WhatsAppMedia?.previewMime?.(bytes) || null,mimeType=previewMime || result.mimeType,url=URL.createObjectURL(new Blob([bytes],{type:mimeType}));
