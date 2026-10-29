@@ -5,6 +5,12 @@ const {randomBytes,randomUUID,timingSafeEqual,createHash}=require('node:crypto')
 const {execFile}=require('node:child_process');
 const {createEvolutionClient,ApiError,assertJid}=require('./lib/evolution.cjs');
 const {createStore}=require('./lib/store.cjs');
+const {createCredentialStore}=require('./lib/credentials.cjs');
+const {createTranscriptionService}=require('./lib/transcription.cjs');
+const {createAudioEngines}=require('./lib/audio-engines.cjs');
+const {createAvatarService}=require('./lib/avatars.cjs');
+const {createCrmService}=require('./lib/crm.cjs');
+const {createAutomationService}=require('./lib/automation.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
@@ -17,6 +23,10 @@ async function readBody(req) {
 function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
   const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(options.storeDir || path.join(root,'data'));
+  const credentials=createCredentialStore(options.storeDir || path.join(root,'data'));
+  const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
+  const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
+  const crm=createCrmService({store}),automation=createAutomationService({store,client});
   const requests=new Map();
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   async function sendOnce(input,send) {
@@ -33,7 +43,7 @@ function createWhatsAppServer(options={}) {
     requests.set(id,{hash,promise});if(requests.size>1000) requests.delete(requests.keys().next().value);
     return promise;
   }
-  return http.createServer(async(req,res)=>{
+  const server=http.createServer(async(req,res)=>{
     for(const [name,value] of Object.entries({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})) res.setHeader(name,value);
     const hosts=[`127.0.0.1:${req.socket.localPort}`,`localhost:${req.socket.localPort}`];
     if(!hosts.includes(req.headers.host)) return json(res,403,{error:'Endereço local inválido.'});
@@ -41,19 +51,28 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/app.css'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
         res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});return res.end(content);
       }
       if(!route.startsWith('/api/')) return json(res,404,{error:'Endereço não encontrado.'});
       const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
+      if(route==='/api/transcription/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await transcriptions.settings():await transcriptions.saveSettings(await readBody(req)));
+      if(req.method==='GET' && route==='/api/transcriptions') return json(res,200,await transcriptions.list(url.searchParams.get('jid')));
+      if(req.method==='POST' && route==='/api/transcriptions') return json(res,202,await transcriptions.enqueue(await readBody(req)));
+      if(req.method==='GET' && route==='/api/avatar') return json(res,200,await avatars.get(url.searchParams.get('jid')));
+      if(route==='/api/crm' && req.method==='GET') return json(res,200,await crm.list(await client.chats()));
+      if(route==='/api/crm' && req.method==='PATCH') return json(res,200,await crm.update(url.searchParams.get('jid'),await readBody(req)));
+      if(route==='/api/automation/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await automation.settings():await automation.saveSettings(await readBody(req)));
+      if(req.method==='POST' && route==='/api/automation/simulate') return json(res,200,await automation.simulate(await readBody(req)));
+      if(req.method==='GET' && route==='/api/automation/executions') return json(res,200,await automation.executions());
       if(req.method==='GET' && route==='/api/connection') return json(res,200,await client.connection());
       if(req.method==='POST' && route==='/api/connect') return json(res,200,await client.connect());
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
-        const chats=(await client.chats()).map(chat=>({...chat,...(data.contacts[chat.jid] || contactDefault())}));
+        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid]}));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
       }
       if(req.method==='GET' && route==='/api/messages') {
@@ -63,11 +82,11 @@ function createWhatsAppServer(options={}) {
       }
       if(route==='/api/contact' && ['GET','PATCH'].includes(req.method)) {
         const jid=assertJid(url.searchParams.get('jid'));
-        if(req.method==='GET') return json(res,200,(await store.read()).contacts[jid] || contactDefault());
+        if(req.method==='GET') return json(res,200,{...contactDefault(),...(await store.read()).contacts[jid]});
         const input=await readBody(req);
         if(input.status!==undefined && !['open','pending','closed'].includes(input.status)) throw new ApiError('Situação inválida.',422);
         if(input.labels!==undefined && (!Array.isArray(input.labels) || input.labels.length>10 || input.labels.some(label=>typeof label!=='string' || !label.trim() || label.length>40))) throw new ApiError('Use até 10 etiquetas de até 40 caracteres.',422);
-        return json(res,200,await store.update(data=>{const contact=data.contacts[jid] ||=contactDefault();if(input.status!==undefined) contact.status=input.status;if(input.labels!==undefined) contact.labels=[...new Set(input.labels.map(label=>label.trim()))];return contact;}));
+        return json(res,200,await store.update(data=>{const contact=data.contacts[jid]={...contactDefault(),...data.contacts[jid]};if(input.status!==undefined) contact.status=input.status;if(input.labels!==undefined) contact.labels=[...new Set(input.labels.map(label=>label.trim()))];return contact;}));
       }
       if(route==='/api/settings' && ['GET','PATCH'].includes(req.method)) {
         if(req.method==='GET') return json(res,200,(await store.read()).settings);
@@ -79,7 +98,7 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/notes') {
         const input=await readBody(req),jid=assertJid(input.jid),text=textField(input.text,4000,'Nota');
         const note={id:randomUUID(),text,at:new Date().toISOString()};
-        await store.update(data=>{const contact=data.contacts[jid] ||=contactDefault();contact.notes.unshift(note);});return json(res,201,note);
+        await store.update(data=>{const contact=data.contacts[jid]={...contactDefault(),...data.contacts[jid]};contact.notes.unshift(note);});return json(res,201,note);
       }
       if(req.method==='POST' && route==='/api/resolve-phone') {const input=await readBody(req);return json(res,200,await client.resolvePhone(input.phone));}
       if(req.method==='POST' && route==='/api/read') {
@@ -105,6 +124,10 @@ function createWhatsAppServer(options={}) {
       return json(res,404,{error:'Endereço não encontrado.'});
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });
+  server.transcriptions=transcriptions;
+  server.on('listening',()=>automation.start());
+  server.on('close',()=>{automation.stop();credentials.close().catch(()=>{});});
+  return server;
 }
 if(require.main===module) {
   (async()=>{

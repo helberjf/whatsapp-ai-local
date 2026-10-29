@@ -19,9 +19,41 @@ Requisitos: Windows, Node.js 22 ou mais recente, Docker Desktop com engine Linux
 - Texto de 14 px nas mensagens e 16 px nos contatos; balões recebidos escuros e enviados verdes.
 - Texto e anexos de até 10 MB. **Ctrl+Enter** envia; as respostas rápidas apenas preenchem o editor.
 - O painel reúne situação, etiquetas, notas, respostas rápidas e conexão. Em janelas menores, o botão de detalhes abre esse painel. As notas não são enviadas ao contato.
+- As fotos dos contatos carregam conforme aparecem na lista. Quando a privacidade do contato impede o acesso, as iniciais continuam visíveis.
 - **Carregar mensagens anteriores** pagina o histórico sincronizado. A primeira sincronização depende do WhatsApp; ela não garante a importação de todo o histórico antigo. Identificadores privados `@lid` podem aparecer quando o WhatsApp ainda não disponibilizou o nome/telefone.
 
-O escopo é atendimento individual. Chatbot, disparos, grupos e regras de cobrança/renovação do Mapa Hóspede não foram ativados nesta central. O envio ocorre somente por ação no editor.
+O escopo é atendimento individual. Além do editor manual, o robô opcional pode responder às palavras-chave configuradas por você. Disparos, grupos e regras de cobrança/renovação do Mapa Hóspede não fazem parte desta central.
+
+## Transcrever áudios
+
+No balão de áudio, use **Transcrever**. O padrão é **Whisper local**, modelo **base**, em português. A transcrição aparece no próprio balão e pode ser copiada. Fechar a conversa não cancela o processamento. Os resultados ficam salvos localmente e reaparecem ao abrir a conversa.
+
+Em **Transcrição de áudios**, escolha o modelo e o idioma. `tiny` usa menos recursos; modelos maiores exigem mais memória e tempo de CPU. A instalação desta máquina já possui Python, Whisper, FFmpeg e o modelo base. O processamento aceita áudios de até **10 MB e 10 minutos**, com um áudio por vez e até 20 na fila. Os arquivos temporários são apagados depois do processamento. Uma interrupção marca o trabalho como falho; uma nova tentativa depende do seu clique.
+
+Em outra instalação Windows, instale FFmpeg no PATH e prepare o Python:
+
+```powershell
+python -m pip install openai-whisper
+python -c "import whisper; whisper.load_model('base')"
+```
+
+O segundo comando baixa o modelo. Para usar outro modelo, substitua `base` pelo nome escolhido. A central procura Python 3.10 em `%LOCALAPPDATA%\Programs\Python\Python310\python.exe` e, depois, `python.exe` no PATH. Defina `WHATSAPP_WHISPER_PYTHON` ou `WHATSAPP_FFMPEG` antes de abrir a central para indicar executáveis diferentes.
+
+**IA (OpenAI)** é uma alternativa selecionada por áudio. Cole sua chave de API na configuração de transcrição. Essa opção envia o áudio à OpenAI usando `gpt-transcribe`; depende de internet e de uma conta de API habilitada. O Whisper local não precisa dessa chave. Não há troca automática do Whisper para a IA em caso de falha.
+
+A chave fica **criptografada no banco SQLite `data/credentials.sqlite`**, com DPAPI do Windows no escopo do usuário atual. A interface recebe somente a indicação de chave configurada. O segredo não fica nos argumentos de processos, nos logs nem nos metadados de transcrição. Para trocar de usuário/computador, informe a chave novamente; copiar o banco não transfere a capacidade de descriptografá-la.
+
+Referências de integração: [Whisper oficial](https://github.com/openai/whisper) e [transcrição de arquivos da OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text). A pasta `video-mp3-transcript` foi consultada: ela contém conversão com FFmpeg, sem um transcritor pronto.
+
+## CRM e robô por palavras-chave
+
+Abra **CRM** no menu para acompanhar contatos por etapa, anotar observações, definir o próximo contato e abrir a conversa. As mudanças e o histórico ficam neste computador. A organização foi adaptada do CRM do `menu-hospede` para a sua conta pessoal.
+
+Em **Automações**, cadastre o nome da regra, palavras ou frases e a resposta. Escolha entre encontrar um trecho ou uma palavra/frase inteira. A comparação ignora maiúsculas e acentos; a primeira regra correspondente prevalece. O simulador mostra o resultado sem enviar nada ao WhatsApp.
+
+O robô começa **desligado e sem regras**. Após salvar suas regras e ativá-lo, ele acompanha mensagens de texto novas mesmo com o navegador fechado, enquanto o computador, Node e Docker estiverem ativos. Mensagens antigas, mensagens suas, grupos e mídias não geram respostas. É possível pausar o robô para um contato no atendimento/CRM. O intervalo mínimo entre respostas ao mesmo contato é configurável.
+
+O identificador da mensagem é reservado em disco antes do envio para evitar duplicação. Se o envio ficar sem confirmação, o registro aparece no histórico e não é reenviado automaticamente. Ao reabrir a central, mensagens do período em que ela esteve desligada não disparam respostas retroativas.
 
 ## Usar o computador como servidor
 
@@ -47,13 +79,15 @@ No Milhas, o link **WhatsApp Local ↗** inicia e abre esta mesma central. O ada
 - `integrations/milhas/`: adaptador opcional para iniciar e abrir esta central a partir do Milhas.
 - `data/config.json` e `infra/.env`: segredos gerados localmente; não compartilhe esses arquivos.
 - `data/atendimento.json`: notas, etiquetas, respostas rápidas e registros de envio para evitar duplicação.
+- `data/atendimento.json` também guarda CRM, regras e histórico do robô, configurações públicas e resultados de transcrição.
+- `data/credentials.sqlite`: chave da OpenAI criptografada com a proteção do usuário Windows.
 - `data/server.log`, `data/server.err.log` e `data/startup.log`: diagnóstico local.
 
 Sessão e mensagens ficam nos volumes Docker `whatsapp-local_instances`, `whatsapp-local_postgres_data` e `whatsapp-local_redis_data`. **Não remova esses volumes nem use `docker compose down -v` para uma parada normal.** Copiar apenas a pasta do projeto não copia o banco nem a sessão desses volumes.
 
 O nome interno Docker permanece `whatsapp-local` para reutilizar os volumes e o pareamento existentes durante a mudança de pasta. `data/`, `infra/.env` e atalhos `.lnk` ficam fora do Git. O código pode ser versionado sem publicar os dados da conta.
 
-Neste computador, o Avast inspeciona HTTPS. `scripts/windows-ca.ps1` valida a conexão com o WhatsApp usando a confiança existente do Windows, exporta somente o certificado público da raiz já confiada e o disponibiliza ao Node do conector via `NODE_EXTRA_CA_CERTS`. A validação TLS permanece ativa. Nenhuma chave privada do Windows é exportada.
+Neste computador, o Avast inspeciona HTTPS. `scripts/windows-ca.ps1` valida a conexão com o WhatsApp usando a confiança existente do Windows, exporta somente o certificado público da raiz já confiada e o disponibiliza ao Node do conector e da central via `NODE_EXTRA_CA_CERTS`. A validação TLS permanece ativa. Nenhuma chave privada do Windows é exportada.
 
 ## Testar e diagnosticar
 
@@ -64,5 +98,7 @@ docker compose -f infra/compose.yaml logs --tail=50 evolution
 ```
 
 Os testes usam um servidor Evolution fictício, sem enviar mensagens reais. O pareamento e o recebimento de conversas foram verificados com sua sessão, após sua leitura do QR em 28/10/2026. Envios de teste para seus contatos não foram realizados.
+
+Na atualização de 28/10/2026, passaram 73 testes da central e 18 do Milhas. Foram verificados Whisper com áudio sintético e áudio real pela interface, fotos reais, CRM, configuração de chave, simulador e preservação de rascunho. A integração OpenAI foi testada por contrato com resposta controlada; o uso real depende da sua chave de API.
 
 Contrato e infraestrutura conferidos na [fonte oficial da Evolution 2.3.7](https://github.com/evolution-foundation/evolution-api/tree/2.3.7). A origem local permanece sem alterações.

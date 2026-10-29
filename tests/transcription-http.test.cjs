@@ -1,0 +1,25 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises');
+const os=require('node:os');
+const path=require('node:path');
+const {createWhatsAppServer}=require('../server.cjs');
+test('rotas de transcrição exigem sessão e persistem texto sem expor chave de IA',async t=>{
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'wa-transcription-http-'));
+  let calls=0;
+  const server=createWhatsAppServer({storeDir:directory,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'private',instanceName:'teste'},fetchImpl:async()=>new Response(JSON.stringify({base64:'aGVsbG8=',mimetype:'audio/ogg'})),transcriptionEngines:{whisperEngine:async()=>{calls++;return {text:'Teste local'};},aiEngine:async()=>({text:'IA'})}});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`;
+  t.after(async()=>{await new Promise(r=>server.close(r));assert.equal(path.dirname(directory),os.tmpdir());assert.match(path.basename(directory),/^wa-transcription-http-/);await fs.rm(directory,{recursive:true,force:true});});
+  const token=(await(await fetch(base)).text()).match(/name="whatsapp-session" content="([a-f0-9]{64})"/)[1];
+  const req=(route,method='GET',body)=>fetch(base+route,{method,headers:{'X-WhatsApp-Token':token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+  assert.equal((await fetch(base+'/api/transcription/settings')).status,403);
+  const settings=await req('/api/transcription/settings');assert.equal(settings.status,200);assert.equal((await settings.json()).defaultProvider,'whisper');
+  const saved=await req('/api/transcription/settings','PATCH',{aiApiKey:'sk-nao-expor'});assert.doesNotMatch(await saved.text(),/nao-expor/);
+  assert.doesNotMatch(await(await req('/api/settings')).text(),/nao-expor/);
+  const jid='5511998765432@s.whatsapp.net';
+  const job=await req('/api/transcriptions','POST',{jid,messageId:'audio-http'});assert.equal(job.status,202);
+  await server.transcriptions.idle();
+  const records=await(await req('/api/transcriptions?jid='+encodeURIComponent(jid))).json();assert.equal(records[0].text,'Teste local');assert.equal(calls,1);
+  assert.equal((await req('/api/transcriptions','POST',{jid,messageId:'audio-http'})).status,202);await server.transcriptions.idle();assert.equal(calls,1);
+  assert.equal((await req('/api/transcriptions?jid=../file')).status,422);
+});

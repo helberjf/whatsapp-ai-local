@@ -3,6 +3,8 @@
   const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map();
+  const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
+  let transcriptionSettings=null,transcriptionSettingsLoading=null;
   let historyQueue=Promise.resolve();
   const statuses={open:'Em aberto',pending:'Pendente',closed:'Concluído'};
   const time=value=>value?new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';
@@ -42,7 +44,7 @@
     const fragment=document.createDocumentFragment();
     for(const chat of filtered) {
       const button=el('button','chat-item'+(selected?.jid===chat.jid?' selected':''));button.type='button';button.setAttribute('aria-pressed',String(selected?.jid===chat.jid));
-      button.append(el('span','avatar',initials(chat.name)));
+      const avatar=el('span','avatar',initials(chat.name));globalThis.WhatsAppAvatars?.decorate?.(avatar,chat);button.append(avatar);
       const copy=el('span','chat-text'),title=el('span','chat-title');title.append(el('strong','',chat.name));
       if(['pending','closed'].includes(chat.status)) title.append(el('span','chat-status '+chat.status,statuses[chat.status]));
       title.append(el('time','',time(chat.lastMessage?.timestamp)));
@@ -54,9 +56,93 @@
     $('chat-list').replaceChildren(fragment);
   }
   function mergeMessages(records) {const all=new Map(messages.map(item=>[item.id,item]));let changed=false;for(const message of records) {if(JSON.stringify(all.get(message.id))!==JSON.stringify(message)) changed=true;all.set(message.id,message);}messages=[...all.values()].sort((a,b)=>a.timestamp-b.timestamp);return changed;}
+  const transcriptionKey=(jid,messageId)=>jid+'|'+messageId;
+  const pendingTranscription=job=>job && ['queued','running'].includes(job.status);
+  function latestTranscription(jid,messageId,provider) {
+    return [...(transcriptionJobs.get(jid)?.values() || [])].filter(job=>job.messageId===messageId && job.provider===provider)
+      .sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
+  }
+  function rememberTranscriptions(jid,jobs) {
+    if(!transcriptionJobs.has(jid)) transcriptionJobs.set(jid,new Map());
+    const saved=transcriptionJobs.get(jid);
+    for(const job of jobs) {
+      if(job.jid!==jid || !job.id) continue;
+      const previous=saved.get(job.id);
+      if(!previous || String(job.updatedAt)>=String(previous.updatedAt)) saved.set(job.id,job);
+    }
+  }
+  function updateTranscription(view) {
+    const provider=view.provider.value,key=transcriptionKey(view.jid,view.messageId),job=latestTranscription(view.jid,view.messageId,provider),error=transcriptionErrors.get(key+'|'+provider);
+    const busy=transcriptionRequests.has(key+'|'+provider),pending=pendingTranscription(job),failed=job?.status==='failed' || Boolean(error);
+    view.button.disabled=busy || pending;view.provider.disabled=busy;
+    view.button.textContent=busy?'Solicitando…':pending?'Transcrevendo…':failed?'Tentar novamente':'Transcrever';
+    view.disclosure.hidden=provider!=='ai';
+    const source=provider==='ai'?'IA · OpenAI':'Whisper local';
+    const status=busy?'Solicitando transcrição…':error?error:job?.status==='completed'?source+' · Transcrição concluída':job?.status==='failed'?(job.error || 'Não foi possível transcrever este áudio.'):job?.status==='running'?source+' · Transcrevendo…':job?.status==='queued'?source+' · Na fila…':'';
+    if(view.status.textContent!==status) view.status.textContent=status;
+    view.status.hidden=!status;view.status.classList.toggle('transcription-error',failed);
+    const text=job?.status==='completed'?job.text || 'Nenhuma fala identificada.':'';
+    if(view.text.textContent!==text) view.text.textContent=text;
+    view.text.hidden=!text;view.copy.hidden=!job?.text || job.status!=='completed';
+  }
+  function updateTranscriptionViews(jid=selected?.jid) {
+    if(selected?.jid!==jid) return;
+    for(const view of transcriptionViews.values()) if(view.jid===jid) updateTranscription(view);
+  }
+  function audioTranscription(message,jid) {
+    const key=transcriptionKey(jid,message.id),panel=el('section','audio-transcription'),controls=el('div','transcription-controls'),provider=el('select','transcription-provider');
+    panel.setAttribute('aria-label','Transcrição do áudio');provider.setAttribute('aria-label','Transcritor deste áudio');
+    for(const [value,label] of [['whisper','Whisper local (padrão)'],['ai','IA (OpenAI)']]) {const option=el('option','',label);option.value=value;provider.append(option);}
+    provider.value=transcriptionChoices.get(key) || 'whisper';
+    const button=el('button','transcribe-button','Transcrever');button.type='button';controls.append(provider,button);
+    const disclosure=el('p','transcription-disclosure','Este áudio será enviado à OpenAI para transcrição.'),status=el('p','transcription-status'),text=el('p','transcription-text'),copy=el('button','text-button transcription-copy','Copiar transcrição');
+    status.setAttribute('role','status');status.setAttribute('aria-live','polite');copy.type='button';
+    const view={jid,messageId:message.id,provider,button,disclosure,status,text,copy};transcriptionViews.set(key,view);
+    provider.addEventListener('change',async()=>{
+      transcriptionChoices.set(key,provider.value);updateTranscription(view);
+      if(provider.value==='ai') {
+        const version=selection;
+        try {const settings=transcriptionSettings || await loadTranscriptionSettings();if(selected?.jid===jid && selection===version && !settings.aiConfigured) await openTranscriptionSettings('Adicione sua chave da OpenAI para usar a IA neste áudio.');}
+        catch(error) {if(selected?.jid===jid && selection===version) {transcriptionErrors.set(key+'|ai',error.message);updateTranscription(view);}}
+      }
+    });
+    button.addEventListener('click',()=>startTranscription(view));
+    copy.addEventListener('click',async()=>{
+      const job=latestTranscription(jid,message.id,provider.value);if(!job?.text) return;
+      try {await navigator.clipboard.writeText(job.text);notice('Transcrição copiada.',true);}catch {notice('Não foi possível copiar. Selecione o texto da transcrição para copiar.');}
+    });
+    panel.append(controls,disclosure,status,text,copy);updateTranscription(view);return panel;
+  }
+  async function startTranscription(view) {
+    const {jid,messageId}=view,version=selection,provider=view.provider.value,key=transcriptionKey(jid,messageId)+'|'+provider;
+    const job=latestTranscription(jid,messageId,provider);
+    if(selected?.jid!==jid || transcriptionRequests.has(key) || pendingTranscription(job)) return;
+    if(provider==='ai') {
+      try {const settings=transcriptionSettings || await loadTranscriptionSettings();if(selected?.jid!==jid || selection!==version) return;if(!settings.aiConfigured) {await openTranscriptionSettings('Adicione sua chave da OpenAI para usar a IA neste áudio.');return;}}
+      catch(error) {transcriptionErrors.set(key,error.message);updateTranscriptionViews(jid);return;}
+    }
+    const retry=job?.status==='failed' || transcriptionErrors.has(key);transcriptionRequests.add(key);transcriptionErrors.delete(key);updateTranscriptionViews(jid);
+    try {
+      const result=await api('/transcriptions','POST',{jid,messageId,provider,...(retry?{retry:true}:{})});rememberTranscriptions(jid,[result]);
+    } catch(error) {transcriptionErrors.set(key,error.message);}
+    finally {transcriptionRequests.delete(key);if(selected?.jid===jid && selection===version) updateTranscriptionViews(jid);}
+  }
+  async function loadTranscriptions(jid=selected?.jid,version=selection) {
+    if(!jid) return;
+    const key=jid+'|'+version;if(transcriptionLoads.has(key)) return;transcriptionLoads.add(key);
+    try {
+      const jobs=await api('/transcriptions?jid='+encodeURIComponent(jid));rememberTranscriptions(jid,jobs);
+      if(selected?.jid===jid && selection===version) updateTranscriptionViews(jid);
+    } finally {transcriptionLoads.delete(key);}
+  }
+  async function pollTranscriptions() {
+    const jid=selected?.jid,version=selection;
+    if(!jid || document.visibilityState==='hidden' || ![...(transcriptionJobs.get(jid)?.values() || [])].some(pendingTranscription)) return;
+    try {await loadTranscriptions(jid,version);}catch(error) {if(selected?.jid===jid && selection===version) notice('Não foi possível atualizar as transcrições: '+error.message);}
+  }
   function renderMessages(keepScroll=false,forceBottom=false) {
     const container=$('messages'),nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<90,oldHeight=container.scrollHeight,oldTop=container.scrollTop;
-    const fragment=document.createDocumentFragment();
+    const fragment=document.createDocumentFragment();transcriptionViews.clear();
     for(const message of messages) {
       const row=el('article','message'+(message.fromMe?' mine':''));
       if(message.type!=='text') {
@@ -70,6 +156,7 @@
         }
       }
       if(message.text) row.append(el('p','',message.text));
+      if(message.type==='audio') row.append(audioTranscription(message,selected.jid));
       const ack=!message.fromMe?'': ['READ','PLAYED',4,5].includes(message.status)?' · Lida':['DELIVERY_ACK','DELIVERED',3].includes(message.status)?' · Entregue':['ERROR','FAILED',0].includes(message.status)?' · Falha':['PENDING',1].includes(message.status)?' · Enviando':' · Enviada';
       const meta=el('time','message-meta',time(message.timestamp)+ack);if(message.timestamp) meta.title=dateTime(message.timestamp);row.append(meta);fragment.append(row);
     }
@@ -123,9 +210,11 @@
     $('app-shell').classList.toggle('has-chat',true);
     $('contact-name').textContent=chat.name;$('contact-phone').textContent=chat.jid.endsWith('@lid')?'Identificador privado do WhatsApp':phoneLabel(chat.jid.split('@')[0]);$('contact-avatar').textContent=initials(chat.name);$('message-text').value=drafts.get(chat.jid) || '';
     $('details-contact-name').textContent=chat.name;$('details-contact-phone').textContent=$('contact-phone').textContent;renderTemplateShortcuts();
+    $('details-contact-avatar').textContent=initials(chat.name);globalThis.WhatsAppAvatars?.decorate?.($('contact-avatar'),chat,{eager:true});globalThis.WhatsAppAvatars?.decorate?.($('details-contact-avatar'),chat,{eager:true});
+    globalThis.WhatsAppFeatures?.onSelectChat?.(chat);
     renderChats();renderMessages();$('messages').replaceChildren(el('p','muted','Carregando histórico…'));
     $('contact-status').value=chat.status || 'open';$('contact-labels').value=(chat.labels || []).join(', ');$('notes').replaceChildren();
-    try {await Promise.all([loadMessages(),loadContact(chat.jid)]);}catch(error) {notice(error.message);}
+    try {await Promise.all([loadMessages(),loadContact(chat.jid),loadTranscriptions(chat.jid)]);}catch(error) {notice(error.message);}
   }
   function renderTemplates() {
     $('quick-template').replaceChildren(el('option','','Escolher uma resposta…'));$('quick-template').firstElementChild.value='';
@@ -151,7 +240,7 @@
     try {
       const value=await api('/connection');showConnection(value);
       if(value.state==='connected') {
-        chats=await api('/chats');renderChats();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
+        chats=await api('/chats');globalThis.WhatsAppFeatures?.onChats?.(chats);renderChats();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
       } else if(!selected) renderChats();
     } catch(error) {notice(error.message);}finally {syncing=false;}
   }
@@ -238,7 +327,7 @@
   $('nav-settings').addEventListener('click',()=>{setNavigation('nav-settings');showPanel('connection');toggleContact(true);});
   $('refresh-top').addEventListener('click',()=>{notice('');sync();});
   $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
-  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
+  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
     try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice('Atendimento salvo.',true);}catch(error) {notice(error.message);}finally {button.disabled=false;}
@@ -260,6 +349,45 @@
     event.preventDefault();const button=event.submitter;button.disabled=true;
     try {const result=await api('/settings','PATCH',{templates:[...$('template-list').children].map(row=>({name:row.querySelector('.template-name').value,body:row.querySelector('.template-body').value}))});templates=result.templates;renderTemplates();$('settings-dialog').close();notice('Respostas rápidas salvas.',true);}catch(error) {$('settings-error').textContent=error.message;}finally {button.disabled=false;}
   });
+  function fillTranscriptionSettings() {
+    if(!transcriptionSettings) return;
+    $('transcription-model').value=transcriptionSettings.whisperModel;$('transcription-language').value=transcriptionSettings.language;
+    $('transcription-key-status').textContent=transcriptionSettings.aiConfigured?'Chave da OpenAI configurada.':'Nenhuma chave da OpenAI configurada.';
+    $('remove-transcription-key').disabled=!transcriptionSettings.aiConfigured;
+  }
+  function loadTranscriptionSettings() {
+    if(!transcriptionSettingsLoading) transcriptionSettingsLoading=api('/transcription/settings').then(settings=>{transcriptionSettings=settings;return settings;}).finally(()=>{transcriptionSettingsLoading=null;});
+    return transcriptionSettingsLoading;
+  }
+  async function openTranscriptionSettings(reason='') {
+    $('transcription-settings-status').textContent=reason;$('transcription-settings-error').textContent='';$('transcription-api-key').value='';
+    if(!$('transcription-dialog').open) $('transcription-dialog').showModal();
+    $('save-transcription-settings').disabled=true;
+    try {await loadTranscriptionSettings();if($('transcription-dialog').open) fillTranscriptionSettings();}
+    catch(error) {$('transcription-settings-error').textContent=error.message;}
+    finally {$('save-transcription-settings').disabled=!transcriptionSettings;}
+  }
+  $('transcription-settings').addEventListener('click',()=>openTranscriptionSettings());
+  $('panel-transcription-settings').addEventListener('click',()=>openTranscriptionSettings());
+  $('transcription-dialog').addEventListener('close',()=>{$('transcription-api-key').value='';});
+  $('transcription-form').addEventListener('submit',async event=>{
+    event.preventDefault();const button=$('save-transcription-settings');button.disabled=true;$('remove-transcription-key').disabled=true;$('transcription-settings-error').textContent='';
+    const aiApiKey=$('transcription-api-key').value.trim();$('transcription-api-key').value='';
+    try {
+      transcriptionSettings=await api('/transcription/settings','PATCH',{whisperModel:$('transcription-model').value,language:$('transcription-language').value,...(aiApiKey?{aiApiKey}:{})});
+      fillTranscriptionSettings();$('transcription-dialog').close();notice('Configurações de transcrição salvas.',true);
+    } catch(error) {$('transcription-settings-error').textContent=error.message;}
+    finally {button.disabled=false;fillTranscriptionSettings();}
+  });
+  $('remove-transcription-key').addEventListener('click',async()=>{
+    $('remove-transcription-key').disabled=true;$('save-transcription-settings').disabled=true;$('transcription-api-key').value='';$('transcription-settings-error').textContent='';
+    try {transcriptionSettings=await api('/transcription/settings','PATCH',{removeAiKey:true});fillTranscriptionSettings();$('transcription-settings-status').textContent='Chave removida. O Whisper local continua disponível.';}
+    catch(error) {$('transcription-settings-error').textContent=error.message;}
+    finally {$('save-transcription-settings').disabled=false;fillTranscriptionSettings();}
+  });
+  globalThis.WhatsAppAvatars?.init?.({api});
+  globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   (async()=>{try {templates=(await api('/settings')).templates;renderTemplates();}catch(error) {notice(error.message);}await sync();if(new URLSearchParams(location.search).has('conectar') && connection?.reachable && connection.state!=='connected') openQr();})();
   setInterval(sync,4000);
+  setInterval(pollTranscriptions,2000);
 })();

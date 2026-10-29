@@ -45,6 +45,8 @@ try {
   }
   # O auxiliar fica em segundo plano, sem depender de uma janela de terminal aberta.
   $scriptPath=Join-Path $projectRoot 'server.cjs'
+  $nodeCaPath=Join-Path $dataPath 'certs\windows-ca.pem'
+  if(-not $env:NODE_EXTRA_CA_CERTS -and (Test-Path -LiteralPath $nodeCaPath) -and (Get-Item -LiteralPath $nodeCaPath).Length -gt 0) {$env:NODE_EXTRA_CA_CERTS=$nodeCaPath}
   $arguments='"'+$scriptPath+'" --no-open'
   $process=Start-Process -FilePath $nodePath -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $dataPath 'server.log') -RedirectStandardError (Join-Path $dataPath 'server.err.log')
   $process.Id | Set-Content -LiteralPath (Join-Path $dataPath 'server.pid') -Encoding ascii

@@ -3,3 +3,5 @@ infra/.env
 *.log
 node_modules/
 *.lnk
+__pycache__/
+*.pyc
