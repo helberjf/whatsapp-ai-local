@@ -5,3 +5,15 @@ node_modules/
 *.lnk
 __pycache__/
 *.pyc
+
+.claude/
+.env
+.env.*
+*.sqlite
+*.sqlite-journal
+*.tmp
+*.pid
+.DS_Store
+Thumbs.db
+coverage/
+!.env.example

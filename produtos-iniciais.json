@@ -1,0 +1,20 @@
+[
+  {"name":"Criação de sites","kind":"servico","category":"Criação de sites","description":"Sites institucionais, landing pages e portfólios, responsivos e preparados para o Google. Com painel para editar conteúdos, quando necessário."},
+  {"name":"Criação de sistemas sob medida","kind":"servico","category":"Criação de sistemas","description":"Lojas virtuais, agendamentos, CRM, financeiro e painéis administrativos, com integrações de pagamento (Mercado Pago e Pix), WhatsApp e IA."},
+  {"name":"Passagens aéreas para a Europa","kind":"servico","category":"Passagens aéreas","description":"Cotação e emissão de passagens para a Europa, com milhas ou em dinheiro. Informe origem, datas e número de passageiros."},
+  {"name":"Passagens aéreas no Brasil","kind":"servico","category":"Passagens aéreas","description":"Voos nacionais entre as principais cidades, com comparação entre emissão com milhas e em dinheiro."},
+  {"name":"Passagens aéreas para os EUA","kind":"servico","category":"Passagens aéreas","description":"Cotação e emissão de passagens para os Estados Unidos, com milhas ou em dinheiro. Documentos e vistos devem ser conferidos nos canais oficiais."},
+  {"name":"Importação de produtos da China","kind":"servico","category":"Importação","description":"Busca de fornecedores, negociação, compra, frete internacional, desembaraço e entrega no Brasil. Orçamento conforme produto e quantidade."},
+  {"name":"Plataforma de E-commerce e Agendamentos","kind":"produto","category":"Sistemas prontos","description":"Loja online com Mercado Pago e Pix, frete por CEP, cupons, agendamentos, CRM e painel administrativo completo."},
+  {"name":"WhatsApp Central (atendimento com IA)","kind":"produto","category":"Sistemas prontos","description":"Atendimento no WhatsApp com CRM, respostas rápidas, mensagens programadas, transcrição de áudio, base de conhecimento (RAG) e assistente de IA."},
+  {"name":"Menu Digital Chalés","kind":"produto","category":"Sistemas prontos","description":"Guia digital para hóspedes de chalés e pousadas, por link ou QR Code, com Wi-Fi, regras, atrações e contatos."},
+  {"name":"Sistema para academias","kind":"produto","category":"Sistemas prontos","description":"Site, loja, planos, checkout, financeiro, CRM, treinos, nutrição e relatórios para academias."},
+  {"name":"Gestão de aluguel de equipamentos para eventos","kind":"produto","category":"Sistemas prontos","description":"Controle de equipamentos por unidade, agenda de eventos, equipe e pagamentos."},
+  {"name":"Prédio ON — gestão condominial e IoT","kind":"produto","category":"Sistemas prontos","description":"Monitoramento por sensores, notificações e aplicativos para condomínios, casas e imóveis comerciais."},
+  {"name":"Calculadora de Milhas","kind":"produto","category":"Sistemas prontos","description":"Compara emissões com milhas, calcula custo, lucro, comissão e venda mínima para quem vende passagens."},
+  {"name":"EntregaApp — marketplace de entregas","kind":"produto","category":"Sistemas prontos","description":"Conecta empresas e entregadores por cidade, com comparação de valor, tempo e rota."},
+  {"name":"Tutor and Professor (tutor com IA)","kind":"produto","category":"Sistemas prontos","description":"Aplicativo de estudo com lições, questionários, repetição espaçada e exercícios gerados por IA."},
+  {"name":"Agenda de produtividade","kind":"produto","category":"Sistemas prontos","description":"Tarefas, agenda, diário e histórico em uma única interface."},
+  {"name":"FuelRoute — postos de combustível","kind":"produto","category":"Sistemas prontos","description":"Encontra postos com preços atualizados por rota ou raio, com envio colaborativo de preços."},
+  {"name":"Prontuário Web","kind":"produto","category":"Sistemas prontos","description":"Gera prescrição, evolução e solicitação de exames no layout do hospital, com histórico em banco de dados."}
+]

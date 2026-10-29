@@ -521,7 +521,7 @@ test('ponte de agendamento preserva edição posterior e limpa apenas o rascunho
 
 test('produto da lista entra no editor da conversa sem enviar e os contadores usam dados reais',async()=>{
   const sends=[];
-  const product={id:'11111111-1111-1111-1111-111111111111',name:'Produto A',sku:'PA-1',price:150,warranty:'12 meses',category:'',description:'',imageMime:null,message:'*Produto A*\nPreço: R$ 150,00\nGarantia: 12 meses'};
+  const product={id:'11111111-1111-1111-1111-111111111111',name:'Produto A',sku:'PA-1',price:150,warranty:'12 meses',category:'Sistemas',kind:'produto',discountPercent:0,stock:null,active:true,freeShipping:false,finalPrice:150,images:[],description:'',message:'*Produto A*\nPreço: R$ 150,00\nGarantia: 12 meses'};
   const browser=await createBrowser({withPages:true,catalog:[product],kbDocs:[{id:'22222222-2222-2222-2222-222222222222',name:'catalogo.txt',type:'txt',size:200,chunks:1,createdAt:'2026-10-29T10:00:00Z'}],onSend:async input=>sends.push(input)});
   await settle();
   assert.equal(browser.get('notice').textContent,'');
