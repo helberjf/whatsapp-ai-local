@@ -26,7 +26,7 @@ async function readBody(req) {
 function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
   const dataDir=options.storeDir || path.join(root,'data');
-  const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),extra=createKnowledgeRoutes(dataDir,options.aiFetch);
+  const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json')});
   const credentials=createCredentialStore(dataDir);
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
