@@ -36,7 +36,7 @@ try {
     if(-not $dockerReady) {throw 'O Docker não iniciou. Abra Docker Desktop, resolva eventuais avisos e tente novamente.'}
   }
   Write-Output 'Preparando WhatsApp, banco e sessão persistente…'
-  & docker compose -f $composeFile up -d --wait --wait-timeout 180
+  & docker compose -f $composeFile up -d --build --wait --wait-timeout 180
   if($LASTEXITCODE -ne 0) {throw 'A pilha local não ficou pronta. Consulte docker compose -f infra/compose.yaml logs --tail=50.'}
   if(Test-Central) {
     Write-Output 'Central ja iniciada. Reutilizando a sessao.'

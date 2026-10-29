@@ -35,7 +35,10 @@ services:
     logging: {options: {max-size: "10m", max-file: "3"}}
 
   evolution:
-    image: evoapicloud/evolution-api:v2.3.7
+    image: whatsapp-central/evolution-local:2.3.7
+    build:
+      context: .
+      dockerfile: Dockerfile.evolution
     restart: unless-stopped
     depends_on:
       postgres: {condition: service_healthy}

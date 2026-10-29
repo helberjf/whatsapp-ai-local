@@ -26,7 +26,9 @@ const aiFetch=async(url,options)=>{
 
 before(async()=>{
   directory=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-local-kb-'));
-  server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:1',apiKey:'x',instanceName:'teste'},storeDir:directory,aiFetch});
+  // This suite validates HTTP/provider contracts; real DPAPI is covered separately.
+  const keys=new Map(),credentials={has:async name=>keys.has(name),get:async name=>keys.get(name)||null,set:async(name,value)=>{keys.set(name,value);},remove:async name=>{keys.delete(name);},close:async()=>{keys.clear();}};
+  server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:1',apiKey:'x',instanceName:'teste'},storeDir:directory,aiFetch,credentials});
   await listen(server);address=`http://127.0.0.1:${server.address().port}`;
   token=(await (await fetch(address)).text()).match(/name="whatsapp-session" content="([a-f0-9]{64})"/)[1];
 });

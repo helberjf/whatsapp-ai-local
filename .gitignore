@@ -17,3 +17,6 @@ __pycache__/
 Thumbs.db
 coverage/
 !.env.example
+
+playwright-report/
+test-results/
