@@ -5,6 +5,7 @@ const {randomBytes,randomUUID,timingSafeEqual,createHash}=require('node:crypto')
 const {execFile}=require('node:child_process');
 const {createEvolutionClient,ApiError,assertJid}=require('./lib/evolution.cjs');
 const {createStore}=require('./lib/store.cjs');
+const {createKnowledgeRoutes}=require('./lib/knowledge-routes.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
@@ -16,7 +17,8 @@ async function readBody(req) {
 }
 function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
-  const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(options.storeDir || path.join(root,'data'));
+  const dataDir=options.storeDir || path.join(root,'data');
+  const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),extra=createKnowledgeRoutes(dataDir,options.aiFetch);
   const requests=new Map();
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   async function sendOnce(input,send) {
@@ -41,7 +43,7 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/app.css'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
         res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});return res.end(content);
@@ -102,6 +104,7 @@ function createWhatsAppServer(options={}) {
         const media=await client.media(jid,id);if(typeof media.base64!=='string') throw new ApiError('Mídia indisponível. Abra a mensagem no celular.');
         return json(res,200,{base64:media.base64,mimeType:media.mimetype || 'application/octet-stream',fileName:media.fileName || 'anexo'});
       }
+      const handled=await extra(req,route,url,readBody);if(handled) return json(res,handled.status,handled.body);
       return json(res,404,{error:'Endereço não encontrado.'});
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });

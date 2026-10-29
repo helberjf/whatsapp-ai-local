@@ -34,9 +34,15 @@ O Node fica em segundo plano; fechar o navegador não encerra o conector. Manten
 
 A central está disponível apenas neste computador, em `127.0.0.1:8766`. A API escuta em `127.0.0.1:8767`; banco e cache não publicam portas no Windows. Não é necessário domínio, roteador ou VPS externa para este uso local.
 
-## Acesso pelo Milhas
+## Base de Conhecimento, Produtos e Assistente de IA
 
-No Milhas, o link **WhatsApp Local ↗** inicia e abre esta mesma central. O adaptador procura `%USERPROFILE%\projects\whatsapp-central`; para outro local, defina `WHATSAPP_CENTRAL_DIR` antes de iniciar o Milhas. As duas entradas usam a mesma instância e a mesma sessão. Se abrir somente o HTML do Milhas como arquivo, inicie a central pelo `.cmd` antes de usar o link. A cópia portátil do adaptador fica em `integrations/milhas/`.
+- **Base de Conhecimento (RAG):** envie TXT, MD, CSV, JSON ou DOCX (até 10 MB) ou cole um texto. Cada documento é dividido em partes e a busca por relevância (BM25, sem acentos nem plural) recupera os trechos certos para cada pergunta. Em **Testar a base** você vê a resposta e os trechos usados. PDF ainda não é lido: exporte como DOCX ou TXT.
+- **Assistente de IA:** informe provedor (OpenAI, Anthropic, Google Gemini, Ollama ou API compatível com OpenAI), modelo e chave. A chave fica em `data/ai.json` e não volta para a tela. Sem IA configurada a base continua funcionando e mostra os trechos encontrados. Ao usar a IA, a pergunta e os trechos (ou os documentos escolhidos na importação) são enviados ao provedor; com Ollama tudo fica neste computador.
+- **Produtos:** cadastre nome, preço, código, garantia, categoria, descrição e foto. **Usar na conversa** coloca a ficha pronta (e a foto, como anexo) no editor da conversa aberta; você revisa e envia. Também há a aba **Produtos** no painel da conversa.
+- **Importar da base (IA):** a IA lê os documentos escolhidos e propõe a lista de produtos; você revisa, edita e confirma. Itens já cadastrados (mesmo código ou nome) aparecem desmarcados e, se marcados, atualizam o existente. O texto dos documentos é tratado como dado, e a saída da IA é validada antes de aparecer.
+- **Contatos (CRM):** lista de todos os contatos com situação, etiquetas e notas; clique para abrir o atendimento. A busca do topo procura em conversas, produtos e documentos.
+
+A IA apenas sugere ou propõe; nenhuma mensagem é enviada ao cliente sem o seu clique em Enviar.
 
 ## Arquivos e persistência
 
@@ -44,9 +50,9 @@ No Milhas, o link **WhatsApp Local ↗** inicia e abre esta mesma central. O ada
 - `public/`: interface sem dependências externas.
 - `infra/compose.yaml`: Evolution API **v2.3.7**, PostgreSQL 16 e Redis 7.
 - `scripts/`: configuração, início, parada e início com Windows.
-- `integrations/milhas/`: adaptador opcional para iniciar e abrir esta central a partir do Milhas.
 - `data/config.json` e `infra/.env`: segredos gerados localmente; não compartilhe esses arquivos.
 - `data/atendimento.json`: notas, etiquetas, respostas rápidas e registros de envio para evitar duplicação.
+- `data/knowledge.json` e `data/knowledge/`: documentos da base de conhecimento. `data/produtos.json` e `data/product-images/`: produtos e fotos. `data/ai.json`: configuração da IA (inclui a chave; não compartilhe).
 - `data/server.log`, `data/server.err.log` e `data/startup.log`: diagnóstico local.
 
 Sessão e mensagens ficam nos volumes Docker `whatsapp-local_instances`, `whatsapp-local_postgres_data` e `whatsapp-local_redis_data`. **Não remova esses volumes nem use `docker compose down -v` para uma parada normal.** Copiar apenas a pasta do projeto não copia o banco nem a sessão desses volumes.

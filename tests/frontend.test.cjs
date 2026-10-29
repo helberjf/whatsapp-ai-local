@@ -47,13 +47,14 @@ function message(number) {
   };
 }
 
-async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},FileReader,chatRecords,templates=[]}={}) {
+const pagesFile=path.join(__dirname,'..','public','pages.js');
+async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},FileReader,chatRecords,templates=[],withPages=false,kbDocs=[],catalog=[]}={}) {
   const nodes=new Map(),intervals=[];
   let history=Array.from({length:count},(_,index)=>message(index+1));
   const get=id=>{if(!nodes.has(id)) nodes.set(id,element());return nodes.get(id);};
   const document={
     getElementById:get,querySelector:()=>({content:'test-session'}),querySelectorAll:()=>[],
-    createElement:element,createDocumentFragment:()=>element('fragment',true),
+    createElement:element,createElementNS:()=>element('svg'),createDocumentFragment:()=>element('fragment',true),
     addEventListener(){},visibilityState:'visible'
   };
   async function fetchLocal(address,options={}) {
@@ -73,15 +74,21 @@ async function createBrowser({count=0,onSend=async()=>{},onMessages=async()=>{},
       await onSend(input);
       output={...message(history.length+1),text:input.text || input.caption || ''};
     } else if(url.pathname==='/api/read') output={read:true};
+    else if(url.pathname==='/api/kb') output={documents:kbDocs,ai:false};
+    else if(url.pathname==='/api/products') output={products:catalog};
+    else if(url.pathname==='/api/ai') output={provider:'openai',model:'',baseUrl:'',hasKey:false,configured:false,providers:{openai:{label:'OpenAI',model:'gpt-4o-mini',baseUrl:'',key:true}}};
     else throw new Error('Requisição inesperada no teste: '+address);
     return {ok:true,json:async()=>output};
   }
-  vm.runInNewContext(fs.readFileSync(appFile,'utf8'),{
+  const context=vm.createContext({
     document,fetch:fetchLocal,Intl,Date,Map,Set,URL,URLSearchParams,AbortSignal,FileReader,
     crypto:{randomUUID:()=> 'frontend-request-001'},
     setInterval(callback) {intervals.push(callback);return intervals.length;},
-    setTimeout,clearTimeout,location:{search:''},matchMedia:()=>({matches:false})
-  },{filename:appFile});
+    setTimeout,clearTimeout,location:{search:''},matchMedia:()=>({matches:false}),
+    navigator:{clipboard:{writeText:async()=>{}}},File,Blob,atob
+  });
+  vm.runInContext(fs.readFileSync(appFile,'utf8'),context,{filename:appFile});
+  if(withPages) vm.runInContext(fs.readFileSync(pagesFile,'utf8'),context,{filename:pagesFile});
   await settle();
   assert.equal(get('notice').textContent,'','A inicialização do app não deve falhar.');
   assert.equal(get('chat-list').children.length,chatRecords?.length || 1);
@@ -249,4 +256,22 @@ test('resposta antiga não desfaz o cursor reiniciado por polling concorrente',a
   const rendered=new Set(browser.renderedMessages());
   const missing=Array.from({length:225},(_,index)=>'Mensagem '+(index+1)).filter(text=>!rendered.has(text));
   assert.deepEqual(missing,[],'Uma resposta atrasada pulou mensagens após o polling reiniciar a paginação.');
+});
+
+test('produto da lista entra no editor da conversa sem enviar e os contadores usam dados reais',async()=>{
+  const sends=[];
+  const product={id:'11111111-1111-1111-1111-111111111111',name:'Produto A',sku:'PA-1',price:150,warranty:'12 meses',category:'',description:'',imageMime:null,message:'*Produto A*\nPreço: R$ 150,00\nGarantia: 12 meses'};
+  const browser=await createBrowser({withPages:true,catalog:[product],kbDocs:[{id:'22222222-2222-2222-2222-222222222222',name:'catalogo.txt',type:'txt',size:200,chunks:1,createdAt:'2026-10-29T10:00:00Z'}],onSend:async input=>sends.push(input)});
+  await settle();
+  assert.equal(browser.get('notice').textContent,'');
+  assert.equal(browser.get('metric-products').textContent,'1');
+  assert.equal(browser.get('metric-docs').textContent,'1');
+  assert.equal(browser.get('status-ai').textContent,'Não configurada');
+  const entry=browser.get('panel-products').children[0];
+  assert.match(entry.textContent,/Produto A/);
+  assert.equal(entry.disabled,false,'Com uma conversa aberta o produto deve poder ser usado.');
+  browser.get('message-text').value='Olá!';
+  await entry.emit('click');await settle();
+  assert.equal(browser.get('message-text').value,'Olá!\n'+product.message);
+  assert.equal(sends.length,0,'Usar o produto apenas preenche o editor.');
 });
