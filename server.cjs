@@ -82,7 +82,15 @@ function createWhatsAppServer(options={}) {
         catch(error) {if(error.code==='ENOENT') return json(res,404,{error:'Arquivo não encontrado.'});throw error;}
       }
       if(!route.startsWith('/api/')) return json(res,404,{error:'Endereço não encontrado.'});
-      const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
+      // Integração local (ex.: radar de prospecção): token fixo opcional, liberado só para status, consulta de número, envio de texto e leitura.
+      const integration=options.integrationToken ?? options.config?.integrationToken,integrationGiven=req.headers['x-integration-token'];
+      if(typeof integrationGiven==='string') {
+        const digest=value=>createHash('sha256').update(value).digest();
+        if(typeof integration!=='string' || integration.length<32 || !timingSafeEqual(digest(integration),digest(integrationGiven))) return json(res,403,{error:'Token de integração inválido.'});
+        if(![['GET','/api/connection'],['POST','/api/resolve-phone'],['POST','/api/send'],['GET','/api/messages']].some(([method,path])=>method===req.method && path===route)) return json(res,403,{error:'Rota não liberada para integração.'});
+      } else {
+        const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
+      }
       if(route==='/api/ai/local' && req.method==='GET') return json(res,200,await localAi.status({...(url.searchParams.has('model')?{model:url.searchParams.get('model')}:{}),baseUrl:url.searchParams.get('baseUrl') || '',device:url.searchParams.get('device') || 'auto'}));
       if(route==='/api/ai/local/start' && req.method==='POST') {const input=await readBody(req),state=await localAi.start(input);const config=await extra.services.ai.save({provider:'ollama',model:state.model,baseUrl:'http://127.0.0.1:11434',ollamaNumGpu:input.device==='cpu'?0:null});return json(res,200,{...state,config});}
       if(route==='/api/triggers' && ['GET','PUT'].includes(req.method)) return json(res,200,req.method==='GET'?await triggers.settings():await triggers.saveSettings(await readBody(req)));
