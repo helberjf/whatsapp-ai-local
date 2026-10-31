@@ -84,7 +84,7 @@ python -m pip install openai-whisper
 python -c "import whisper; whisper.load_model('base')"
 ```
 
-The second command downloads the model. Configure model and language in **Transcrição de áudios**; the default is local Whisper `base` in Portuguese. Set `WHATSAPP_WHISPER_PYTHON` or `WHATSAPP_FFMPEG` before launching if the executables are in another location. The application first checks the standard Python 3.10 installation path, then `python.exe` on `PATH`.
+The second command downloads the model. Audio transcription runs automatically with local Whisper: recent voice messages are discovered in the background while the local server is running, and older audio is queued when its conversation history is opened. Transcripts are stored next to their message identifiers and displayed beneath each audio. Completed results are reused after refresh/restart; interrupted automatic local jobs resume. The automatic queue never uploads audio to a cloud provider. Failed jobs keep their error and can be retried explicitly. Configure model and language in **Transcrição de áudios**; the default is local Whisper `base` in Portuguese. Set `WHATSAPP_WHISPER_PYTHON` or `WHATSAPP_FFMPEG` before launching if the executables are in another location. The application first checks the standard Python 3.10 installation path, then `python.exe` on `PATH`.
 
 Transcription accepts audio up to **10 MB and 10 minutes**, processes one job at a time, and allows up to 20 queued jobs. Temporary audio files are removed after processing. Interrupted or failed jobs require an explicit retry; local failures do not automatically send audio to a cloud provider.
 

@@ -39,6 +39,7 @@ function createWhatsAppServer(options={}) {
   const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
   const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
+  const autoTranscription=options.autoTranscription ?? !options.storeDir;
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
   const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
   const triggers=createTriggerService({store,client,now:options.now || Date.now,humanizer});
@@ -133,7 +134,9 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/messages') {
         const jid=assertJid(url.searchParams.get('jid')),page=Number(url.searchParams.get('page') || 1);
         if(!Number.isSafeInteger(page) || page<1 || page>100000) throw new ApiError('Página inválida.',422);
-        return json(res,200,await client.messages(jid,page));
+        const result=await client.messages(jid,page);
+        if(autoTranscription) await transcriptions.discover(jid,result.messages).catch(()=>{});
+        return json(res,200,result);
       }
       if(route==='/api/contact' && ['GET','PATCH'].includes(req.method)) {
         const jid=assertJid(url.searchParams.get('jid'));
@@ -184,7 +187,19 @@ function createWhatsAppServer(options={}) {
   server.scheduler=scheduler;
   server.triggers=triggers;server.assistant=assistant;
   let replyTimer=null,replyTick=null;
-  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await triggers.tick();await automation.tick();await assistant.tick();})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
+  const audioCursors=new Map(),audioStartedAt=Date.now();
+  async function pollAudio() {
+    for(const chat of await client.chats()) {
+      const last=chat.lastMessage;if(!last) continue;
+      const cursor=last.id || String(last.timestamp),known=audioCursors.has(chat.jid);
+      if(audioCursors.get(chat.jid)===cursor) continue;
+      // Read the recent page when a chat changes: a later text must not hide a preceding voice message.
+      if(known || last.timestamp>=audioStartedAt) await transcriptions.discover(chat.jid,(await client.messages(chat.jid,1)).messages);
+      else if(last.type==='audio') await transcriptions.discover(chat.jid,[last]);
+      audioCursors.set(chat.jid,cursor);
+    }
+  }
+  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{if(autoTranscription) await pollAudio().catch(()=>{});await triggers.tick();await automation.tick();await assistant.tick();})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
   server.on('listening',()=>{triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();}});
   server.cleanup=Promise.resolve();
   server.on('close',()=>{clearInterval(replyTimer);triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.ai.close()]).then(()=>credentials.close());server.cleanup.catch(()=>{});});

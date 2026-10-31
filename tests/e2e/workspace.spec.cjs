@@ -93,6 +93,13 @@ test('one attachment button handles files and Enter sends while Shift+Enter adds
 test('video action starts playback after an explicit click',async({page})=>{
   await openChat(page);await page.getByRole('button',{name:'Reproduzir vídeo',exact:true}).click();await expect.poll(()=>page.locator('video').evaluate(node=>node.currentTime)).toBeGreaterThan(.1);await expect.poll(()=>page.locator('video').evaluate(node=>node.error?.code || null)).toBe(null);
 });
+test('automatic Whisper transcript appears under audio and survives page reload without duplication',async({page})=>{
+  const auto=await createDemo({port:0,autoTranscription:true});
+  try {await page.goto(auto.base);await openChat(page);await expect(page.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração',{timeout:10000});
+    await page.reload();await openChat(page);await expect(page.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração');
+    expect((await auto.server.transcriptions.list('5511000000000@s.whatsapp.net')).length).toBe(1);
+  } finally {await auto.close();}
+});
 test('manual AI suggestion uses both sides even after the operator sends the latest message',async({page,demo})=>{
   await openChat(page);await page.locator('#message-text').fill('Qual data você prefere?');await page.locator('#message-text').press('Enter');await expect(page.locator('#message-text')).toHaveValue('');await expect(page.locator('#send')).toBeEnabled();await page.locator('#ai-suggest').click();await expect(page.locator('#message-text')).toHaveValue(/Studio Headphones/);
   const turns=demo.aiCalls.at(-1).messages;expect(turns.some(turn=>turn.role==='assistant' && turn.content.includes('Qual data você prefere?'))).toBe(true);expect(turns.some(turn=>turn.role==='user' && turn.content.includes('Maneiro'))).toBe(true);expect(turns[0].content).toContain('histórico recente');

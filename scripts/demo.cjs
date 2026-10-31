@@ -5,7 +5,7 @@ const os=require('node:os');
 const {createWhatsAppServer}=require('../server.cjs');
 const {createStore}=require('../lib/store.cjs');
 
-async function createDemo({port=8876}={}) {
+async function createDemo({port=8876,autoTranscription=false}={}) {
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-central-demo-'));
   const names=['Alex Morgan','Sam Rivera','Taylor Chen','Jordan Lee','Casey Silva','Robin Santos','Jamie Costa','Drew Lima','Avery Rocha','Riley Alves'];
   const jids=names.map((_,i)=>`55110000000${String(i).padStart(2,'0')}@s.whatsapp.net`);
@@ -40,7 +40,7 @@ async function createDemo({port=8876}={}) {
   const keys=new Map(),credentials={has:async name=>keys.has(name),get:async name=>keys.get(name)||null,set:async(name,value)=>{keys.set(name,value);},remove:async name=>{keys.delete(name);},close:async()=>{keys.clear();}};
   let localLoaded=false;const localState=input=>({installed:true,running:true,model:input.model || 'demo-local',modelInstalled:true,loaded:localLoaded,executionMode:input.device==='cpu'?'cpu':'gpu',models:['demo-local'],starting:false}),localAi={status:async input=>localState(input),start:async input=>{localLoaded=true;return localState(input);}};
   const aiCalls=[];
-  const server=createWhatsAppServer({demo:true,storeDir:directory,credentials,localAi,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{aiCalls.push(JSON.parse(options.body));return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. O prazo demonstrativo é de 2 a 4 dias úteis.'}}));}});
+  const server=createWhatsAppServer({demo:true,autoTranscription,transcriptionEngines:{whisperEngine:async()=>({text:"Transcrição automática de demonstração"})},storeDir:directory,credentials,localAi,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{aiCalls.push(JSON.parse(options.body));return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. O prazo demonstrativo é de 2 a 4 dias úteis.'}}));}});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`,html=await(await fetch(base)).text(),token=html.match(/name="whatsapp-session" content="([a-f0-9]+)"/)[1];
   const api=async(route,input)=>{const response=await fetch(base+'/api'+route,{method:'POST',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify(input)});if(!response.ok) throw Error('Demo fixture failed: '+route);return response.json();};

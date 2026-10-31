@@ -27,6 +27,19 @@ test('Whisper local é padrão; pedidos concorrentes duplicados usam uma transcr
   const cached=await restarted.enqueue({jid,messageId:'audio-1'});assert.equal(cached.status,'completed');assert.equal(cached.text,'Olá, tudo bem?');
   assert.equal((await restarted.list(jid)).length,1);
 });
+test('automatic audio discovery uses local Whisper once and keeps the transcript after restart',async t=>{
+  let count=0;const {service,directory}=await fixture(t,{whisperEngine:async()=>{count++;return {text:'Texto salvo automaticamente'};}});
+  const messages=[{id:'voice-auto',type:'audio'},{id:'ignore',type:'text'},{id:'deleted',type:'audio',deleted:true}];
+  await Promise.all([service.discover(jid,messages),service.discover(jid,messages)]);await service.idle();assert.equal(count,1);
+  const restarted=createTranscriptionService({store:createStore(directory),mediaLoader:async()=>{throw Error('should not download');}});
+  await restarted.discover(jid,messages);await restarted.idle();assert.equal((await restarted.list(jid))[0].text,'Texto salvo automaticamente');assert.equal((await restarted.list(jid)).length,1);
+});
+test('automatic local jobs resume after a restart without enabling cloud transcription',async t=>{
+  const {service,store,directory}=await fixture(t);await service.idle();
+  await store.update(data=>{data.transcriptions.resume={id:'resume',jid,messageId:'pending-auto',provider:'whisper',automatic:true,model:'base',language:'pt',status:'running',createdAt:Date.now()};});
+  let local=0;const restarted=createTranscriptionService({store:createStore(directory),mediaLoader:async()=>({base64:'aGVsbG8=',mimetype:'audio/ogg'}),whisperEngine:async()=>{local++;return {text:'Retomada'};},aiEngine:async()=>{assert.fail('No automatic cloud uploads');}});
+  await restarted.idle();assert.equal(local,1);assert.equal((await restarted.list(jid))[0].text,'Retomada');
+});
 test('fila limita execução a um áudio e isola resultados por conversa',async t=>{
   let release,started;const startedPromise=new Promise(r=>started=r),gate=new Promise(r=>release=r);let running=0,maximum=0;
   const {service}=await fixture(t,{whisperEngine:async()=>{running++;maximum=Math.max(maximum,running);started();await gate;running--;return {text:'Texto'};}});
