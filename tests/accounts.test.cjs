@@ -37,6 +37,8 @@ async function harness(t,upstream,extra={}) {
   const directory=extra.directory || await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-accounts-test-'));
   const open=async()=>{
     const server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:9',apiKey:'k',instanceName:'whatsapp-local',...extra.config},storeDir:directory,fetchImpl:upstream.fetchImpl,disableWorkers:true,...extra.options});
+    // Sem conexões reaproveitadas: o sistema pode repetir a porta de um servidor já fechado por outro teste.
+    server.prependListener('request',(request,response)=>response.setHeader('Connection','close'));
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     const base=`http://127.0.0.1:${server.address().port}`,html=await(await fetch(base)).text(),session=html.match(new RegExp(`whatsapp-session" content="([a-f0-9]{${token}})"`))[1];
     const call=async(route,method='GET',input,account)=>{
