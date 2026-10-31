@@ -128,7 +128,9 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
-        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid]}));
+        const chats=(await client.chats()).map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage;
+          const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
+          return {...chat,...contactDefault(),...contact,...(read?{unread:0}:{})};});
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
       }
       if(req.method==='GET' && route==='/api/messages') {
@@ -162,11 +164,13 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/read') {
         const input=await readBody(req),jid=assertJid(input.jid);
         if(!Array.isArray(input.keys) || input.keys.length>100 || input.keys.some(key=>!key || typeof key.id!=='string' || key.id.length>200 || key.fromMe!==false || key.remoteJid!==jid)) throw new ApiError('Mensagens de leitura inválidas.',422);
-        if(input.keys.length) await client.read(jid,input.keys);return json(res,200,{read:true});
+        if(input.lastSeenId!==undefined && (typeof input.lastSeenId!=='string' || input.lastSeenId.length>200)) throw new ApiError('Mensagem de leitura inválida.',422);
+        if(input.keys.length) {await client.read(jid,input.keys);await store.update(data=>{const contact=data.contacts[jid] ||= contactDefault();contact.readState={messageIds:input.keys.map(key=>key.id),lastSeenId:input.lastSeenId || input.keys.at(-1).id};});}
+        return json(res,200,{read:true});
       }
       if(req.method==='POST' && route==='/api/send') {
         const input=await readBody(req),jid=assertJid(input.jid),text=textField(input.text,10000,'Mensagem');
-        return json(res,200,await sendOnce(input,()=>client.sendText(jid,text)));
+        return json(res,200,await sendOnce(input,()=>client.sendText(jid,text,{replyTo:input.replyTo})));
       }
       if(req.method==='POST' && route==='/api/send-media') {
         const input=await readBody(req),jid=assertJid(input.jid);

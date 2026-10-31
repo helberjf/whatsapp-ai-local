@@ -33,7 +33,7 @@ async function createDemo({port=8876,autoTranscription=false}={}) {
     else if(route.includes('/localCapabilities/')) output={extensionVersion:1,disappearingMessages:true,expiration:0};
     else if(route.includes('/updateEphemeral/')) output={jid:input.number,expiration:input.expiration,success:true,updatedAt:Date.now()};
     else if(route.includes('/deleteMessageForEveryone/')) {const original=histories.flat().find(m=>m.key.id===input.id);if(original) {original.deleted=true;original.message={protocolMessage:{type:'REVOKE',key:original.key}};}output={key:{id:'revoke-'+input.id,remoteJid:input.remoteJid,fromMe:true},message:{protocolMessage:{type:0,key:{id:input.id,remoteJid:input.remoteJid,fromMe:true}}}};}
-    else if(route.startsWith('/message/')) {const i=jids.indexOf(input.number),sent=raw(i,'demo-sent-'+Date.now(),input.text || input.caption || '[Anexo de demonstração]',true);if(i>=0) histories[i].push(sent);output=sent;}
+    else if(route.startsWith('/message/')) {const i=jids.indexOf(input.number),sent=raw(i,'demo-sent-'+Date.now(),input.text || input.caption || '[Anexo de demonstração]',true);if(input.quoted) sent.message={extendedTextMessage:{text:input.text || input.caption || '[Anexo]',contextInfo:{stanzaId:input.quoted.key.id,quotedMessage:input.quoted.message}}};if(i>=0) histories[i].push(sent);output=sent;}
     else if(!route.includes('/markMessageAsRead/')) return new Response(JSON.stringify({error:'No external connector in demo mode'}),{status:404});
     return new Response(JSON.stringify(output));
   };

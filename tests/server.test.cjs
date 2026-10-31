@@ -100,6 +100,19 @@ test('falha de envio é informada e não dispara repetição automática',async(
   assert.equal((await request('/api/send','POST',{jid,text:'Falha esperada',requestId:'req-falha-001'})).status,502);
   assert.equal(calls.slice(before).filter(c=>c.url==='/message/sendText/teste').length,1);failSend=false;
 });
+test('quoted replies resolve the original in the same chat before sending',async()=>{
+  await api('/api/send','POST',{jid,text:'Resposta citada',replyTo:'in-1',requestId:'reply-test-001'});
+  const send=calls.findLast(c=>c.url==='/message/sendText/teste');assert.equal(send.input.quoted.key.id,'in-1');assert.equal(send.input.quoted.message.conversation,'Olá!');
+  const before=calls.filter(c=>c.url==='/message/sendText/teste').length;
+  assert.equal((await request('/api/send','POST',{jid,text:'Origem inválida',replyTo:'missing',requestId:'reply-test-002'})).status,404);
+  assert.equal(calls.filter(c=>c.url==='/message/sendText/teste').length,before);
+});
+test('confirmed read state masks stale connector counts but not a new message',async()=>{
+  await api('/api/read','POST',{jid,keys:[incoming.key],lastSeenId:incoming.key.id});
+  assert.equal((await api('/api/chats'))[0].unread,0);
+  const old=incoming.key.id;incoming.key.id='new-incoming';
+  try {assert.equal((await api('/api/chats'))[0].unread,2);}finally {incoming.key.id=old;}
+});
 test('anexos são validados e enviados por base64, sem buscar URLs arbitrárias',async()=>{
   await api('/api/send-media','POST',{jid,mediaType:'document',mimeType:'text/plain',fileName:'teste.txt',base64:'aGVsbG8=',requestId:'req-media-001'});
   assert.equal(calls.findLast(c=>c.url==='/message/sendMedia/teste').input.media,'aGVsbG8=');
