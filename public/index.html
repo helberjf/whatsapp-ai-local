@@ -148,6 +148,7 @@
           <div class="panel pad">
             <div id="kb-drop" class="dropzone" tabindex="0" role="button" aria-label="Arraste documentos aqui ou pressione Enter para escolher"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg><strong>Arraste documentos aqui</strong><span>PDF, DOCX, TXT, MD, CSV ou JSON · até 10 MB cada</span></div>
             <p id="kb-status" class="muted" role="status"></p>
+            <p id="kb-search" class="muted small" role="status"></p>
             <p class="muted small">Também dá para copiar arquivos para a pasta <b>base-conhecimento</b> do projeto e clicar em <b>Sincronizar pasta</b>.</p>
             <div class="table-wrap"><table class="table"><thead><tr><th>Documento</th><th>Tipo</th><th>Tamanho</th><th>Enviado</th><th>Partes</th><th></th></tr></thead><tbody id="kb-body"></tbody></table></div>
           </div>
@@ -174,6 +175,7 @@
             <label class="field">Modelo<select id="ai-model-select" required aria-describedby="ai-models-status"></select></label>
             <label class="field" id="ai-model-manual-field" hidden>Identificador do modelo<input id="ai-model" maxlength="120" placeholder="Nome exato informado pelo provedor" spellcheck="false" autocomplete="off"><small>Use para modelos privados ou que não aparecem na lista.</small></label>
             <div><button id="ai-models-load" class="button secondary" type="button">Carregar modelos do provedor</button><p id="ai-models-status" class="form-status" role="status" aria-live="polite">Cole sua chave para consultar os modelos disponíveis na sua conta.</p></div>
+            <label class="field">Modelo de embeddings<input id="ai-embedding" maxlength="120" placeholder="padrão do provedor"><small id="ai-embedding-hint">Permite achar trechos por significado. Deixe vazio para o padrão ou digite off para buscar só por palavras-chave.</small></label>
             <label class="field" id="ai-base-field">Endereço da API<input id="ai-base" maxlength="300" placeholder="https://…"><small>Deixe vazio para usar o endereço padrão do provedor.</small></label>
             <label class="field">Chave de API<input id="ai-key" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="none" maxlength="4096" placeholder="Cole a chave para salvar ou trocar"><small id="ai-key-hint">Ao salvar, a chave fica criptografada no banco local, protegida pelo seu usuário do Windows.</small></label>
             <p id="ai-status" class="form-status" role="status"></p>

@@ -5,7 +5,7 @@ Pedido: implementar a base de conhecimento, aproximar a interface da referência
 ## Decisões
 
 - **Milhas removido:** `integrations/milhas/`, o teste do iniciador e o link na barra lateral foram excluídos. A central abre pelos atalhos `.cmd` e em `127.0.0.1:8766`.
-- **Base (RAG) sem custo obrigatório:** a recuperação usa BM25 local (sem acentos, plural simples), então funciona sem API. A IA só redige a resposta a partir dos trechos recuperados. Embeddings/pgvector não foram adotados nesta versão.
+- **Base (RAG) sem custo obrigatório:** a recuperação usa BM25 local (sem acentos, plural simples), então funciona sem API. A IA só redige a resposta a partir dos trechos recuperados. Depois, a busca passou a ser híbrida: embeddings do provedor configurado são combinados ao BM25, que segue como alternativa quando eles não estão disponíveis. Os vetores ficam em `data/embeddings/`, sem banco vetorial.
 - **Formatos:** TXT, MD, CSV, JSON e DOCX (leitor ZIP próprio com limite de descompressão). PDF é recusado com orientação, pois ler PDF sem biblioteca é pouco confiável.
 - **IA:** 12 opções de provedor, incluindo OpenAI, Anthropic, Gemini, Ollama e API compatível com OpenAI, com consulta dos modelos da conta e identificador manual. A chave é criptografada por DPAPI antes de ser salva no PostgreSQL, separada por provedor, e nunca é devolvida à interface. `data/ai.json` é preservado apenas como fonte da migração antiga.
 - **Prompt injection:** documentos e perguntas entram como dados dentro de `<contexto>` / `<documento>`; a saída da importação é validada campo a campo e revisada pelo usuário antes de salvar.

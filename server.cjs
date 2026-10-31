@@ -44,7 +44,7 @@ function createWhatsAppServer(options={}) {
     const client=createEvolutionClient({...options.config,instanceName:account.instanceName},options.fetchImpl),store=storeFactory(accountDir(dataDir,account.id)),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
     // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
     const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
-    const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
+    const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.embeddings.search,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
     const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
     const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
     const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
@@ -245,7 +245,7 @@ function createWhatsAppServer(options={}) {
   const startWorkers=()=>{for(const runtime of runtimes.values()) runtime.start();if(!options.disableWorkers) {replyTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.pollReplies();},5000);replyTimer.unref?.();}};
   server.on('listening',startWorkers);if(server.listening) queueMicrotask(startWorkers);
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.ready(),extra.services.ai.close()]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.ready(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {
