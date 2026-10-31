@@ -39,14 +39,16 @@
     }
     if($('accounts-dialog').open) {const list=document.createDocumentFragment();accounts.forEach(account=>list.append(row(account)));$('accounts-list').replaceChildren(list);}
   }
-  function load() {
+  // Depois de uma alteração, uma consulta já em andamento pode trazer a lista antiga: espera e consulta de novo.
+  function load(fresh=false) {
+    if(fresh && loading) return loading.catch(()=>{}).then(()=>load());
     if(!loading) loading=api('/accounts').then(rows=>{accounts=rows;render();}).finally(()=>{loading=null;});
     return loading;
   }
   async function disconnect(account) {
     if(!confirm(`Desconectar ${account.name}? Para usar novamente será necessário ler outro QR Code. O histórico salvo será mantido e as outras contas não mudam.`)) return;
     $('accounts-status').textContent='Desconectando…';
-    try {await api(`/accounts/${account.id}/disconnect`,'POST',{});await load();$('accounts-status').textContent=account.name+' foi desconectada.';}
+    try {await api(`/accounts/${account.id}/disconnect`,'POST',{});await load(true);$('accounts-status').textContent=account.name+' foi desconectada.';}
     catch(error) {$('accounts-status').textContent=error.message;}
   }
   function askName(account=null) {
@@ -65,7 +67,7 @@
       event.preventDefault();const save=$('account-name-save'),target=naming;save.disabled=true;$('account-name-error').textContent='';
       try {
         const name=$('account-name-input').value;
-        if(target) {await api('/accounts/'+target.id,'PATCH',{name});$('account-name-dialog').close();await load();}
+        if(target) {await api('/accounts/'+target.id,'PATCH',{name});$('account-name-dialog').close();await load(true);}
         else {const created=await api('/accounts','POST',{name});$('account-name-dialog').close();open(created.id,true);}
       } catch(error) {$('account-name-error').textContent=error.message;}
       finally {save.disabled=false;}
@@ -76,7 +78,7 @@
       try {
         await api('/accounts/'+target.id,'DELETE');$('account-remove-dialog').close();
         if(target.id===active) {remember(accounts.find(account=>account.id!==active)?.id || '');location.assign('/');return;}
-        await load();$('accounts-status').textContent=target.name+' foi removida.';
+        await load(true);$('accounts-status').textContent=target.name+' foi removida.';
       } catch(error) {$('account-remove-error').textContent=error.message;confirmButton.disabled=false;}
     });
     const refresh=()=>{if(document.visibilityState!=='hidden') load().catch(error=>notice(error.message));};
