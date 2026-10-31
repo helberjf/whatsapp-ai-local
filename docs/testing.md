@@ -38,6 +38,7 @@ Test totals can change as coverage grows. Use the command's final pass/fail/skip
 | Assistant | Audience eligibility, opt-in boundaries, explicit contact overrides, pause/rate limits, handoff behavior, and late-response invalidation. |
 | Frontend state | Safe text rendering, preserved composer changes, media element continuity, pagination, explicit save/cancel actions, and duplicate-click protection. |
 | Native message actions | Delete-for-everyone validation, polls, sticker input checks, disappearing-message capability negotiation, extension state, and rejected unconfirmed connector replies. |
+| Multiple accounts | The paired account keeps its instance and data without a new QR code, a new account creates only its own instance, conversations, contacts, sends, schedules and automations stay with their account, an unknown account never falls back to the default, and disconnecting or removing one account leaves the others intact. The browser suite pairs and removes a second account against the demo connector. |
 | Knowledge and products | Document extraction, lexical retrieval, catalog validation, supported import formats, and source-backed answer preparation. |
 | Transcription | Queue limits, retries, local/cloud selection, temporary file cleanup, persisted results, and controlled engine/provider failures. |
 | Credentials | DPAPI round trip, separate assistant/transcription credentials, restart recovery, rotation/deletion, verified legacy migration, failure preservation, and safe errors. |

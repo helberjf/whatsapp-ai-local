@@ -19,8 +19,22 @@ async function createDemo({port=8876,autoTranscription=false}={}) {
   const store=createStore(directory);
   await store.update(data=>{for(let i=0;i<jids.length;i++) data.contacts[jids[i]]={status:i===3?'closed':i===1?'pending':'open',labels:i<3?['Cliente','Interesse']:[],notes:[],crm:{stage:i===1?'negotiating':'new',notes:'Contato fictício para demonstração.',history:[]}};data.settings.templates=[{name:'Welcome',body:'Olá! Obrigado pelo contato. Como posso ajudar?'}];});
   await createStore(directory,{file:'ai.json',initial:{}}).update(data=>Object.assign(data,{provider:'ollama',model:'demo-local',baseUrl:'http://127.0.0.1:11434',apiKey:''}));
+  // Contas adicionadas pela interface: pareiam sozinhas pouco depois do QR Code e começam sem conversas.
+  const added=new Map();
+  function addedInstance(url,route,input) {
+    const name=route==='/instance/create'?input.instanceName:route==='/instance/fetchInstances'?new URL(url).searchParams.get('instanceName'):route.split('/').pop(),item=added.get(name);
+    if(route==='/instance/create') {added.set(name,{state:'connecting',pairAt:null});return {instance:{instanceName:name}};}
+    if(!item) return null;
+    if(route.includes('/connectionState/')) {if(item.pairAt && Date.now()>=item.pairAt) item.state='open';return {instance:{state:item.state}};}
+    if(route==='/instance/fetchInstances') return [{name,ownerJid:'5511000000099@s.whatsapp.net'}];
+    if(route.startsWith('/instance/connect/')) {item.pairAt=Date.now()+1500;return {base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII=',count:1};}
+    if(route.startsWith('/instance/logout/')) {Object.assign(item,{state:'close',pairAt:null});return {status:'SUCCESS'};}
+    if(route.startsWith('/instance/delete/')) {added.delete(name);return {status:'SUCCESS'};}
+    return route.includes('/findChats/') || route.includes('/findContacts/')?[]:{};
+  }
   const fetchConnector=async(url,options={})=>{
     const route=new URL(url).pathname,input=options.body?JSON.parse(options.body):{};let output={};
+    if(route==='/instance/create' || !(route==='/instance/fetchInstances'?new URL(url).searchParams.get('instanceName'):route.split('/').pop()).startsWith('demo')) {const reply=addedInstance(url,route,input);return reply?new Response(JSON.stringify(reply)):new Response('{}',{status:404});}
     if(route.includes('/connectionState/')) output={instance:{state:'open'}};
     else if(route.includes('/fetchInstances')) output=[{name:'demo',ownerJid:jids[0]}];
     else if(route.includes('/findContacts/')) output=jids.map((jid,i)=>({remoteJid:jid,name:names[i],pushName:names[i]}));

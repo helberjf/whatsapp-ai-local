@@ -14,7 +14,7 @@
   const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
   function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
   async function api(route,method='GET',input,timeout=30000) {
-    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(timeout)});
+    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(timeout)});
     const result=await response.json();if(!response.ok) throw new Error(result.error || 'Não foi possível completar a operação.');return result;
   }
   function notice(message,success=false) {$('notice').textContent=message;$('notice').classList.toggle('success',success);$('notice').hidden=!message;}
@@ -605,6 +605,7 @@
     catch(error) {$('transcription-settings-error').textContent=error.message;}
     finally {$('save-transcription-settings').disabled=false;fillTranscriptionSettings();}
   });
+  globalThis.WhatsAppAccounts?.init?.({api,notice});
   globalThis.WhatsAppAvatars?.init?.({api});
   globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});

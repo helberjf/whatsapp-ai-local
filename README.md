@@ -61,6 +61,18 @@ The Windows launcher creates local connector credentials if none exist, starts D
 
 In **Conexão WhatsApp**, choose **Conectar WhatsApp**. On the phone, open **Linked devices → Link a device**, then scan the QR code shown on the computer. Pairing survives ordinary restarts while its Docker volumes remain intact.
 
+### Several WhatsApp accounts
+
+Use the account button at the top of the sidebar to see the status of every account, add another one, or switch between them. Each account is its own Evolution instance, paired with its own QR code. The account that existed before this feature keeps its instance, session, and `data/atendimento.json`: updating requires no new pairing.
+
+| Per account | Shared by all accounts |
+| --- | --- |
+| Conversations, contacts, CRM, quick replies, scheduled messages, triggers, automations, assistant rules and activity, human-timing and transcription settings | Knowledge base, product catalog, AI provider and keys |
+
+Everything a browser tab sends goes through the account that tab is showing; switching reloads the page, and a tab keeps its account. **Desconectar** ends only that account's session and keeps its data. **Remover** deletes that instance from the connector, including its synchronized messages, and moves its local file to `data/contas-arquivadas/`. The last remaining account cannot be removed. If the same number is paired in two accounts, the list shows a warning because automatic replies could be sent twice.
+
+Local integrations with the `X-Integration-Token` header use the first account unless they send `X-WhatsApp-Account` with an account ID. Responses carry the account used in the header of the same name, and an unknown ID returns 404 instead of falling back to another account.
+
 Other entry points:
 
 | Command or launcher | Purpose |
@@ -163,7 +175,10 @@ The main local files are:
 
 | Location | Contents |
 | --- | --- |
-| `data/atendimento.json` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, and transcription results. |
+| `data/atendimento.json` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, and transcription results of the original account. |
+| `data/contas.json` | Account list. Created when a second account is added; until then the instance in `data/config.json` is the only account. |
+| `data/contas/<id>/atendimento.json` | The same data for each additional account. |
+| `data/contas-arquivadas/` | Local data of removed accounts. |
 | `data/knowledge.json`, `data/knowledge/` | Knowledge documents and extracted text. |
 | `data/produtos.json`, `data/product-images/` | Catalog and product images. |
 | `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
@@ -192,6 +207,7 @@ See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture bound
 - Individual conversations only; no bulk campaigns, group management, billing, or multi-user permissions.
 - History is limited to what the linked device and connector synchronize. Private `@lid` identifiers may lack a public phone number or address-book name; the application does not guess a mapping.
 - Media and forwarding are limited to supported types and 10 MB. Forwarding recreates content as a new message; Evolution 2.3.7 does not provide the native forwarded badge through this workflow.
+- Accounts are separate workspaces: forwarding and search stay inside the account in use, and there is no combined inbox. Up to 10 accounts.
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
 - Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
 - A local JSON store is appropriate for this single-user deployment; it is not a shared transactional database for several application processes.
