@@ -3,7 +3,7 @@
   const C=globalThis.WhatsAppCentral;if(!C) return;
   const {$,el,api,notice,dateTime,initials,phoneLabel}=C;
   const statuses={open:'Em aberto',pending:'Pendente',closed:'Concluído'};
-  let docs=[],products=[],ai=null,view='workspace',editing=null,candidates=[];
+  let docs=[],products=[],ai=null,view='workspace',editing=null,candidates=[],searchTimer=null;
   const thumbs=new Map();
   const bytes=size=>size<1024?size+' B':size<1048576?(size/1024).toFixed(0)+' KB':(size/1048576).toFixed(1)+' MB';
   const money=value=>value===null || value===undefined?'Sob consulta':new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value);
@@ -24,7 +24,16 @@
     const on=Boolean(ai?.configured);
     $('status-ai').textContent=on?'Configurada':'Não configurada';$('dot-ai').classList.toggle('on',on);
   }
-  async function refreshKb() {const result=await api('/kb');docs=result.documents;renderKb();renderCounters();}
+  function renderSearch(search) {
+    if(!search) return;
+    const text=search.indexing?`Preparando busca por significado: ${search.indexed} de ${search.total} documentos…`
+      :search.error?`Busca só por palavras-chave. Embeddings indisponíveis com ${search.model}: ${search.error}`
+      :search.mode==='hybrid'?`Busca por palavras-chave e por significado (${search.model}): ${search.indexed} de ${search.total} documentos.`
+      :'Busca só por palavras-chave. Configure um modelo de embeddings no Assistente de IA para buscar também por significado.';
+    $('kb-search').textContent=text;
+    clearTimeout(searchTimer);if(search.indexing) searchTimer=setTimeout(guard(refreshKb),3000);
+  }
+  async function refreshKb() {const result=await api('/kb');docs=result.documents;renderKb();renderCounters();renderSearch(result.search);}
   async function refreshProducts() {products=(await api('/products')).products;renderProducts();renderPanelProducts();renderCounters();}
   async function refreshAi() {ai=await api('/ai');renderAi();renderCounters();}
 
@@ -93,7 +102,7 @@
     else {
       fragment.append(el('h3','sources-title','Trechos usados'));
       for(const source of result.sources) {
-        const details=el('details','source'),summary=el('summary','',`${source.doc} · ${Math.round(source.relevance*100)}% relevante`);
+        const details=el('details','source'),summary=el('summary','',`${source.doc} · ${Math.round(source.relevance*100)}% relevante${source.via?.includes('semantic')?' · por significado':''}`);
         details.append(summary,el('p','source-text',source.text));fragment.append(details);
       }
     }
@@ -342,23 +351,23 @@
     const options=document.createDocumentFragment();
     for(const [id,item] of Object.entries(ai.providers)) {const option=el('option','',item.label);option.value=id;options.append(option);}
     $('ai-provider').replaceChildren(options);$('ai-provider').value=ai.provider;
-    $('ai-model').value=ai.model;$('ai-base').value=ai.baseUrl;$('ai-key').value='';$('ai-local-cpu').checked=ai.ollamaNumGpu===0;lastDefaultModel=ai.providers[ai.provider].model;
+    $('ai-model').value=ai.model;$('ai-embedding').value=ai.embeddingModel || '';$('ai-base').value=ai.baseUrl;$('ai-key').value='';$('ai-local-cpu').checked=ai.ollamaNumGpu===0;lastDefaultModel=ai.providers[ai.provider].model;
     syncProviderHints();
     $('ai-key-hint').textContent=ai.hasKey?'Uma chave está salva neste computador. Cole outra para trocar.':'A chave fica só neste computador e nunca volta para a tela.';
     $('ai-clear').hidden=!ai.hasKey;
   }
   function syncProviderHints() {
     const item=ai.providers[$('ai-provider').value];
-    $('ai-model').placeholder=item.model || 'nome do modelo';$('ai-base').placeholder=item.baseUrl || 'https://seu-servidor/v1';
+    $('ai-model').placeholder=item.model || 'nome do modelo';$('ai-embedding').placeholder=item.embedding?item.embedding+($('ai-provider').value==='anthropic'?' (Ollama local)':''):'nome do modelo de embeddings';$('ai-base').placeholder=item.baseUrl || 'https://seu-servidor/v1';
     $('ai-key').placeholder=item.key?'Cole a chave para salvar ou trocar':'Opcional para este provedor';
     refreshLocalAi();
   }
   $('ai-provider').addEventListener('change',()=>{
     const item=ai.providers[$('ai-provider').value];
     if(!$('ai-model').value || $('ai-model').value===lastDefaultModel) $('ai-model').value=item.model;
-    lastDefaultModel=item.model;syncProviderHints();
+    $('ai-embedding').value='';lastDefaultModel=item.model;syncProviderHints();
   });
-  const aiPayload=()=>({provider:$('ai-provider').value,model:$('ai-model').value,baseUrl:$('ai-base').value,...($('ai-key').value.trim()?{apiKey:$('ai-key').value.trim()}:{})});
+  const aiPayload=()=>({provider:$('ai-provider').value,model:$('ai-model').value,embeddingModel:$('ai-embedding').value,baseUrl:$('ai-base').value,...($('ai-key').value.trim()?{apiKey:$('ai-key').value.trim()}:{})});
   $('ai-form').addEventListener('submit',async event=>{
     event.preventDefault();$('ai-status').textContent='';
     try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();$('ai-status').textContent='Configuração salva.';}

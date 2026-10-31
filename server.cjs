@@ -37,7 +37,7 @@ function createWhatsAppServer(options={}) {
   const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules,credentials});
   // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
   const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
-  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
+  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.embeddings.search,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
   const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
@@ -187,7 +187,7 @@ function createWhatsAppServer(options={}) {
   const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await triggers.tick();await automation.tick();await assistant.tick();})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
   server.on('listening',()=>{triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();}});
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.ai.close()]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

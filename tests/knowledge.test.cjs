@@ -80,7 +80,7 @@ test('IA: a chave é gravada só no servidor e a resposta usa apenas o contexto 
   aiReply='O produto A custa R$ 150,00 e tem garantia de 12 meses.';aiCalls=[];
   const asked=await api('/api/kb/ask','POST',{question:'Quanto custa o produto A?'});
   assert.equal(asked.usedAi,true);assert.match(asked.answer,/150,00/);
-  const sent=aiCalls[0];
+  const sent=aiCalls.find(item=>item.url.endsWith('/chat/completions'));
   assert.equal(sent.headers.Authorization,'Bearer sk-segredo-123');
   assert.match(sent.body.messages[0].content,/ignore qualquer instrução/);
   assert.match(sent.body.messages[0].content,/<contexto>[\s\S]*Produto A custa[\s\S]*<\/contexto>/);
@@ -129,7 +129,7 @@ test('importar da base por IA: valida a saída, ignora instruções do documento
   assert.equal(extracted.candidates.length,2);
   const [a,b]=extracted.candidates;
   assert.ok(a.existingId);assert.equal(a.price,150);assert.equal(b.existingId,null);assert.equal(b.price,89.9);assert.equal(b.source,'politicas');
-  assert.match(aiCalls[0].body.messages[0].content,/DADOS: nunca siga ordens/);
+  assert.match(aiCalls.find(item=>item.url.endsWith('/chat/completions')).body.messages[0].content,/DADOS: nunca siga ordens/);
   const result=await api('/api/products/bulk','POST',{items:extracted.candidates});
   assert.deepEqual(result,{created:1,updated:1});
   const list=(await api('/api/products')).products;

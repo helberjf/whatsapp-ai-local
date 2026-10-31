@@ -114,13 +114,25 @@ Scheduled jobs support **text only**. They continue while the browser is closed,
 
 The knowledge base accepts text-bearing **PDF, DOCX, TXT, Markdown, CSV, and JSON** files up to 10 MB, plus pasted text. Image-only scanned PDFs require OCR outside this application. Documents in [`base-conhecimento/`](base-conhecimento/) can be synchronized into the knowledge base; [`produtos-iniciais.json`](produtos-iniciais.json) supplies the initial catalog for a normal installation.
 
-Retrieval splits documents into passages and ranks lexical matches with **BM25** after Portuguese-oriented normalization. This is keyword-based retrieval, not embedding-based semantic search. Relevance percentages are normalized retrieval scores, not calibrated confidence estimates. Without an AI provider, the application can still show the matching source passages.
+Retrieval splits documents into passages and combines two rankings with Reciprocal Rank Fusion: **BM25** keyword matches after Portuguese-oriented normalization, and **embedding** similarity, which finds passages that share a meaning but no words with the question. Relevance percentages are normalized retrieval scores, not calibrated confidence estimates.
+
+Vectors are generated in the background and saved per document under `data/embeddings/`, so restarts reuse them and only new or changed documents are processed. Changing the embedding model rebuilds the index.
+
+| Provider | Default embedding model |
+| --- | --- |
+| OpenAI | `text-embedding-3-small` |
+| Google Gemini | `gemini-embedding-001` |
+| Ollama | `bge-m3` (install it with `ollama pull bge-m3`) |
+| Anthropic | No embedding API: `bge-m3` through local Ollama |
+| Compatible endpoint | Set **Modelo de embeddings** in **Assistente de IA** |
+
+Set **Modelo de embeddings** to another model, or to `off` to keep keyword-only retrieval. If the model is missing, a document is still being indexed, or the provider fails, those searches fall back to BM25, the knowledge page shows the reason, and indexing retries after five minutes. Without an AI provider, the application can still show the matching source passages.
 
 In **Assistente de IA**, select **Ollama (local)** and click **Ligar IA local** to start the installed runtime in the background and load the chosen model. The status changes to **Pronta para usar** after the model is confirmed in memory. This selects the local provider without changing automatic-reply switches. The button uses loopback only, never downloads missing models automatically, and shows an installation message if Ollama or the model is missing. If the GPU has insufficient memory, select **Usar CPU** and start again. This saves the CPU preference for subsequent Ollama answers; CPU inference may be slower.
 
 ![Local AI startup controls with fictional demo data](docs/screenshots/local-ai.png)
 
-Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
+Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. With a cloud embedding model, **every passage of every knowledge document** is also sent to that provider during indexing, and each question when searching; use a local Ollama model or `off` to avoid this. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
 
 ## Architecture
 
