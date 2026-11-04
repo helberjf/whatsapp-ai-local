@@ -113,3 +113,8 @@ dialog.media-viewer{width:min(1200px,calc(100vw - 32px));height:calc(100dvh - 48
 @media(max-width:1160px){.sidebar-search{flex-direction:column;border:0;margin:0 0 7px}.sidebar-search .nav-item{justify-content:center;flex:none;width:40px;height:35px;padding:7px}.sidebar-search .nav-item span,.sidebar-search kbd{display:none}.sidebar-search .icon-button{width:35px}}
 @media(max-width:760px){.workspace{display:flex}.composer-editor{grid-template-columns:minmax(0,1fr) auto 29px 33px;gap:3px}.record-audio{width:28px;height:34px}.contact-panel{padding:0}.viewer-heading{padding:10px;gap:8px}.viewer-heading h2{font-size:12px}.viewer-actions{gap:4px}.viewer-actions .button{padding:6px 9px;font-size:11px}.viewer-content{padding:5px}dialog.media-viewer{width:calc(100vw - 12px);height:calc(100dvh - 20px)}.voice-recorder{padding:8px;gap:7px}}
 @media(prefers-reduced-motion:reduce){.recording .voice-dot{animation:none}}
+.voice-recorder .voice-send{flex:0 0 auto;min-height:38px;padding:8px 16px;font-size:12.5px;font-weight:650;gap:8px}
+.voice-recorder .voice-send .icon{width:16px;height:16px}
+.voice-recorder .voice-send[hidden]{display:none}
+.voice-recorder #voice-preview{flex:1 1 220px;min-width:0;max-width:100%}
+@media(max-width:640px){.voice-recorder .voice-send{flex:1 1 100%;min-height:44px}}

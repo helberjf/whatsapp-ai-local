@@ -570,7 +570,7 @@
     event.preventDefault();if(!selected || sending || connection?.state!=='connected') return;
     if(globalThis.WhatsAppMedia?.isRecording?.()) {notice('Pare a gravação para ouvir e enviar o áudio.');return;}
     const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,kind=attachmentKind,submittedRevision=editRevision;if(!file && !text) return;
-    sending=true;$('send').disabled=true;$('send-status').textContent='Enviando…';
+    sending=true;$('send').disabled=true;$('voice-send').disabled=true;$('send-status').textContent='Enviando…';
     try {
       let submitted=pendingSend;
       if(!submitted) {
@@ -587,7 +587,7 @@
       $('send-status').textContent=submitted.voice?'Mensagem de voz aceita pelo conector.'+(text?' O texto continua no editor.':''):'Mensagem aceita pelo conector. O status será atualizado no histórico.';
       await loadMessages();
     } catch(error) {$('send-status').textContent=error.message+' Confira a conversa antes de tentar outro envio.';}
-    finally {sending=false;$('send').disabled=connection?.state!=='connected';}
+    finally {sending=false;$('send').disabled=connection?.state!=='connected';$('voice-send').disabled=false;}
   });
   $('new-chat').addEventListener('click',()=>{$('new-error').textContent='';$('new-dialog').showModal();});
   $('new-form').addEventListener('submit',async event=>{
@@ -687,7 +687,7 @@
   globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});
-  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),hooks});
+  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),send:()=>$('composer').requestSubmit(),isSending:()=>sending,hooks});
   const mainNav=document.querySelector('.main-nav');
   if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-products','nav-knowledge','nav-ai','nav-voice','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
   hooks.sync.push(()=>globalThis.WhatsAppTriggers?.onChats?.(chats));hooks.select.push(()=>globalThis.WhatsAppTriggers?.onSelectChat?.(selected));
