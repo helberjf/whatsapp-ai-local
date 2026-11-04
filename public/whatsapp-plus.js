@@ -6,7 +6,8 @@
   const {$,el,api,notice}=C;
   const QUICK_REACTIONS=['👍','❤️','😂','😮','😢','🙏'];
   const PRIVACY_LABELS={all:'Todos',contacts:'Meus contatos',contact_blacklist:'Meus contatos, exceto…',none:'Ninguém'};
-  let reply=null,showArchived=false,starred=new Map(),editState=null,searchState={query:'',hits:[],index:-1};
+  const NO_REPLY='Sem resposta';
+  let reply=null,showArchived=false,showUnanswered=false,starred=new Map(),editState=null,searchState={query:'',hits:[],index:-1};
   let typing={jid:null,at:0},recordingTimer=null,shareTyping=true,notifiedAt=new Map(),notificationsReady=false;
   const pending=new Map(),requestIds=new Map();
   const store=(()=>{try {return globalThis.localStorage;}catch {return null;}})();
@@ -25,10 +26,13 @@
 
   // ---------- Lista de conversas: fixadas no topo, arquivadas à parte, ícones de estado ----------
   function arrangeChats(list) {
-    const searching=Boolean($('search')?.value.trim());
-    const visible=searching?list:list.filter(chat=>showArchived?chat.archived===true:chat.archived!==true);
-    const archivedCount=C.chats().filter(chat=>chat.archived===true).length;
+    const searching=Boolean($('search')?.value.trim()),waiting=chat=>Array.isArray(chat.labels) && chat.labels.includes(NO_REPLY);
+    const archivedCount=C.chats().filter(chat=>chat.archived===true).length,unansweredCount=C.chats().filter(waiting).length;
     $('filter-archived').hidden=!archivedCount && !showArchived;$('filter-archived-count').textContent=archivedCount;
+    $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
+    // "Sem resposta" é a fila do atendente: quem espera há mais tempo aparece primeiro.
+    if(showUnanswered) return list.filter(waiting).sort((a,b)=>Number(a.lastMessage?.timestamp || 0)-Number(b.lastMessage?.timestamp || 0));
+    const visible=searching?list:list.filter(chat=>showArchived?chat.archived===true:chat.archived!==true);
     if(showArchived || searching) return visible;
     const pinned=visible.filter(chat=>chat.pinned===true).sort((a,b)=>String(b.pinnedAt || '').localeCompare(String(a.pinnedAt || '')));
     return [...pinned,...visible.filter(chat=>chat.pinned!==true)];
@@ -44,11 +48,17 @@
     for(const [name,label] of flags) {const item=el('span','chat-flag '+name);item.title=label;item.setAttribute('aria-label',label);item.append(icon(name));box.append(item);}
     title.append(box);if(chat.pinned) button.classList.add('pinned');
   }
+  $('filter-unanswered').addEventListener('click',()=>{
+    showUnanswered=!showUnanswered;if(showUnanswered && showArchived) {showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');}
+    $('filter-unanswered').classList.toggle('active',showUnanswered);$('filter-unanswered').setAttribute('aria-pressed',String(showUnanswered));
+    $('inbox-title').firstChild.textContent=showUnanswered?'Sem resposta ':'Conversas ';C.renderChats();
+  });
   $('filter-archived').addEventListener('click',()=>{
+    if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');}
     showArchived=!showArchived;$('filter-archived').classList.toggle('active',showArchived);$('filter-archived').setAttribute('aria-pressed',String(showArchived));
     $('inbox-title').firstChild.textContent=showArchived?'Arquivadas ':'Conversas ';C.renderChats();
   });
-  for(const id of ['filter-all','filter-pending','nav-conversations','nav-overview']) $(id)?.addEventListener('click',()=>{if(!showArchived) return;showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();});
+  for(const id of ['filter-all','filter-pending','nav-conversations','nav-overview']) $(id)?.addEventListener('click',()=>{if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();}if(!showArchived) return;showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();});
 
   // ---------- Ações em cada mensagem ----------
   function pendingReactions(jid) {

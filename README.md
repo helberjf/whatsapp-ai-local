@@ -112,6 +112,14 @@ AI audience options have distinct meanings:
 
 Explicit **Off**, draft mode, and per-contact automation pauses remain effective. The assistant limits responses per contact, waits at least 20 seconds between answers, and allows at most six responses per hour. Unanswered questions can be handed off to an operator rather than invented. Reply workers coordinate message claims so a trigger, the keyword robot, and the assistant do not all answer the same incoming message. Old messages are not replayed as a catch-up campaign after startup or activation.
 
+### Many messages at once
+
+Conversations are handled in parallel: up to **4 AI generations** and **6 sends** run at the same time, with at most one task per contact, so one customer's "human" wait and typing indicator no longer hold everyone else. Triggers keep priority over the keyword robot and the assistant: each worker claims messages during its scan, in that order, and only the waiting, generation and sending happen in the background.
+
+An automatic reply must still leave within **15 minutes** of the customer's message. When it cannot (a long AI queue, a slow local model, an AI error, or an audio still waiting for transcription), the conversation becomes **Pendente** with the label **Sem resposta**, and the activity log says why. Nothing is sent late. The **Sem resposta** filter in the conversation list shows these conversations, longest wait first. The label is removed when you (or a later automatic reply) answer the conversation. In draft mode, the AI only logs the problem; you are already answering.
+
+In a simulated burst with the default "parecer humano" settings, 60 simultaneous customers were all answered within 1.5 minutes using a ~4-second cloud model, and within 5.3 minutes using a ~20-second local model; 200 customers within 4.7 minutes with the cloud model. The previous sequential worker answered 49 of 60 (cloud) and 26 of 60 (local), and silently skipped the rest. Real throughput depends on the AI provider, the connector and WhatsApp.
+
 Scheduled jobs support **text only**. They continue while the browser is closed, but the local services must remain available. A disconnected job can wait up to 15 minutes after its due time; older jobs become missed and require rescheduling. Persisted send reservations reduce duplicate sends. If a process stops during delivery, the result can be **uncertain**: check WhatsApp before creating another send. The application does not promise exactly-once delivery across a remote connector.
 
 ## Voice flow
@@ -174,7 +182,7 @@ flowchart LR
 | Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
 | Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, retrieval, the voice flow ([`lib/voice-flow.cjs`](lib/voice-flow.cjs)) and speech ([`lib/speech.cjs`](lib/speech.cjs)). |
 | WhatsApp operations | [`lib/messaging-routes.cjs`](lib/messaging-routes.cjs): replies, reactions, edits, location, contact, voice notes, presence, chat organization, starred messages, profile and privacy. |
-| Persistence | [`lib/store.cjs`](lib/store.cjs): serialized updates and atomic JSON replacement; credentials use SQLite separately. |
+| Persistence | [`lib/store.cjs`](lib/store.cjs): serialized updates; the attendance state lives in SQLite (only changed items are written, reads copy only what is accessed), smaller files use atomic JSON replacement; credentials use a separate SQLite database. [`lib/housekeeping.cjs`](lib/housekeeping.cjs) prunes old duplicate-reply reservations. |
 | Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
 | Windows lifecycle | [`scripts/`](scripts/): configuration, start/stop, shortcuts, optional sign-in startup, and secret protection. |
 
@@ -194,7 +202,7 @@ The main local files are:
 
 | Location | Contents |
 | --- | --- |
-| `data/atendimento.json` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, transcription results, voice flow settings, chat organization (pinned, muted, archived, blocked) and starred messages. |
+| `data/atendimento.sqlite` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, transcription results, voice flow settings, chat organization (pinned, muted, archived, blocked) and starred messages. On the first start after the update, an existing `data/atendimento.json` is imported once and kept as `data/atendimento.json.migrado`. |
 | `data/knowledge.json`, `data/knowledge/` | Knowledge documents and extracted text. |
 | `data/produtos.json`, `data/product-images/` | Catalog and product images. |
 | `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
@@ -227,7 +235,7 @@ See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture bound
 - Media and forwarding are limited to supported types and 10 MB. Forwarding recreates content as a new message; Evolution 2.3.7 does not provide the native forwarded badge through this workflow.
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
 - Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
-- A local JSON store is appropriate for this single-user deployment; it is not a shared transactional database for several application processes.
+- The local SQLite store is designed for one application process; it is not a shared database for several central instances. Duplicate-reply reservations are kept for 3 days and send idempotency records for 7 days (a message can only be answered automatically in its first 15 minutes; trigger delays reach 24 hours). Transcription results are not pruned.
 - Cloud AI answers and imported catalog suggestions require review appropriate to the task. Retrieval is lexical and can miss differently worded information.
 - AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a copied SQLite database alone cannot restore access.
 

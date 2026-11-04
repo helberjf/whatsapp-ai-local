@@ -22,6 +22,7 @@ const {createLocalAi}=require('./lib/local-ai.cjs');
 const {createSpeechEngines}=require('./lib/speech.cjs');
 const {createVoiceFlow}=require('./lib/voice-flow.cjs');
 const {createMessagingRoutes}=require('./lib/messaging-routes.cjs');
+const {pruneState}=require('./lib/housekeeping.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
@@ -191,13 +192,14 @@ function createWhatsAppServer(options={}) {
   });
   messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,now:options.now || Date.now});
   server.transcriptions=transcriptions;server.voice=voice;
+  server.housekeeping=()=>store.update(data=>pruneState(data,(options.now || Date.now)()));
   server.scheduler=scheduler;
   server.triggers=triggers;server.assistant=assistant;
-  let replyTimer=null,replyTick=null;
-  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await voice.tick();await triggers.tick();await automation.tick();await assistant.tick();})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
-  server.on('listening',()=>{voice.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();}});
+  let replyTimer=null,replyTick=null,cleanTimer=null;
+  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
+  server.on('listening',()=>{voice.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();server.housekeeping().catch(()=>{});cleanTimer=setInterval(()=>{server.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();}});
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);voice.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);voice.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

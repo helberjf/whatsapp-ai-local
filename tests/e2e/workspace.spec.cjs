@@ -130,3 +130,11 @@ test('voice flow stages save separately and the voice preview never enables auto
 });
 async function openChatFromNav(page) {await page.locator('#nav-conversations').click();await openChat(page);}
 
+test('"Sem resposta" queue lists unanswered conversations with the longest wait first',async({page})=>{
+  await expect(page.locator('#filter-unanswered')).toBeHidden();
+  await page.evaluate(async()=>{const token=document.querySelector('meta[name="whatsapp-session"]').content;for(const jid of ['5511000000004@s.whatsapp.net','5511000000002@s.whatsapp.net']) await fetch('/api/contact?jid='+encodeURIComponent(jid),{method:'PATCH',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify({status:'pending',labels:['Sem resposta']})});});
+  await page.locator('#refresh-top').click();await expect(page.locator('#filter-unanswered')).toBeVisible();await expect(page.locator('#filter-unanswered-count')).toHaveText('2');
+  await page.locator('#filter-unanswered').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(2);
+  await expect(page.locator('#chat-list .chat-item').first()).toContainText('Casey Silva');await expect(page.locator('#inbox-title')).toContainText('Sem resposta');
+  await page.locator('#filter-all').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(10);
+});
