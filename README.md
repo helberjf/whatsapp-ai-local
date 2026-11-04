@@ -142,7 +142,7 @@ The knowledge base accepts text-bearing **PDF, DOCX, TXT, Markdown, CSV, and JSO
 
 Retrieval splits documents into passages and combines two rankings with Reciprocal Rank Fusion: **BM25** keyword matches after Portuguese-oriented normalization, and **embedding** similarity, which finds passages that share a meaning but no words with the question. Relevance percentages are normalized retrieval scores, not calibrated confidence estimates.
 
-Vectors are generated in the background and saved per document under `data/embeddings/`, so restarts reuse them and only new or changed documents are processed. Changing the embedding model rebuilds the index.
+Vectors are generated in the background and saved per document in `data/central.sqlite`, so restarts reuse them and only new or changed documents are processed. Changing the embedding model rebuilds the index.
 
 | Provider | Default embedding model |
 | --- | --- |
@@ -166,7 +166,7 @@ Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatib
 flowchart LR
     Browser[Vanilla JS browser UI] -->|Loopback HTTP + session token| Node[Node.js HTTP server]
     Node --> Services[CRM · scheduling · triggers · assistant · knowledge]
-    Services --> Files[Local JSON stores and document/media files]
+    Services --> Files[data/central.sqlite: attendance, knowledge, catalog, images, vectors]
     Services --> Vault[SQLite + Windows DPAPI AI credentials]
     Node --> Evolution[Evolution API + local extension]
     Evolution --> PostgreSQL[(PostgreSQL)]
@@ -182,13 +182,15 @@ flowchart LR
 | Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
 | Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, retrieval, the voice flow ([`lib/voice-flow.cjs`](lib/voice-flow.cjs)) and speech ([`lib/speech.cjs`](lib/speech.cjs)). |
 | WhatsApp operations | [`lib/messaging-routes.cjs`](lib/messaging-routes.cjs): replies, reactions, edits, location, contact, voice notes, presence, chat organization, starred messages, profile and privacy. |
-| Persistence | [`lib/store.cjs`](lib/store.cjs): serialized updates; the attendance state lives in SQLite (only changed items are written, reads copy only what is accessed), smaller files use atomic JSON replacement; credentials use a separate SQLite database. [`lib/housekeeping.cjs`](lib/housekeeping.cjs) prunes old duplicate-reply reservations. |
+| Persistence | [`lib/store.cjs`](lib/store.cjs) and [`lib/database.cjs`](lib/database.cjs): one `data/central.sqlite` for attendance, knowledge, catalog, photos and vectors, with serialized updates (only changed items are written, reads copy only what is accessed); the database is opened only during each operation. `ai.json` stays JSON, and credentials use a separate SQLite database. [`lib/housekeeping.cjs`](lib/housekeeping.cjs) prunes old duplicate-reply reservations. |
 | Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
 | Windows lifecycle | [`scripts/`](scripts/): configuration, start/stop, shortcuts, optional sign-in startup, and secret protection. |
 
 The runtime has no npm framework dependencies. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
 
 ## Privacy and persistence
+
+**Where data lives.** Central data uses one SQLite database, `data/central.sqlite`, built into Node.js: no extra service, port, password or npm dependency, and the central still opens while Docker is stopped. Messages and the WhatsApp session stay in the connector's PostgreSQL inside Docker, managed by Evolution API. PostgreSQL for the central itself would only pay off with several computers or attendants sharing the same data, which also requires the multi-user authentication this single-user application does not have. To back up, stop the central and copy `data/` together with the Docker volumes.
 
 This is a local, single-user application, not a hardened multi-user service. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
 
@@ -202,9 +204,8 @@ The main local files are:
 
 | Location | Contents |
 | --- | --- |
-| `data/atendimento.sqlite` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, transcription results, voice flow settings, chat organization (pinned, muted, archived, blocked) and starred messages. On the first start after the update, an existing `data/atendimento.json` is imported once and kept as `data/atendimento.json.migrado`. |
-| `data/knowledge.json`, `data/knowledge/` | Knowledge documents and extracted text. |
-| `data/produtos.json`, `data/product-images/` | Catalog and product images. |
+| `data/central.sqlite` | One SQLite database with all central data, each set in its own store: attendance (contacts, CRM, quick replies, scheduling, automation rules, send reservations, transcriptions, voice flow, chat organization, starred messages), knowledge documents and their extracted text, the product catalog and its photos, and embedding vectors. |
+| `*.migrado` | Copies of the previous files after the one-time import into `central.sqlite` (`atendimento.sqlite`/`atendimento.json`, `knowledge.json`, `produtos.json` and the `knowledge/`, `product-images/` and `embeddings/` folders). They are no longer read and can be deleted after you check the central. |
 | `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
 | `data/credentials.sqlite` | Separate DPAPI-protected assistant and transcription credentials. |
 | `data/config.json`, `infra/.env` | Generated connector and container configuration. |
