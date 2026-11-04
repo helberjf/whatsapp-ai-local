@@ -19,8 +19,12 @@ const assistantCore=require('./lib/assistant-core.cjs');
 const {createHumanizer}=require('./lib/humanize.cjs');
 const {createTriggerService}=require('./lib/triggers.cjs');
 const {createLocalAi}=require('./lib/local-ai.cjs');
+const {createSpeechEngines}=require('./lib/speech.cjs');
+const {createVoiceFlow}=require('./lib/voice-flow.cjs');
+const {createMessagingRoutes}=require('./lib/messaging-routes.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
+const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
 async function readBody(req) {
   if(!String(req.headers['content-type']).startsWith('application/json')) throw new ApiError('Envie os dados como JSON.',415);
@@ -37,13 +41,17 @@ function createWhatsAppServer(options={}) {
   const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules,credentials});
   // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
   const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
-  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
   const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
+  // Fluxo de voz: transcrição automática, leitura dos áudios pela IA e respostas em áudio (voz do Windows ou OpenAI).
+  const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
+  const voice=createVoiceFlow({store,client,transcriptions,speech,credentials,now:options.now || Date.now});
+  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,loadTexts:extra.services.loadTexts,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs,voice});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
   const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
   const triggers=createTriggerService({store,client,now:options.now || Date.now,humanizer});
   const scheduler=createScheduler({store,client,now:options.now || Date.now});
   const requests=new Map();
+  let messaging;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   async function sendOnce(input,send,prepare) {
     const id=textField(input.requestId,100,'Identificador do envio');if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new ApiError('Identificador do envio inválido.',422);
@@ -69,7 +77,7 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
         if(file==='index.html' && options.demo) content=content.replace('<body>','<body class="demo-mode"><div class="demo-banner" role="status">DEMO · Fictional contacts · No real WhatsApp connection</div>');
@@ -162,32 +170,34 @@ function createWhatsAppServer(options={}) {
         if(input.keys.length) await client.read(jid,input.keys);return json(res,200,{read:true});
       }
       if(req.method==='POST' && route==='/api/send') {
-        const input=await readBody(req),jid=assertJid(input.jid),text=textField(input.text,10000,'Mensagem');
-        return json(res,200,await sendOnce(input,()=>client.sendText(jid,text)));
+        const input=await readBody(req),jid=assertJid(input.jid),text=textField(input.text,10000,'Mensagem'),quotedId=quoteId(input.quotedId);
+        return json(res,200,await sendOnce(input,()=>client.sendText(jid,text,quotedId?{quotedId}:{})));
       }
       if(req.method==='POST' && route==='/api/send-media') {
         const input=await readBody(req),jid=assertJid(input.jid);
         if(!['image','video','audio','document'].includes(input.mediaType) || typeof input.base64!=='string' || (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64) || input.base64.length%4!==0) || !input.base64 || Buffer.byteLength(input.base64,'base64')>10*1024*1024) throw new ApiError('Anexo inválido. Envie um arquivo de até 10 MB.',422);
         textField(input.fileName,200,'Nome do arquivo');if(typeof input.mimeType!=='string' || !/^[\w.+-]+\/[\w.+-]+$/.test(input.mimeType) || (input.caption!==undefined && (typeof input.caption!=='string' || input.caption.length>4000))) throw new ApiError('Tipo ou legenda do arquivo inválido.',422);
-        return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,input)));
+        const quotedId=quoteId(input.quotedId);
+        return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,{...input,quotedId})));
       }
       if(req.method==='GET' && route==='/api/media') {
         const jid=assertJid(url.searchParams.get('jid')),id=textField(url.searchParams.get('id'),200,'Mensagem');
         const media=await client.media(jid,id);if(typeof media.base64!=='string') throw new ApiError('Mídia indisponível. Abra a mensagem no celular.');
         return json(res,200,{base64:media.base64,mimeType:media.mimetype || 'application/octet-stream',fileName:media.fileName || 'anexo'});
       }
-      const handled=(await extra(req,route,url,readBody)) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
+      const handled=(await messaging(req,route,url,readBody)) || (await extra(req,route,url,readBody)) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
       return json(res,404,{error:'Endereço não encontrado.'});
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });
-  server.transcriptions=transcriptions;
+  messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,now:options.now || Date.now});
+  server.transcriptions=transcriptions;server.voice=voice;
   server.scheduler=scheduler;
   server.triggers=triggers;server.assistant=assistant;
   let replyTimer=null,replyTick=null;
-  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await triggers.tick();await automation.tick();await assistant.tick();})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
-  server.on('listening',()=>{triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();}});
+  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await voice.tick();await triggers.tick();await automation.tick();await assistant.tick();})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
+  server.on('listening',()=>{voice.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();}});
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.ai.close()]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);voice.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.ai.close()]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

@@ -40,6 +40,8 @@ Test totals can change as coverage grows. Use the command's final pass/fail/skip
 | Native message actions | Delete-for-everyone validation, polls, sticker input checks, disappearing-message capability negotiation, extension state, and rejected unconfirmed connector replies. |
 | Knowledge and products | Document extraction, lexical retrieval, catalog validation, supported import formats, and source-backed answer preparation. |
 | Transcription | Queue limits, retries, local/cloud selection, temporary file cleanup, persisted results, and controlled engine/provider failures. |
+| WhatsApp operations | Normalized reactions, quotes, edits, locations and contact cards; quotes built from the connector's original message; voice notes, reactions, edits and native archive/unread/block applied only after connector confirmation; pin limit, mute periods, starred messages, presence preference, profile and privacy validation. |
+| Voice flow | Automatic transcription only after activation and once per audio; AI reads only completed transcriptions; text/audio/mirror reply formats; text fallback with a log entry when voice generation fails; Windows and OpenAI speech engines with controlled processes and responses and temporary file cleanup. |
 | Credentials | DPAPI round trip, separate assistant/transcription credentials, restart recovery, rotation/deletion, verified legacy migration, failure preservation, and safe errors. |
 
 The focused UI tests execute the application code with a small DOM fixture to check behavior without coupling assertions to screenshot pixels. Playwright complements those tests with real browser rendering and user interactions.
@@ -61,6 +63,8 @@ The README screenshots are captured from this environment. Normal browser runs w
 - [`screenshots/local-ai.png`](screenshots/local-ai.png): local runtime readiness and CPU option.
 - [`screenshots/voice-recorder.png`](screenshots/voice-recorder.png): browser microphone recording reviewed before sending, using a synthetic input device.
 - [`screenshots/document-preview.png`](screenshots/document-preview.png): the sample PDF rendered in the local PDF.js reader.
+- [`screenshots/whatsapp-features.png`](screenshots/whatsapp-features.png): quoted reply, reaction, edited message, shared location and contact card.
+- [`screenshots/voice-flow.png`](screenshots/voice-flow.png): the three voice flow stages, voice settings and a generated preview (a synthetic tone in the demo).
 
 Screenshots demonstrate the UI state, not real-account delivery. Never replace them with captures that expose real messages, names, phone numbers, QR codes, session tokens, or keys.
 

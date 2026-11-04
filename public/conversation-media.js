@@ -16,6 +16,7 @@
   function clearPreview() {$('voice-preview').pause();$('voice-preview').removeAttribute('src');$('voice-preview').hidden=true;if(previewUrl) URL.revokeObjectURL(previewUrl);previewUrl=null;}
   function refresh() {$('record-audio').disabled=busy || !context.canRecord();$('record-audio').setAttribute('aria-pressed',String(busy));}
   function reset() {
+    if(busy && recordingJid) context.onRecording?.(recordingJid,false);
     generation++;busy=false;if(recorder && recorder.state!=='inactive') recorder.stop();recorder=null;stopTracks();clearPreview();recordingJid=null;
     $('voice-recorder').hidden=true;$('voice-recorder').classList.remove('recording');$('voice-stop').hidden=true;refresh();
   }
@@ -35,13 +36,13 @@
       current.addEventListener('dataavailable',event=>{if(event.data.size) {chunks.push(event.data);size+=event.data.size;}if(size>=9.5*1024*1024 && current.state==='recording') current.stop();});
       current.addEventListener('error',()=>{if(version!==generation) return;reset();context.notice('Não foi possível gravar o áudio. Verifique seu microfone e tente novamente.');});
       current.addEventListener('stop',()=>{
-        if(version!==generation) return;stopTracks();recorder=null;busy=false;
+        if(version!==generation) return;stopTracks();recorder=null;busy=false;context.onRecording?.(jid,false);
         if(context.getSelected()?.jid!==jid) {reset();return;}
         const type=(current.mimeType || mime || 'audio/webm').split(';')[0],blob=new Blob(chunks,{type});
         if(!blob.size || blob.size>10*1024*1024) {reset();context.notice('Áudio vazio ou maior que 10 MB. Faça uma nova gravação.');return;}
-        const extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';context.setAttachment(new File([blob],'audio-'+Date.now()+'.'+extension,{type}));
+        const extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';context.setAttachment(new File([blob],'audio-'+Date.now()+'.'+extension,{type}),'voice');
       });
-      const started=Date.now();$('voice-status').textContent='Gravando · 0:00';$('voice-recorder').classList.add('recording');$('voice-stop').hidden=false;current.start(250);
+      const started=Date.now();$('voice-status').textContent='Gravando · 0:00';$('voice-recorder').classList.add('recording');$('voice-stop').hidden=false;current.start(250);context.onRecording?.(jid,true);
       timer=setInterval(()=>{const seconds=Math.floor((Date.now()-started)/1000);$('voice-status').textContent='Gravando · '+time(seconds);if(seconds>=300 && current.state==='recording') current.stop();},250);
     } catch(error) {
       if(version!==generation) return;reset();context.notice(['NotAllowedError','SecurityError'].includes(error.name)?'Permita o acesso ao microfone neste navegador para gravar áudio.':'Não foi possível acessar o microfone. Verifique se ele está conectado e tente novamente.');

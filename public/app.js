@@ -2,6 +2,7 @@
   'use strict';
   const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
+  const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
   const runHooks=(name,...args)=>{for(const hook of hooks[name]) try {hook(...args);}catch {}};
   const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
@@ -35,8 +36,10 @@
   }
   function renderChats() {
     const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
-    const filtered=chats.filter(chat=>(!$('unread-only').checked || chat.unread>0) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
-    const unreadCount=chats.filter(chat=>chat.unread>0).length,pendingCount=chats.filter(chat=>chat.status==='pending').length;
+    const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
+    const matching=chats.filter(chat=>(!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
+    const filtered=extras()?.arrangeChats?.(matching) || matching;
+    const unreadCount=chats.filter(unreadChat).length,pendingCount=chats.filter(chat=>chat.status==='pending').length;
     $('metric-total').textContent=chats.length;$('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=chats.filter(chat=>chat.status==='closed').length;$('chat-count').textContent=filtered.length;
     $('filter-total-count').textContent=chats.length;$('nav-chat-count').textContent=chats.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
     $('filter-all').classList.toggle('active',!status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
@@ -49,12 +52,23 @@
       if(['pending','closed'].includes(chat.status)) title.append(el('span','chat-status '+chat.status,statuses[chat.status]));
       if(chat.aiMode==='draft' || chat.aiMode==='auto') title.append(el('span','chat-status ai',chat.aiDraft && chat.lastMessage && !chat.lastMessage.fromMe?'IA: rascunho pronto':chat.aiMode==='auto'?'IA automática':'IA rascunho'));
       title.append(el('time','',time(chat.lastMessage?.timestamp)));
-      const preview=el('span','chat-preview');preview.append(el('p','',chat.lastMessage?.text || (chat.lastMessage?.type && chat.lastMessage.type!=='text'?'Anexo recebido':statuses[chat.status])));
+      const preview=el('span','chat-preview');preview.append(el('p','',previewText(chat.lastMessage) || statuses[chat.status]));
       if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
-      copy.append(title,preview);button.append(copy);button.addEventListener('click',()=>selectChat(chat));fragment.append(button);
+      else if(chat.markedUnread) {const dot=el('span','unread-count marked','');dot.setAttribute('aria-label','Marcada como não lida');preview.append(dot);}
+      copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>selectChat(chat));fragment.append(button);
     }
     if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
     $('chat-list').replaceChildren(fragment);
+  }
+  // Prévia da última mensagem na lista, como no WhatsApp: tipo do conteúdo e reações identificados.
+  function previewText(message) {
+    if(!message) return '';
+    if(message.type==='reaction') return (message.fromMe?'Você reagiu ':'Reagiu ')+(message.reaction?.emoji || message.text || '');
+    if(message.type==='location') return '📍 '+(message.text || 'Localização');
+    if(message.type==='contact') return '👤 '+(message.text || 'Contato');
+    if(message.type==='audio' && !message.text) return '🎤 '+(message.voice?'Mensagem de voz':'Áudio');
+    if(message.type==='deleted') return '⊘ Mensagem apagada';
+    return message.text || (message.type && message.type!=='text'?'Anexo recebido':'');
   }
   function mergeMessages(records) {const all=new Map(messages.map(item=>[item.id,item]));let changed=false;for(const message of records) {if(JSON.stringify(all.get(message.id))!==JSON.stringify(message)) changed=true;all.set(message.id,message);}messages=[...all.values()].sort((a,b)=>a.timestamp-b.timestamp);return changed;}
   const transcriptionKey=(jid,messageId)=>jid+'|'+messageId;
@@ -63,6 +77,7 @@
     return [...(transcriptionJobs.get(jid)?.values() || [])].filter(job=>job.messageId===messageId && job.provider===provider)
       .sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
   }
+  const latestKnownTranscription=(jid,messageId)=>[...(transcriptionJobs.get(jid)?.values() || [])].find(job=>job.messageId===messageId);
   function rememberTranscriptions(jid,jobs) {
     if(!transcriptionJobs.has(jid)) transcriptionJobs.set(jid,new Map());
     const saved=transcriptionJobs.get(jid);
@@ -73,12 +88,14 @@
     }
   }
   function updateTranscription(view) {
+    // Sem escolha manual, o painel acompanha o transcritor que já tratou o áudio (por exemplo, a transcrição automática).
+    if(!transcriptionChoices.has(transcriptionKey(view.jid,view.messageId))) {const existing=[...(transcriptionJobs.get(view.jid)?.values() || [])].filter(item=>item.messageId===view.messageId).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];if(existing && existing.provider!==view.provider.value) view.provider.value=existing.provider;}
     const provider=view.provider.value,key=transcriptionKey(view.jid,view.messageId),job=latestTranscription(view.jid,view.messageId,provider),error=transcriptionErrors.get(key+'|'+provider);
     const busy=transcriptionRequests.has(key+'|'+provider),pending=pendingTranscription(job),failed=job?.status==='failed' || Boolean(error);
     view.button.disabled=busy || pending;view.provider.disabled=busy;
     view.button.textContent=busy?'Solicitando…':pending?'Transcrevendo…':failed?'Tentar novamente':'Transcrever';
     view.disclosure.hidden=provider!=='ai';
-    const source=provider==='ai'?'IA · OpenAI':'Whisper local';
+    const source=(job?.auto?'Automática · ':'')+(provider==='ai'?'IA · OpenAI':'Whisper local');
     const status=busy?'Solicitando transcrição…':error?error:job?.status==='completed'?source+' · Transcrição concluída':job?.status==='failed'?(job.error || 'Não foi possível transcrever este áudio.'):job?.status==='running'?source+' · Transcrevendo…':job?.status==='queued'?source+' · Na fila…':'';
     if(view.status.textContent!==status) view.status.textContent=status;
     view.status.hidden=!status;view.status.classList.toggle('transcription-error',failed);
@@ -222,6 +239,7 @@
     forward.addEventListener('click',()=>{if(message.canForward===false) return;menu.open=false;openForward(message,jid);});
     copy.addEventListener('click',async()=>{const text=messageCopyText(message,jid);if(!text) return;menu.open=false;try {await navigator.clipboard.writeText(text);notice('Texto copiado.',true);}catch {notice('Não foi possível copiar. Selecione o texto da mensagem para copiar.');}});
     options.append(forward,copy);
+    try {extras()?.extendActions?.({options,message,jid,close:()=>{menu.open=false;}});}catch {}
     if(message.fromMe && !message.deleted && !deletedMessages.has(jid+'|'+message.id)) {
       const remove=el('button','message-delete','Apagar para todos');remove.type='button';remove.addEventListener('click',()=>{menu.open=false;deleteState={jid,messageId:message.id,requestId:crypto.randomUUID(),busy:false};$('delete-preview').textContent=message.text || 'Mensagem de '+message.type;$('delete-error').textContent='';$('delete-confirm').disabled=false;$('delete-dialog').showModal();});options.append(remove);
     }
@@ -294,15 +312,20 @@
   });
   function renderMessages(keepScroll=false,forceBottom=false) {
     const container=$('messages'),nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<90,oldHeight=container.scrollHeight,oldTop=container.scrollTop;
-    const fragment=document.createDocumentFragment();transcriptionViews.clear();messageCopyViews.clear();
+    const fragment=document.createDocumentFragment();transcriptionViews.clear();messageCopyViews.clear();messageRows.clear();
+    const reactions=reactionsByMessage(selected.jid);
     for(const message of messages) {
-      const row=el('article','message'+(message.fromMe?' mine':''));
+      if(message.type==='reaction') continue;
+      const row=el('article','message'+(message.fromMe?' mine':''));row.dataset.id=message.id;messageRows.set(message.id,row);
       const removed=message.deleted || deletedMessages.has(selected.jid+'|'+message.id);
+      if(message.quoted && !removed) row.append(quoteBlock(message.quoted));
       if(removed) {row.className+=' message-deleted';row.append(el('p','','⊘ Mensagem apagada'));}
       else if(message.type==='audio') row.append(audioCard(message,selected.jid));
       else if(message.type==='video') row.append(videoCard(message,selected.jid));
       else if(message.type==='poll') {const poll=el('section','poll-card');poll.append(el('strong','',message.poll?.name || message.text || 'Enquete'));for(const choice of message.poll?.options || []) poll.append(el('div','poll-option','◯ '+choice));poll.append(el('small','muted','Para votar, abra esta conversa no WhatsApp.'));row.append(poll);}
       else if(message.type==='image' || (message.type==='document' && (message.mimeType==='application/pdf' || /\.pdf$/i.test(message.fileName || '')))) row.append(previewCard(message,selected.jid));
+      else if(message.type==='location') row.append(locationCard(message));
+      else if(message.type==='contact') row.append(contactCard(message));
       else if(message.type!=='text') {
         const cached=mediaUrls.get(selected.jid+'|'+message.id);
         if(cached && ['image','sticker','audio','video'].includes(message.type)) {
@@ -313,15 +336,65 @@
           const messageJid=selected.jid;button.addEventListener('click',()=>loadMedia(message,messageJid,button));row.append(button);
         }
       }
-      if(message.text && !removed && message.type!=='poll') row.append(linkedText(message.text));
+      if(message.text && !removed && !['poll','location','contact'].includes(message.type)) row.append(linkedText(message.text));
       if(message.type==='audio' && !removed) row.append(audioTranscription(message,selected.jid));
+      const chips=removed?[]:[...(reactions.get(message.id)?.values() || [])].filter(item=>item.emoji);
+      if(chips.length) {const box=el('div','message-reactions');box.setAttribute('aria-label','Reações');for(const item of chips) {const chip=el('span','reaction-chip'+(item.fromMe?' mine':''),item.emoji);chip.title=item.fromMe?'Sua reação':'Reação do contato';box.append(chip);}row.append(box);}
       const ack=!message.fromMe?'': ['READ','PLAYED',4,5].includes(message.status)?' · Lida':['DELIVERY_ACK','DELIVERED',3].includes(message.status)?' · Entregue':['ERROR','FAILED',0].includes(message.status)?' · Falha':['PENDING',1].includes(message.status)?' · Enviando':' · Enviada';
-      if(!removed) row.append(messageActions(message,selected.jid));const meta=el('time','message-meta',time(message.timestamp)+ack);if(message.timestamp) meta.title=dateTime(message.timestamp);row.append(meta);fragment.append(row);
+      const star=!removed && extras()?.isStarred?.(selected.jid,message.id)?'★ ':'',edited=message.edited && !removed?' · Editada':'';
+      if(!removed) row.append(messageActions(message,selected.jid));const meta=el('time','message-meta',star+time(message.timestamp)+edited+ack);if(message.timestamp) meta.title=dateTime(message.timestamp);row.append(meta);fragment.append(row);
     }
     if(!messages.length) fragment.append(el('p','muted','Ainda não há mensagens sincronizadas nesta conversa.'));
     closeMessageMenu();container.replaceChildren(fragment);$('older').hidden=page>=pages;$('history-info').textContent=messages.length?`${messages.length} mensagens carregadas`:'';
     if(keepScroll) container.scrollTop=oldTop+container.scrollHeight-oldHeight;
     else if(nearBottom || forceBottom) container.scrollTop=container.scrollHeight;
+  }
+  // Reações: vale a mais recente de cada lado (você e o contato); reação vazia remove a anterior.
+  function reactionsByMessage(jid) {
+    const result=new Map();
+    for(const message of messages) {
+      if(message.type!=='reaction' || !message.reaction?.targetId) continue;
+      const list=result.get(message.reaction.targetId) || new Map(),who=message.fromMe?'me':'them',previous=list.get(who);
+      if(!previous || Number(message.timestamp || 0)>=Number(previous.timestamp || 0)) list.set(who,{emoji:message.reaction.emoji,timestamp:message.timestamp,fromMe:message.fromMe});
+      result.set(message.reaction.targetId,list);
+    }
+    for(const local of extras()?.pendingReactions?.(jid) || []) {
+      const list=result.get(local.targetId) || new Map(),previous=list.get('me');
+      if(!previous || Number(local.timestamp || 0)>Number(previous.timestamp || 0)) list.set('me',{emoji:local.emoji,timestamp:local.timestamp,fromMe:true});
+      result.set(local.targetId,list);
+    }
+    return result;
+  }
+  function quoteBlock(quoted) {
+    const original=messages.find(item=>item.id===quoted.id),fromMe=original?original.fromMe:quoted.fromMe,block=el('button','message-quote');block.type='button';
+    block.append(el('strong','',fromMe===true?'Você':fromMe===false?(selected?.name || 'Contato'):'Mensagem citada'),el('span','',(original && !original.deleted?previewText(original):'') || quoted.text || 'Mensagem'));
+    block.setAttribute('aria-label','Ir para a mensagem citada');
+    block.addEventListener('click',()=>{const target=messageRows.get(quoted.id);if(target) {target.scrollIntoView?.({block:'center',behavior:'smooth'});target.classList.toggle('message-highlight',true);setTimeout(()=>target.classList.toggle('message-highlight',false),1600);}else notice('A mensagem citada não está carregada. Use "Carregar mensagens anteriores".');});
+    return block;
+  }
+  function locationCard(message) {
+    const card=el('section','location-card'),place=message.location || {};card.setAttribute('aria-label','Localização compartilhada');
+    card.append(el('div','media-card-label',place.live?'📍 Localização em tempo real':'📍 Localização'));
+    if(place.name) card.append(el('strong','',place.name));if(place.address) card.append(el('small','',place.address));
+    if(Number.isFinite(place.latitude) && Number.isFinite(place.longitude)) {
+      const coords=place.latitude.toFixed(6)+','+place.longitude.toFixed(6),link=el('a','message-link location-link','Abrir no mapa ↗');
+      link.href='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(coords);link.target='_blank';link.rel='noopener noreferrer';card.append(el('small','muted',coords.replace(',',', ')),link);
+    }
+    return card;
+  }
+  function contactCard(message) {
+    const card=el('section','contact-card');card.setAttribute('aria-label','Contato compartilhado');card.append(el('div','media-card-label','👤 Contato compartilhado'));
+    for(const contact of message.contacts || []) {
+      const item=el('div','contact-card-item');item.append(el('strong','',contact.name));
+      for(const phone of contact.phones || []) {
+        const line=el('div','contact-card-phone'),open=el('button','text-button','Conversar');open.type='button';line.append(el('span','',phoneLabel(phone)),open);
+        open.addEventListener('click',async()=>{open.disabled=true;try {const found=await api('/resolve-phone','POST',{phone:'+'+phone});await selectChat(chats.find(chat=>chat.jid===found.jid) || {...found,status:'open',labels:[],unread:0});}catch(error) {notice(error.message);}finally {open.disabled=false;}});
+        item.append(line);
+      }
+      if(!contact.phones?.length) item.append(el('small','muted','Sem número disponível no cartão.'));
+      card.append(item);
+    }
+    return card;
   }
   async function fetchMedia(message,jid) {
       const key=jid+'|'+message.id;if(mediaUrls.has(key)) return mediaUrls.get(key);
@@ -366,6 +439,8 @@
     if(!older && knownIds.size && result.messages.length && !result.messages.some(message=>knownIds.has(message.id))) page=1;
     const changed=mergeMessages(result.messages);if(older) page=result.page;pages=result.pages;
     if(changed || !historyLoaded || older) {renderMessages(older,!historyLoaded);historyLoaded=true;}
+    // Áudio novo pode já estar na fila da transcrição automática: busca o estado para mostrar o texto quando ficar pronto.
+    if(changed && historyLoaded && result.messages.some(message=>message.type==='audio' && !latestKnownTranscription(jid,message.id))) loadTranscriptions(jid,version).catch(()=>{});
     const unread=result.messages.filter(message=>!message.fromMe && message.key?.fromMe===false && message.key.remoteJid===jid && !readIds.has(jid+'|'+message.id));
     if(unread.length && document.visibilityState==='visible') {
       await api('/read','POST',{jid,keys:unread.map(message=>message.key)});
@@ -392,7 +467,7 @@
     $('app-shell').classList.toggle('has-chat',true);
     showSelectedIdentity(chat);$('message-text').value=drafts.get(chat.jid) || '';renderTemplateShortcuts();
     globalThis.WhatsAppFeatures?.onSelectChat?.(chat);
-    globalThis.WhatsAppSchedule?.onSelectChat?.(chat);
+    globalThis.WhatsAppSchedule?.onSelectChat?.(chat);extras()?.onSelectChat?.(chat);
     renderChats();renderMessages();$('messages').replaceChildren(el('p','muted','Carregando histórico…'));
     $('contact-status').value=chat.status || 'open';$('contact-ai').value=chat.aiMode || 'off';$('contact-labels').value=(chat.labels || []).join(', ');$('notes').replaceChildren();
     try {await Promise.all([loadMessages(),loadContact(chat.jid),loadTranscriptions(chat.jid)]);runHooks('open',chat);}catch(error) {notice(error.message);}
@@ -465,13 +540,13 @@
   for(const id of ['search','unread-only','status-filter']) $(id).addEventListener(id==='search'?'input':'change',renderChats);
   $('older').addEventListener('click',async()=>{$('older').disabled=true;try {await loadMessages(true);}catch(error) {notice(error.message);}finally {$('older').disabled=false;}});
   $('quick-template').addEventListener('change',()=>{if($('quick-template').value==='') return;insertTemplate(templates[Number($('quick-template').value)]);$('quick-template').value='';});
-  $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;});
+  $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;if(selected) extras()?.onTyping?.(selected.jid);});
   $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && !event.shiftKey && !event.altKey && !event.isComposing && event.keyCode!==229 && !event.repeat) {event.preventDefault();$('composer').requestSubmit();}});
   function setAttachment(file,kind=null) {
     editRevision++;pendingSend=null;
     if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
     attachment=file || null;attachmentKind=kind;$('attachment-name').textContent=file?(kind==='sticker'?'Figurinha · ':'')+file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file;$('message-text').required=!attachment;if(file) $('message-text').focus();
-    globalThis.WhatsAppMedia?.onAttachment?.(attachment);
+    globalThis.WhatsAppMedia?.onAttachment?.(attachment);extras()?.onAttachment?.(attachment,kind);
   }
   $('attachment').addEventListener('change',()=>{const kind=attachmentSelectionKind;attachmentSelectionKind=null;setAttachment($('attachment').files[0],kind);});
   $('attachment').addEventListener('cancel',()=>{attachmentSelectionKind=null;});
@@ -501,12 +576,15 @@
       if(!submitted) {
         const requestId=crypto.randomUUID();
         if(file && kind==='sticker' && text) throw new Error('Figurinhas não têm legenda. Remova o texto ou envie-o separadamente.');
-        submitted=file?{route:kind==='sticker'?'/send-sticker':'/send-media',input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType:kind==='document'?'document':file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':'document',requestId}}:{route:'/send',input:{jid,text,requestId}};
+        const quotedId=extras()?.replyFor?.(jid) || undefined,quote=quotedId && kind!=='sticker'?{quotedId}:{};
+        // Áudio gravado sai como mensagem de voz do WhatsApp; o texto do editor fica guardado, pois voz não tem legenda.
+        submitted=file && kind==='voice'?{route:'/send-voice',voice:true,input:{jid,base64:await fileBase64(file),mimeType:file.type || 'audio/webm',requestId,...quote}}:file?{route:kind==='sticker'?'/send-sticker':'/send-media',input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType:kind==='document'?'document':file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':'document',requestId,...quote}}:{route:'/send',input:{jid,text,requestId,...quote}};
         if(editRevision===submittedRevision) pendingSend=submitted;
       }
       await api(submitted.route,'POST',submitted.input);if(pendingSend===submitted) pendingSend=null;
-      if(editRevision===submittedRevision) {$('message-text').value='';drafts.delete(jid);attachment=null;attachmentKind=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;globalThis.WhatsAppMedia?.onAttachment?.(null);}
-      $('send-status').textContent='Mensagem aceita pelo conector. O status será atualizado no histórico.';
+      if(editRevision===submittedRevision) {if(!submitted.voice) {$('message-text').value='';drafts.delete(jid);}attachment=null;attachmentKind=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;globalThis.WhatsAppMedia?.onAttachment?.(null);}
+      extras()?.onSent?.(jid);
+      $('send-status').textContent=submitted.voice?'Mensagem de voz aceita pelo conector.'+(text?' O texto continua no editor.':''):'Mensagem aceita pelo conector. O status será atualizado no histórico.';
       await loadMessages();
     } catch(error) {$('send-status').textContent=error.message+' Confira a conversa antes de tentar outro envio.';}
     finally {sending=false;$('send').disabled=connection?.state!=='connected';}
@@ -520,8 +598,8 @@
   function showPanel(section) {
     for(const name of ['attendance','products','assistant','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
   }
-  const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','settings','nav-connection','nav-settings'];
-  const pageIds=['page-contacts','page-knowledge','page-products','page-ai'];
+  const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-voice','nav-profile','settings','nav-connection','nav-settings'];
+  const pageIds=['page-contacts','page-knowledge','page-products','page-ai','page-voice','page-profile'];
   function showView(view='workspace',nav) {
     const workspace=view==='workspace';$('metrics').hidden=!workspace;$('workspace').hidden=!workspace;
     for(const id of pageIds) $(id).hidden=id!==view;
@@ -547,7 +625,7 @@
   $('nav-settings').addEventListener('click',()=>{showView('workspace','nav-settings');showPanel('connection');toggleContact(true);});
   $('refresh-top').addEventListener('click',()=>{notice('');sync();});
   $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
-  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
+  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);extras()?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
     try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice('Atendimento salvo.',true);}catch(error) {notice(error.message);}finally {button.disabled=false;}
@@ -609,13 +687,15 @@
   globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});
-  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',hooks});
+  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),hooks});
   const mainNav=document.querySelector('.main-nav');
-  if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-products','nav-knowledge','nav-ai','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
+  if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-products','nav-knowledge','nav-ai','nav-voice','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
   hooks.sync.push(()=>globalThis.WhatsAppTriggers?.onChats?.(chats));hooks.select.push(()=>globalThis.WhatsAppTriggers?.onSelectChat?.(selected));
   (async()=>{try {templates=(await api('/settings')).templates;renderTemplates();}catch(error) {notice(error.message);}await sync();if(new URLSearchParams(location.search).has('conectar') && connection?.reachable && connection.state!=='connected') openQr();})();
   setInterval(sync,4000);
   setInterval(pollTranscriptions,2000);
   // Ponte para pages.js (base de conhecimento, produtos, IA e CRM).
-  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,selected:()=>selected,connection:()=>connection,contextSnapshot:()=>({jid:selected?.jid || null,selection,revision:editRevision,lastMessageId:messages.at(-1)?.id || null,lastTextId:messages.filter(message=>message.type==='text'&&!message.deleted&&message.canForward!==false&&message.text?.trim()).at(-1)?.id || null})};
+  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,selected:()=>selected,connection:()=>connection,
+    renderChats,renderMessages:()=>{if(selected) renderMessages(true);},messages:()=>messages,messageRow:id=>messageRows.get(id),previewText,sync:()=>sync(true),loadMessages:()=>loadMessages(),contactPhone,
+    touchDraft:()=>{editRevision++;pendingSend=null;},draftText:()=>$('message-text').value,setDraftText:value=>{$('message-text').value=value;editRevision++;pendingSend=null;},isSending:()=>sending,contextSnapshot:()=>({jid:selected?.jid || null,selection,revision:editRevision,lastMessageId:messages.at(-1)?.id || null,lastTextId:messages.filter(message=>message.type==='text'&&!message.deleted&&message.canForward!==false&&message.text?.trim()).at(-1)?.id || null})};
 })();
