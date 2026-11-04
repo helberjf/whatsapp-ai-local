@@ -39,6 +39,17 @@ These tests use randomly named `qa_*` schemas in the dedicated central database 
 
 Test totals can change as coverage grows. Use the command's final pass/fail/skip summary as the current result rather than a historical count in documentation.
 
+### RAG browser tests and recording new ones
+
+```powershell
+npm run test:e2e:rag
+npm run codegen
+```
+
+`tests/e2e/rag.spec.cjs` runs against the demo, whose AI fixture returns deterministic topic embeddings and fixed robot suggestions. It covers a question found only by meaning, an off-topic question with no passage, the strict level discarding a medium-confidence passage and persisting after reload, and robot suggestions entering the rule list switched off without being saved. `npm run codegen` opens the same demo with Playwright's recorder; the recording is saved in `tests/recordings/`, outside the suite, so copy its steps into a test that uses the `demo` fixture.
+
+Keep large local models unloaded while running the suites. With Ollama models resident in CPU memory, unrelated timing-sensitive tests (Windows credential protection, video limits) failed under load and passed again after `ollama stop`.
+
 ## Coverage map
 
 | Area | What the tests establish |
@@ -48,6 +59,7 @@ Test totals can change as coverage grows. Use the command's final pass/fail/skip
 | Sending and forwarding | Explicit requests, draft preservation, stable request identifiers, and conservative handling of uncertain sends. |
 | Scheduling | Persisted jobs, due time conversion, cancellation and editing restrictions, disconnect grace period, restart recovery, and no automatic repeat of uncertain sends. |
 | Triggers | First-contact, keyword, business hours, inactivity, delays, ordered response sequences, master switch behavior, cooldowns, and coordination with other reply workers. |
+| Retrieval | Hybrid BM25 + embedding fusion, per-document index reuse and rebuilds, provider fallbacks, per-passage confidence, strict/balanced/flexible filtering and prompts, AI-suggested robot questions validated and grounded, and the setup/test scripts run without the app open. |
 | Assistant | Audience eligibility, opt-in boundaries, explicit contact overrides, pause/rate limits, handoff behavior, and late-response invalidation. |
 | Frontend state | Safe text rendering, preserved composer changes, media element continuity, pagination, explicit save/cancel actions, and duplicate-click protection. |
 | Native message actions | Delete-for-everyone validation, polls, sticker input checks, disappearing-message capability negotiation, extension state, and rejected unconfirmed connector replies. |

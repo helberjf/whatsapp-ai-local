@@ -129,6 +129,33 @@
     if(!rows.length) target.append(node('p','feature-empty','Nenhuma execução registrada. O simulador não entra neste histórico.'));
   }
   async function refreshExecutions() {renderExecutions(await hooks.api('/automation/executions'));}
+  // Sugestões da IA: entram nas regras desligadas; nada é salvo nem respondido sem revisão.
+  function renderSuggestions(list) {
+    const target=$('automation-suggestions'),labels={alta:'confiança alta',media:'confiança média',baixa:'confiança baixa'};target.replaceChildren();
+    for(const item of list) {
+      const card=node('article','automation-suggestion'),words=item.keywords.map(normalize);
+      const existing=ruleRows.find(row=>!row.removed && row.keywords.value.split(',').some(word=>words.includes(normalize(word.trim()))));
+      const add=button('Adicionar como regra',()=>{
+        const record=addRule({name:item.question.slice(0,80),keywords:item.keywords,match:'word',response:item.answer,enabled:false});
+        add.disabled=true;add.textContent='Adicionada às regras';record.section.scrollIntoView?.({block:'nearest'});
+        status('automation-suggest-status','Regra adicionada desligada. Revise o texto, marque Regra ativa e clique em Salvar regras.');
+      },'button secondary');
+      card.append(node('strong','',item.question),node('p','automation-suggestion-keywords','Palavras: '+item.keywords.join(', ')),node('p','automation-suggestion-answer',item.answer),
+        node('p','feature-description',item.source?'Fonte: '+item.source+' · '+(labels[item.confidence] || 'confiança baixa'):'Sem trecho correspondente na base. Confira a resposta antes de usar.'));
+      if(existing) card.append(node('p','feature-description automation-suggestion-warning','A regra "'+existing.name.value+'" já usa uma destas palavras.'));
+      card.append(add);target.append(card);
+    }
+    status('automation-suggest-status',list.length?list.length+' sugestões prontas. Adicione as que fizerem sentido para o seu negócio.':'A IA não encontrou perguntas para sugerir. Envie mais documentos à Base de Conhecimento.');
+  }
+  function buildSuggestions() {
+    const card=node('section','feature-card automation-ideas'),generate=button('Gerar sugestões com IA',null,'button secondary','automation-suggest');
+    generate.addEventListener('click',()=>busy(generate,async()=>{
+      status('automation-suggest-status','Lendo a base do seu negócio… Com IA local no processador, isso pode levar alguns minutos.');$('automation-suggestions').replaceChildren();
+      renderSuggestions((await hooks.api('/kb/suggestions','POST',{count:6},300000)).suggestions);
+    },'automation-suggest-status'));
+    card.append(node('h3','','Sugestões da IA'),node('p','feature-description','A IA lê a Base de Conhecimento e o catálogo e sugere perguntas frequentes com respostas. Elas entram nas regras desligadas, para você revisar antes de salvar.'),generate,node('p','feature-status','','automation-suggest-status'),node('div','automation-suggestions',undefined,'automation-suggestions'));
+    return card;
+  }
   async function openAutomation() {
     openDialog('automation-dialog');status('automation-status','Carregando regras…');
     await busy(null,async()=>{
@@ -148,7 +175,7 @@
     form.addEventListener('submit',async event=>{event.preventDefault();await busy(save,async()=>{
       const rules=ruleRows.filter(row=>!row.removed).map(row=>({id:row.id,name:row.name.value,keywords:row.keywords.value.split(',').map(value=>value.trim()).filter(Boolean),match:row.match.value,response:row.response.value,enabled:row.active.checked}));
       robotSettings=await hooks.api('/automation/settings','PATCH',{cooldownSeconds:Number(cooldown.value),rules});renderRobotState();status('automation-status','Regras salvas. '+(robotSettings.enabled?'O robô continua ativado.':'O robô continua desligado.'));
-    },'automation-status');});main.append(node('h3','','Suas regras'),node('p','feature-description','Escreva palavras ou frases literais. A comparação ignora maiúsculas e acentos. A ordem das regras define a prioridade.'),form);
+    },'automation-status');});main.append(buildSuggestions(),node('h3','','Suas regras'),node('p','feature-description','Escreva palavras ou frases literais. A comparação ignora maiúsculas e acentos. A ordem das regras define a prioridade.'),form);
     const aside=node('aside','automation-side'),testForm=node('form','feature-card',undefined,'automation-test-form'),testText=node('textarea','',undefined,'automation-test-text');testText.rows=4;testText.required=true;testText.maxLength=10000;testText.placeholder='Digite uma mensagem que você receberia…';
     const testButton=button('Testar sem enviar',null,'button secondary','automation-test');testButton.type='submit';const testResult=node('p','automation-test-result','','automation-test-result');testResult.setAttribute('role','status');
     testForm.append(node('h3','','Teste sem WhatsApp'),node('p','feature-description','O teste usa as regras salvas e mostra a resposta aqui, sem enviar mensagem.'),field('Mensagem de teste',testText),testButton,testResult);

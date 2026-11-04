@@ -44,7 +44,7 @@ function createWhatsAppServer(options={}) {
     const client=createEvolutionClient({...options.config,instanceName:account.instanceName},options.fetchImpl),store=storeFactory(accountDir(dataDir,account.id)),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
     // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
     const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
-    const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.embeddings.search,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
+    const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.retrieve,reliability:extra.services.reliability,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs});
     const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
     const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
     const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});

@@ -10,7 +10,11 @@
     "configure": "node scripts/configure.cjs",
     "shortcut": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/shortcut.ps1",
     "demo": "node scripts/demo.cjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "rag:configurar": "node scripts/rag-configurar.cjs",
+    "rag:testar": "node scripts/rag-testar.cjs",
+    "test:e2e:rag": "playwright test tests/e2e/rag.spec.cjs",
+    "codegen": "node scripts/codegen.cjs"
   },
   "engines": {
     "node": ">=22.13"
