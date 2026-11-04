@@ -100,3 +100,7 @@
 .filter-tabs{overflow-x:auto;scrollbar-width:none}
 .filter-tabs::-webkit-scrollbar{display:none}
 .filter-tabs>.filter-tab{flex-shrink:0}
+#filter-unanswered[hidden]{display:none}
+.filter-tab.unanswered-tab{color:#f3c86b}
+.filter-tab.unanswered-tab.active{background:#4a3a12;color:#ffe2a0}
+.chat-spacer{flex-shrink:0;pointer-events:none}

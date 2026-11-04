@@ -58,6 +58,13 @@ test('recorded audio is reviewed before explicit sending and cancel preserves th
     await page.locator('#record-audio').click();await expect.poll(()=>page.locator('#voice-status').textContent()).toMatch(/Gravando · (?!0:00)\d+:\d{2}/);await page.locator('#voice-stop').click();await expect(page.locator('#voice-preview')).toBeVisible();await page.locator('.chat-item').filter({hasText:'Alex Morgan'}).click();await expect(page.locator('#voice-recorder')).not.toBeVisible();await expect(page.locator('#attachment-info')).not.toBeVisible();
     await page.locator('#record-audio').click();await expect.poll(()=>page.locator('#voice-status').textContent()).toMatch(/Gravando · (?!0:00)\d+:\d{2}/);await page.locator('#voice-stop').click();await expect(page.locator('#voice-preview')).toBeVisible();await page.locator('#send').click();await expect.poll(()=>sent.length).toBe(1);expect(sent[0].mimeType).toMatch(/^audio\//);expect(sent[0].base64.length).toBeGreaterThan(100);expect(sent[0].caption).toBeUndefined();await expect(page.locator('#voice-recorder')).not.toBeVisible();await expect(page.locator('#message-text')).toHaveValue('Texto preservado');
     await page.locator('#record-audio').click();await expect(page.locator('#voice-status')).toContainText('Gravando');await page.locator('.chat-item').filter({hasText:'Sam Rivera'}).click();await expect(page.locator('#voice-recorder')).not.toBeVisible();await expect(page.locator('#attachment-info')).not.toBeVisible();expect(sent).toHaveLength(1);
+    // Enviar fácil: o botão do próprio gravador envia depois da revisão ou para e envia direto.
+    await page.locator('.chat-item').filter({hasText:'Alex Morgan'}).click();
+    await page.locator('#record-audio').click();await expect(page.locator('#voice-send')).toContainText('Parar e enviar');await expect.poll(()=>page.locator('#voice-status').textContent()).toMatch(/Gravando · (?!0:00)\d+:\d{2}/);
+    await page.locator('#voice-stop').click();await expect(page.locator('#voice-send')).toContainText('Enviar áudio');await expect(page.locator('#voice-send')).toBeFocused();await insideViewport(page.locator('#voice-send'));
+    await page.locator('#voice-send').click();await expect.poll(()=>sent.length).toBe(2);await expect(page.locator('#voice-recorder')).not.toBeVisible();
+    await page.locator('#record-audio').click();await expect.poll(()=>page.locator('#voice-status').textContent()).toMatch(/Gravando · (?!0:00)\d+:\d{2}/);
+    await page.locator('#voice-send').click();await expect.poll(()=>sent.length).toBe(3);expect(sent[2].base64.length).toBeGreaterThan(100);await expect(page.locator('#voice-recorder')).not.toBeVisible();await expect(page.locator('#message-text')).toHaveValue('Texto preservado');
 });
 test('microphone denial keeps the conversation usable and spoofed PDF stays out of the viewer',async({page})=>{
   await openChat(page);await page.evaluate(()=>{navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('Permission denied','NotAllowedError');};});await page.locator('#record-audio').click();await expect(page.locator('#notice')).toContainText('Permita o acesso ao microfone');await expect(page.locator('#record-audio')).toBeEnabled();await expect(page.locator('#voice-recorder')).not.toBeVisible();
@@ -130,3 +137,11 @@ test('voice flow stages save separately and the voice preview never enables auto
 });
 async function openChatFromNav(page) {await page.locator('#nav-conversations').click();await openChat(page);}
 
+test('"Sem resposta" queue lists unanswered conversations with the longest wait first',async({page})=>{
+  await expect(page.locator('#filter-unanswered')).toBeHidden();
+  await page.evaluate(async()=>{const token=document.querySelector('meta[name="whatsapp-session"]').content;for(const jid of ['5511000000004@s.whatsapp.net','5511000000002@s.whatsapp.net']) await fetch('/api/contact?jid='+encodeURIComponent(jid),{method:'PATCH',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify({status:'pending',labels:['Sem resposta']})});});
+  await page.locator('#refresh-top').click();await expect(page.locator('#filter-unanswered')).toBeVisible();await expect(page.locator('#filter-unanswered-count')).toHaveText('2');
+  await page.locator('#filter-unanswered').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(2);
+  await expect(page.locator('#chat-list .chat-item').first()).toContainText('Casey Silva');await expect(page.locator('#inbox-title')).toContainText('Sem resposta');
+  await page.locator('#filter-all').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(10);
+});

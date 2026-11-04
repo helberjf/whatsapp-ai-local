@@ -438,7 +438,7 @@
   // ---------- Atendimento automático, regras e classificação de contatos ----------
   let assistant=null,rulesDraft=[],audienceSelect=null,audienceSave=null;
   const MODE_LABEL={off:'Desligada',draft:'Rascunho',auto:'Automática'};
-  const ACTION_LABEL={draft:'Rascunho preparado',sent:'Resposta enviada',handoff:'Chamou atendente',error:'Erro'};
+  const ACTION_LABEL={draft:'Rascunho preparado',sent:'Resposta enviada',handoff:'Chamou atendente',error:'Erro',unanswered:'Sem resposta · responda manualmente'};
   const AUDIENCE_LABEL={classified:'Apenas contatos classificados',all:'Todos os contatos',new:'Apenas conversas novas'};
   const AUDIENCE_HINT={
     classified:'A IA prepara rascunhos ou responde conforme a classificação de cada contato. Respostas automáticas exigem a chave geral ligada.',
@@ -483,7 +483,7 @@
     if(!assistant) return;
     $('assistant-enabled').checked=assistant.enabled;
     if(audienceSelect) {audienceSelect.value=assistant.audience || 'classified';renderAudienceHint();}
-    $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.');
+    $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.')+(assistant.load?.conversations?` Agora: ${assistant.load.conversations} conversa(s) em atendimento pela IA, ${assistant.load.ai.waiting} aguardando vaga.`:'')+(assistant.counts.unanswered?` ${assistant.counts.unanswered} conversa(s) com a etiqueta “Sem resposta”.`:'');
     const names=new Map(C.chats().map(chat=>[chat.jid,chat.name])),fragment=document.createDocumentFragment();
     for(const entry of assistant.log) {
       const row=el('li','log-row'),who=names.get(entry.jid) || phoneLabel(entry.jid.split('@')[0]);

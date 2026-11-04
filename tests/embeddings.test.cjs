@@ -1,4 +1,5 @@
 const {test}=require('node:test');
+const {createBlobStore}=require('../lib/database.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const os=require('node:os');
@@ -57,12 +58,12 @@ test('o índice sobrevive ao reinício e só refaz o documento alterado',async t
   assert.equal((await service.search('garantia')).length>0,true);
 });
 
-test('trocar de modelo refaz os vetores e documento excluído perde o arquivo',async t=>{
+test('trocar de modelo refaz os vetores e documento excluído perde os vetores',async t=>{
   const directory=await temp(t),docs=[...DOCS];await index(fakeAi(),directory,docs).refresh();
   const other=fakeAi({embedding:async()=>({model:'novo',signature:'modelo-2'}),embed:async texts=>{other.calls.push(texts);return {vectors:texts.map(vector),signature:'modelo-2'};}}),service=index(other,directory,docs);
   await service.refresh();assert.equal(other.calls.length,3);
   docs.pop();await service.refresh();
-  assert.deepEqual((await fs.readdir(path.join(directory,'embeddings'))).sort(),['a.json','b.json']);
+  assert.deepEqual((await createBlobStore(directory,'embeddings').keys()).sort(),['a','b']);
 });
 
 test('falha do provedor mantém o BM25, informa o erro e aguarda antes de tentar de novo',async t=>{
