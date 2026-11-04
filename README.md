@@ -15,6 +15,8 @@ These screenshots use the isolated demo with fictional contacts and sample conte
 | ![Split trigger editor with conditions and response composer](docs/screenshots/triggers.png) | ![Knowledge documents and grounded answer workflow](docs/screenshots/knowledge.png) |
 | Voice message review | In-app PDF reader |
 | ![Recorded audio preview before explicit sending](docs/screenshots/voice-recorder.png) | ![PDF document rendered locally inside the conversation workspace](docs/screenshots/document-preview.png) |
+| Replies, reactions, edits, location and contact cards | Voice flow: transcription → AI reading → text or voice reply |
+| ![Quoted reply, reaction, edited message, shared location and contact card in the demo](docs/screenshots/whatsapp-features.png) | ![Three-stage voice flow with voice settings and preview](docs/screenshots/voice-flow.png) |
 
 ## Try the demo
 
@@ -31,10 +33,12 @@ Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal s
 
 - **Conversations:** an expanded conversation column with contact/CRM tools available in a closable details panel. Search and filter by name, phone, labels, unread state, and attendance status; preserve drafts and scroll position during refreshes. Open global search from the sidebar or with **Ctrl+K**.
 - **Messaging:** one attachment button for photos, videos, audio, documents and stickers; **Enter** sends and **Shift+Enter** inserts a line break. Insert quick replies, copy message text, forward supported content, use emoji, create polls, and delete your own messages for everyone when the connector accepts the request.
-- **Media:** record voice messages from the composer, review playback, then explicitly send or discard. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, start video with one play action, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **WhatsApp features:** reply to a specific message (quoted), react with emoji, edit your own texts within WhatsApp's 15-minute window, share a location (typed coordinates or the browser's location) or a contact card, and open received locations and contact cards. Pin up to three conversations, mute (8 hours, 1 week, always), archive, mark as unread, block/unblock, star messages, search inside the loaded conversation, and get optional desktop notifications and sound. The contact sees "typing…" and "recording audio…" while you write or record (can be turned off). Edit your own WhatsApp name, about text, photo and privacy settings in **Meu perfil e privacidade**.
+- **Media:** record voice messages from the composer, review playback, then explicitly send or discard. Recordings are sent as native WhatsApp voice notes (PTT); any text in the editor stays as a draft because voice notes have no caption. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, start video with one play action, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
 - **Contacts and CRM:** maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
 - **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
 - **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
+- **Voice flow:** turn on, separately, (1) automatic transcription of received audio, (2) the AI reading those transcriptions as customer messages, and (3) AI replies as text, as voice notes, or in the same format the customer used. Voice replies use an installed Windows voice (local) or OpenAI text-to-speech. **Enviar como áudio** turns the editor text into a voice note manually.
 - **AI assistance:** request a draft or opt into automatic answers. Choose classified contacts, all eligible contacts, or genuinely new conversations admitted after activation. Use the catalog, retrieved knowledge, and editable service rules as context.
 - **Knowledge and products:** import supported documents, inspect retrieved passages, manage product and service cards, and review AI-suggested catalog imports before saving.
 
@@ -110,6 +114,20 @@ Explicit **Off**, draft mode, and per-contact automation pauses remain effective
 
 Scheduled jobs support **text only**. They continue while the browser is closed, but the local services must remain available. A disconnected job can wait up to 15 minutes after its due time; older jobs become missed and require rescheduling. Persisted send reservations reduce duplicate sends. If a process stops during delivery, the result can be **uncertain**: check WhatsApp before creating another send. The application does not promise exactly-once delivery across a remote connector.
 
+## Voice flow
+
+Open **Fluxo de voz (IA)**. Every stage starts **off** and is saved separately:
+
+| Stage | What it does | Where data goes |
+| --- | --- | --- |
+| 1. Automatic transcription | Incoming audio messages received after activation (and within the last 2 hours) are queued once each, up to five per cycle, using the normal transcription limits. | Local Whisper by default; OpenAI only if selected for this stage. |
+| 2. AI reading | Completed transcriptions count as customer speech, marked as `[áudio transcrito]`, for suggestions, drafts and automatic replies. An audio is answered only after its transcription is complete. | The configured assistant provider receives the transcription text, as it does for typed messages. |
+| 3. AI reply format | **Texto**, **Áudio** or **Igual ao cliente** (voice note when the customer sent audio, text otherwise). | Windows voice stays local; OpenAI voice receives the reply text. |
+
+Who the AI serves and whether it answers on its own still come from **Assistente de IA**: with the master switch off, the AI only prepares drafts. If voice generation fails before sending, the reply is sent as text and the event is logged in the voice flow activity. Voice replies accept up to 1,500 characters; links are read as "link enviado na conversa" and emojis are not spoken. Text the central sent as audio is kept so the AI can follow the conversation.
+
+The Windows voice uses `System.Speech` through [`scripts/speak.ps1`](scripts/speak.ps1) and prefers an installed `pt-BR` voice (add one in **Settings → Time & language → Speech**). OpenAI voices use `/v1/audio/speech` (`gpt-4o-mini-tts`, `tts-1` or `tts-1-hd`) with the same protected OpenAI key used by AI transcription. Generated audio is sent with the connector's voice-note conversion (OGG/Opus).
+
 ## Knowledge retrieval and AI
 
 The knowledge base accepts text-bearing **PDF, DOCX, TXT, Markdown, CSV, and JSON** files up to 10 MB, plus pasted text. Image-only scanned PDFs require OCR outside this application. Documents in [`base-conhecimento/`](base-conhecimento/) can be synchronized into the knowledge base; [`produtos-iniciais.json`](produtos-iniciais.json) supplies the initial catalog for a normal installation.
@@ -154,7 +172,8 @@ flowchart LR
 | Browser | [`public/`](public/): native DOM, CSS, and JavaScript; no frontend framework or build step. |
 | HTTP boundary | [`server.cjs`](server.cjs): request validation, local-origin protections, connector calls, and service routing. |
 | Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
-| Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, and retrieval. |
+| Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, retrieval, the voice flow ([`lib/voice-flow.cjs`](lib/voice-flow.cjs)) and speech ([`lib/speech.cjs`](lib/speech.cjs)). |
+| WhatsApp operations | [`lib/messaging-routes.cjs`](lib/messaging-routes.cjs): replies, reactions, edits, location, contact, voice notes, presence, chat organization, starred messages, profile and privacy. |
 | Persistence | [`lib/store.cjs`](lib/store.cjs): serialized updates and atomic JSON replacement; credentials use SQLite separately. |
 | Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
 | Windows lifecycle | [`scripts/`](scripts/): configuration, start/stop, shortcuts, optional sign-in startup, and secret protection. |
@@ -175,7 +194,7 @@ The main local files are:
 
 | Location | Contents |
 | --- | --- |
-| `data/atendimento.json` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, and transcription results. |
+| `data/atendimento.json` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, transcription results, voice flow settings, chat organization (pinned, muted, archived, blocked) and starred messages. |
 | `data/knowledge.json`, `data/knowledge/` | Knowledge documents and extracted text. |
 | `data/produtos.json`, `data/product-images/` | Catalog and product images. |
 | `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
@@ -201,7 +220,9 @@ See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture bound
 
 ## Current limits
 
-- Individual conversations only; no bulk campaigns, group management, billing, or multi-user permissions.
+- Individual conversations only; no bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
+- Evolution 2.3.7 does not report archive, block, pin or mute state back. Those flags reflect actions taken in this central; changes made on the phone are not read back. Pinning and muting are local to the central. Desktop notifications depend on browser permission and stop when the central is closed.
+- Quoting and reacting require the original message to be in the connector's history. Edits follow WhatsApp's 15-minute limit; the connector can still reject an edit.
 - History is limited to what the linked device and connector synchronize. Private `@lid` identifiers may lack a public phone number or address-book name; the application does not guess a mapping.
 - Media and forwarding are limited to supported types and 10 MB. Forwarding recreates content as a new message; Evolution 2.3.7 does not provide the native forwarded badge through this workflow.
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
