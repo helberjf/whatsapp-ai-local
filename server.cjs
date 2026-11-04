@@ -23,6 +23,8 @@ const {createSpeechEngines}=require('./lib/speech.cjs');
 const {createVoiceFlow}=require('./lib/voice-flow.cjs');
 const {createMessagingRoutes}=require('./lib/messaging-routes.cjs');
 const {pruneState}=require('./lib/housekeeping.cjs');
+const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
+const {createChatDelta}=require('./lib/chat-delta.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
@@ -38,7 +40,9 @@ function createWhatsAppServer(options={}) {
   const dataDir=options.storeDir || path.join(root,'data');
   const credentials=options.credentials || createCredentialStore(dataDir);
   const localAi=options.localAi || createLocalAi();
-  const client=createEvolutionClient(options.config,options.fetchImpl),store=createStore(dataDir),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
+  // Na central real, a lista de conversas é compartilhada (2 s) e completa a cada 30 s; nos testes, cada consulta é direta.
+  const production=!options.storeDir;
+  const client=createEvolutionClient({chatsCacheMs:options.chatsCacheMs ?? (production?2000:0),chatsFullRefreshMs:options.chatsFullRefreshMs ?? (production?30_000:0),...options.config},options.fetchImpl),store=createStore(dataDir),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
   const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules,credentials});
   // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
   const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
@@ -51,8 +55,8 @@ function createWhatsAppServer(options={}) {
   const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
   const triggers=createTriggerService({store,client,now:options.now || Date.now,humanizer});
   const scheduler=createScheduler({store,client,now:options.now || Date.now});
-  const requests=new Map();
-  let messaging;
+  const requests=new Map(),chatDelta=createChatDelta();
+  let messaging,events=null;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   async function sendOnce(input,send,prepare) {
     const id=textField(input.requestId,100,'Identificador do envio');if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new ApiError('Identificador do envio inválido.',422);
@@ -131,12 +135,14 @@ function createWhatsAppServer(options={}) {
       if(route==='/api/automation/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await automation.settings():await automation.saveSettings(await readBody(req)));
       if(req.method==='POST' && route==='/api/automation/simulate') return json(res,200,await automation.simulate(await readBody(req)));
       if(req.method==='GET' && route==='/api/automation/executions') return json(res,200,await automation.executions());
-      if(req.method==='GET' && route==='/api/connection') return json(res,200,await client.connection());
+      if(req.method==='GET' && route==='/api/connection') return json(res,200,{...await client.connection(),events:events?.status() || {connected:false,lastEventAt:null,lastError:null}});
       if(req.method==='POST' && route==='/api/connect') return json(res,200,await client.connect());
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid]}));
+        // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
+        if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
       }
       if(req.method==='GET' && route==='/api/messages') {
@@ -195,11 +201,23 @@ function createWhatsAppServer(options={}) {
   server.housekeeping=()=>store.update(data=>pruneState(data,(options.now || Date.now)()));
   server.scheduler=scheduler;
   server.triggers=triggers;server.assistant=assistant;
-  let replyTimer=null,replyTick=null,cleanTimer=null;
-  const pollReplies=()=>{if(replyTick) return replyTick;replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});})().catch(()=>{}).finally(()=>{replyTick=null;});return replyTick;};
-  server.on('listening',()=>{voice.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(pollReplies,5000);replyTimer.unref?.();server.housekeeping().catch(()=>{});cleanTimer=setInterval(()=>{server.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();}});
+  let replyTimer=null,replyTick=null,cleanTimer=null,lastPoll=0,pollAgain=false,eventTimer=null;
+  const pollReplies=()=>{
+    if(replyTick) {pollAgain=true;return replyTick;}
+    lastPoll=Date.now();
+    replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
+    return replyTick;
+  };
+  // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
+  const scheduledPoll=()=>{if(events?.status().connected && Date.now()-lastPoll<15_000) return;pollReplies();};
+  const onEvent=name=>{
+    if(!['connected','disconnected'].includes(name)) client.invalidateChats();
+    clearTimeout(eventTimer);eventTimer=setTimeout(()=>{pollReplies();},400);eventTimer.unref?.();
+  };
+  server.events=()=>events?.status() || null;
+  server.on('listening',()=>{voice.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(scheduledPoll,5000);replyTimer.unref?.();if(options.events!==false && (production || options.events)) {events=createEvolutionEvents({config:options.config,onEvent,...(typeof options.events==='object'?options.events:{})});events.start();}server.housekeeping().catch(()=>{});cleanTimer=setInterval(()=>{server.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();}});
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);voice.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);clearTimeout(eventTimer);events?.stop();voice.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

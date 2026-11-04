@@ -68,7 +68,9 @@ services:
       CACHE_REDIS_SAVE_INSTANCES: "false"
       CACHE_LOCAL_ENABLED: "false"
       WEBHOOK_GLOBAL_ENABLED: "false"
-      WEBSOCKET_ENABLED: "false"
+      # Eventos em tempo real para a central (conexão local autenticada pela chave do conector).
+      WEBSOCKET_ENABLED: "true"
+      WEBSOCKET_GLOBAL_EVENTS: "true"
       RABBITMQ_ENABLED: "false"
       SQS_ENABLED: "false"
       S3_ENABLED: "false"

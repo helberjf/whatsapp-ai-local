@@ -2,7 +2,8 @@
   'use strict';
   const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
-  const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras;
+  const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
+  let virtualRows=null,rowHeight=0,chatsVersion=null;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
   const runHooks=(name,...args)=>{for(const hook of hooks[name]) try {hook(...args);}catch {}};
   const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
@@ -23,7 +24,7 @@
     connection=value;const online=value.state==='connected';
     $('panel-connection-state').textContent=online?'Conectado':value.state==='connecting'?'Aguardando leitura do QR Code':value.reachable?'Pronto para conectar':'Conector indisponível';
     $('panel-connection-phone').textContent=online?phoneLabel(value.phone):'Nenhuma conta conectada';
-    $('sync-label').textContent=online?'Atualização automática':'Aguardando conexão';
+    $('sync-label').textContent=online?(value.events?.connected?'Tempo real · eventos do WhatsApp':'Atualização automática'):'Aguardando conexão';
     $('status-whatsapp').textContent=online?'Conectado':value.state==='connecting'?'Aguardando QR':'Desconectado';$('dot-whatsapp').classList.toggle('on',online);
     $('connection-badge').textContent=online?'Conectado':value.state==='connecting'?'Aguardando leitura':value.reachable?'Pronto para conectar':'Conector indisponível';
     $('connection-badge').classList.toggle('connected',online);
@@ -44,8 +45,26 @@
     $('filter-total-count').textContent=chats.length;$('nav-chat-count').textContent=chats.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
     $('filter-all').classList.toggle('active',!status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
     $('filter-all').setAttribute('aria-pressed',String(!status && !$('unread-only').checked));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
+    // Listas grandes: só as linhas visíveis vão para a página (o restante vira espaço reservado).
+    if(filtered.length>VIRTUAL_AT) {virtualRows=filtered;renderChatWindow();return;}
+    virtualRows=null;
     const fragment=document.createDocumentFragment();
-    for(const chat of filtered) {
+    for(const chat of filtered) fragment.append(chatButton(chat));
+    if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
+    $('chat-list').replaceChildren(fragment);
+  }
+  function renderChatWindow() {
+    const list=$('chat-list'),rows=virtualRows;if(!rows) return;
+    const height=rowHeight || 76,top=list.scrollTop || 0,view=list.clientHeight || 900;
+    const start=Math.max(0,Math.floor(top/height)-8),end=Math.min(rows.length,Math.ceil((top+view)/height)+8);
+    const fragment=document.createDocumentFragment(),before=el('div','chat-spacer'),after=el('div','chat-spacer');
+    before.style.height=start*height+'px';after.style.height=(rows.length-end)*height+'px';before.setAttribute('aria-hidden','true');after.setAttribute('aria-hidden','true');
+    fragment.append(before);for(let index=start;index<end;index++) fragment.append(chatButton(rows[index]));fragment.append(after);
+    list.replaceChildren(fragment);list.setAttribute('aria-rowcount',String(rows.length));
+    // Mede a altura real de uma linha (com borda) na primeira vez e redesenha com a medida certa.
+    if(!rowHeight) {const items=list.querySelectorAll?.('.chat-item');const measured=items?.length>1?items[1].offsetTop-items[0].offsetTop:items?.[0]?.offsetHeight;if(measured>20) {rowHeight=measured;renderChatWindow();}}
+  }
+  function chatButton(chat) {
       const button=el('button','chat-item'+(selected?.jid===chat.jid?' selected':''));button.type='button';button.setAttribute('aria-pressed',String(selected?.jid===chat.jid));
       const avatar=el('span','avatar',initials(chat.name));globalThis.WhatsAppAvatars?.decorate?.(avatar,chat);button.append(avatar);
       const copy=el('span','chat-text'),title=el('span','chat-title');title.append(el('strong','',chat.name));
@@ -55,11 +74,11 @@
       const preview=el('span','chat-preview');preview.append(el('p','',previewText(chat.lastMessage) || statuses[chat.status]));
       if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
       else if(chat.markedUnread) {const dot=el('span','unread-count marked','');dot.setAttribute('aria-label','Marcada como não lida');preview.append(dot);}
-      copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>selectChat(chat));fragment.append(button);
-    }
-    if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
-    $('chat-list').replaceChildren(fragment);
+      copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>selectChat(chat));
+      return button;
   }
+  let virtualScroll=false;
+  $('chat-list').addEventListener('scroll',()=>{if(!virtualRows || virtualScroll) return;virtualScroll=true;(globalThis.requestAnimationFrame || setTimeout)(()=>{virtualScroll=false;renderChatWindow();});});
   // Prévia da última mensagem na lista, como no WhatsApp: tipo do conteúdo e reações identificados.
   function previewText(message) {
     if(!message) return '';
@@ -498,9 +517,18 @@
     try {
       const value=await api('/connection');showConnection(value);
       if(value.state==='connected') {
-        chats=await api('/chats');globalThis.WhatsAppFeatures?.onChats?.(chats);globalThis.WhatsAppSchedule?.onChats?.(chats);
+        // Só o que mudou desde a última versão; sem mudança, a lista nem é redesenhada.
+        const result=await api('/chats?delta=1'+(chatsVersion?'&since='+encodeURIComponent(chatsVersion):''));
+        let changed=true;
+        if(Array.isArray(result)) {chats=result;chatsVersion=null;}
+        else if(result.full) {chats=result.chats;chatsVersion=result.version;}
+        else {
+          chatsVersion=result.version;changed=result.changed.length>0 || result.removed.length>0;
+          if(changed) {const merged=new Map(chats.map(chat=>[chat.jid,chat]));for(const jid of result.removed) merged.delete(jid);for(const chat of result.changed) merged.set(chat.jid,chat);chats=[...merged.values()].sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0));}
+        }
+        if(changed) {globalThis.WhatsAppFeatures?.onChats?.(chats);globalThis.WhatsAppSchedule?.onChats?.(chats);}
         if(selected) {const updated=chats.find(chat=>chat.jid===selected.jid);if(updated) {const identityChanged=selected.name!==updated.name || contactPhone(selected)!==contactPhone(updated);Object.assign(selected,updated);if(identityChanged) showSelectedIdentity(selected);}}
-        renderChats();runHooks('sync');if($('forward-dialog').open) renderForwardDestinations();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
+        if(changed) renderChats();runHooks('sync');if($('forward-dialog').open) renderForwardDestinations();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
       } else if(!selected) renderChats();
     } catch(error) {notice(error.message);}finally {syncing=false;}
     })();return syncTask;
@@ -650,6 +678,8 @@
   function fillTranscriptionSettings() {
     if(!transcriptionSettings) return;
     $('transcription-model').value=transcriptionSettings.whisperModel;$('transcription-language').value=transcriptionSettings.language;
+    if(transcriptionSettings.engine) $('transcription-engine').value=transcriptionSettings.engine;if(transcriptionSettings.concurrency) $('transcription-concurrency').value=String(transcriptionSettings.concurrency);if(transcriptionSettings.maxQueue) $('transcription-max-queue').value=String(transcriptionSettings.maxQueue);
+    if(Number.isFinite(transcriptionSettings.queued)) $('transcription-queue-status').textContent=`Agora: ${transcriptionSettings.running || 0} em andamento, ${transcriptionSettings.queued} na fila. De 10 a 500 áudios aguardando.`;
     $('transcription-key-status').textContent=transcriptionSettings.aiConfigured?'Chave da OpenAI configurada.':'Nenhuma chave da OpenAI configurada.';
     $('remove-transcription-key').disabled=!transcriptionSettings.aiConfigured;
   }
@@ -672,7 +702,8 @@
     event.preventDefault();const button=$('save-transcription-settings');button.disabled=true;$('remove-transcription-key').disabled=true;$('transcription-settings-error').textContent='';
     const aiApiKey=$('transcription-api-key').value.trim();$('transcription-api-key').value='';
     try {
-      transcriptionSettings=await api('/transcription/settings','PATCH',{whisperModel:$('transcription-model').value,language:$('transcription-language').value,...(aiApiKey?{aiApiKey}:{})});
+      const queueLimit=Number($('transcription-max-queue').value),parallel=Number($('transcription-concurrency').value);
+      transcriptionSettings=await api('/transcription/settings','PATCH',{whisperModel:$('transcription-model').value,language:$('transcription-language').value,...($('transcription-engine').value?{engine:$('transcription-engine').value}:{}),...(Number.isInteger(parallel) && parallel>0?{concurrency:parallel}:{}),...(Number.isInteger(queueLimit) && queueLimit>0?{maxQueue:queueLimit}:{}),...(aiApiKey?{aiApiKey}:{})});
       fillTranscriptionSettings();$('transcription-dialog').close();notice('Configurações de transcrição salvas.',true);
     } catch(error) {$('transcription-settings-error').textContent=error.message;}
     finally {button.disabled=false;fillTranscriptionSettings();}

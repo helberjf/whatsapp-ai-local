@@ -90,7 +90,15 @@ python -c "import whisper; whisper.load_model('base')"
 
 The second command downloads the model. Configure model and language in **Transcrição de áudios**; the default is local Whisper `base` in Portuguese. Set `WHATSAPP_WHISPER_PYTHON` or `WHATSAPP_FFMPEG` before launching if the executables are in another location. The application first checks the standard Python 3.10 installation path, then `python.exe` on `PATH`.
 
-Transcription accepts audio up to **10 MB and 10 minutes**, processes one job at a time, and allows up to 20 queued jobs. Temporary audio files are removed after processing. Interrupted or failed jobs require an explicit retry; local failures do not automatically send audio to a cloud provider.
+Transcription accepts audio up to **10 MB and 10 minutes**. In **Transcrição de áudios** you choose how many audios run at the same time (1 to 4; each local job uses up to 4 CPU cores) and the queue limit (10 to 500, default 100). Temporary audio files are removed after processing.
+
+For faster CPU transcription, install [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and download the model once, then select **faster-whisper** as the local engine. The central only uses models already on disk; it never downloads one during a transcription.
+
+```powershell
+python -m pip install faster-whisper
+python -c "from faster_whisper import WhisperModel; WhisperModel('base')"
+```
+ Interrupted or failed jobs require an explicit retry; local failures do not automatically send audio to a cloud provider.
 
 ## Automatic replies and scheduling
 
@@ -117,6 +125,10 @@ Explicit **Off**, draft mode, and per-contact automation pauses remain effective
 Conversations are handled in parallel: up to **4 AI generations** and **6 sends** run at the same time, with at most one task per contact, so one customer's "human" wait and typing indicator no longer hold everyone else. Triggers keep priority over the keyword robot and the assistant: each worker claims messages during its scan, in that order, and only the waiting, generation and sending happen in the background.
 
 An automatic reply must still leave within **15 minutes** of the customer's message. When it cannot (a long AI queue, a slow local model, an AI error, or an audio still waiting for transcription), the conversation becomes **Pendente** with the label **Sem resposta**, and the activity log says why. Nothing is sent late. The **Sem resposta** filter in the conversation list shows these conversations, longest wait first. The label is removed when you (or a later automatic reply) answer the conversation. In draft mode, the AI only logs the problem; you are already answering.
+
+**Synchronization.** The connector's conversation listing scans all stored messages, so the central no longer asks for it on every check. All workers and the browser share one list, refreshed in full every 30 seconds and, in between, only for conversations with recent messages. Checks right before a send query just that conversation. The browser receives only the conversations that changed, and lists above 250 conversations draw only the visible rows. The central also listens to the connector's real-time events over a local WebSocket (`WEBSOCKET_ENABLED` in [`infra/compose.yaml`](infra/compose.yaml); restart through the launcher once to apply it): each new message starts a cycle immediately, and polling every 15 seconds remains as a fallback (5 seconds without events). The sidebar shows **Tempo real** while events arrive.
+
+In a 30-second simulation with 3,000 conversations and the browser open, the connector served 1 full listing instead of 14 (0.8 MB instead of 11.8 MB), and the interface had no blocked frames instead of 1.9 seconds blocked; with 8,000 conversations, 2.3 MB instead of 31.6 MB and no blocking instead of 9.9 seconds.
 
 In a simulated burst with the default "parecer humano" settings, 60 simultaneous customers were all answered within 1.5 minutes using a ~4-second cloud model, and within 5.3 minutes using a ~20-second local model; 200 customers within 4.7 minutes with the cloud model. The previous sequential worker answered 49 of 60 (cloud) and 26 of 60 (local), and silently skipped the rest. Real throughput depends on the AI provider, the connector and WhatsApp.
 
@@ -181,6 +193,7 @@ flowchart LR
 | HTTP boundary | [`server.cjs`](server.cjs): request validation, local-origin protections, connector calls, and service routing. |
 | Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
 | Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, retrieval, the voice flow ([`lib/voice-flow.cjs`](lib/voice-flow.cjs)) and speech ([`lib/speech.cjs`](lib/speech.cjs)). |
+| Synchronization | [`lib/evolution.cjs`](lib/evolution.cjs) shares an incremental conversation list and single-conversation lookups; [`lib/evolution-events.cjs`](lib/evolution-events.cjs) is a minimal Socket.IO client for connector events (Node's built-in WebSocket); [`lib/chat-delta.cjs`](lib/chat-delta.cjs) sends the browser only changed conversations. |
 | WhatsApp operations | [`lib/messaging-routes.cjs`](lib/messaging-routes.cjs): replies, reactions, edits, location, contact, voice notes, presence, chat organization, starred messages, profile and privacy. |
 | Persistence | [`lib/store.cjs`](lib/store.cjs) and [`lib/database.cjs`](lib/database.cjs): one `data/central.sqlite` for attendance, knowledge, catalog, photos and vectors, with serialized updates (only changed items are written, reads copy only what is accessed); the database is opened only during each operation. `ai.json` stays JSON, and credentials use a separate SQLite database. [`lib/housekeeping.cjs`](lib/housekeeping.cjs) prunes old duplicate-reply reservations. |
 | Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
@@ -231,6 +244,7 @@ See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture bound
 
 - Individual conversations only; no bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
 - Evolution 2.3.7 does not report archive, block, pin or mute state back. Those flags reflect actions taken in this central; changes made on the phone are not read back. Pinning and muting are local to the central. Desktop notifications depend on browser permission and stop when the central is closed.
+- Real-time events depend on the connector's WebSocket being enabled and reachable; when it is not, the central keeps working with periodic polling. Conversations whose latest change is not a new message (for example, a read on the phone) refresh with the full listing, at most 30 seconds later.
 - Quoting and reacting require the original message to be in the connector's history. Edits follow WhatsApp's 15-minute limit; the connector can still reject an edit.
 - History is limited to what the linked device and connector synchronize. Private `@lid` identifiers may lack a public phone number or address-book name; the application does not guess a mapping.
 - Media and forwarding are limited to supported types and 10 MB. Forwarding recreates content as a new message; Evolution 2.3.7 does not provide the native forwarded badge through this workflow.
