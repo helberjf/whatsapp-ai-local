@@ -25,6 +25,7 @@ const {createMessagingRoutes}=require('./lib/messaging-routes.cjs');
 const {pruneState}=require('./lib/housekeeping.cjs');
 const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
 const {createChatDelta}=require('./lib/chat-delta.cjs');
+const {createTeamService}=require('./lib/team.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
@@ -55,6 +56,7 @@ function createWhatsAppServer(options={}) {
   const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
   const triggers=createTriggerService({store,client,now:options.now || Date.now,humanizer});
   const scheduler=createScheduler({store,client,now:options.now || Date.now});
+  const team=createTeamService({store,client,ai:extra.services.ai,now:options.now || Date.now});
   const requests=new Map(),chatDelta=createChatDelta();
   let messaging,events=null;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
@@ -82,7 +84,7 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
         if(file==='index.html' && options.demo) content=content.replace('<body>','<body class="demo-mode"><div class="demo-banner" role="status">DEMO · Fictional contacts · No real WhatsApp connection</div>');
@@ -140,7 +142,8 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
-        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid]}));
+        const waiting=data.team?.waiting || {};
+        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
@@ -156,7 +159,11 @@ function createWhatsAppServer(options={}) {
         const input=await readBody(req);
         if(input.status!==undefined && !['open','pending','closed'].includes(input.status)) throw new ApiError('Situação inválida.',422);
         if(input.labels!==undefined && (!Array.isArray(input.labels) || input.labels.length>10 || input.labels.some(label=>typeof label!=='string' || !label.trim() || label.length>40))) throw new ApiError('Use até 10 etiquetas de até 40 caracteres.',422);
-        return json(res,200,await store.update(data=>{const contact=data.contacts[jid]={...contactDefault(),...data.contacts[jid]};if(input.status!==undefined) contact.status=input.status;if(input.labels!==undefined) contact.labels=[...new Set(input.labels.map(label=>label.trim()))];if(input.aiMode!==undefined) assistant.applyMode(contact,input.aiMode);return contact;}));
+        const assignee=input.assignee===undefined?undefined:await team.assertMember(input.assignee),before=(await store.read()).contacts?.[jid];
+        const saved=await store.update(data=>{const contact=data.contacts[jid]={...contactDefault(),...data.contacts[jid]};if(input.status!==undefined) contact.status=input.status;if(input.labels!==undefined) contact.labels=[...new Set(input.labels.map(label=>label.trim()))];if(input.aiMode!==undefined) assistant.applyMode(contact,input.aiMode);if(assignee!==undefined) contact.assignee=assignee;return contact;});
+        // Concluir conta no painel e, se ligada, envia a pesquisa de satisfação. Falha no envio não desfaz a conclusão.
+        if(input.status!==undefined) {try {const sent=await team.onStatus(jid,before?.status || 'open',input.status,saved.assignee || null);if(sent) saved.surveySent=true;}catch(error) {saved.surveyError=error.status?error.message:'A pesquisa de satisfação não foi confirmada pelo conector.';}}
+        return json(res,200,saved);
       }
       if(route==='/api/settings' && ['GET','PATCH'].includes(req.method)) {
         if(req.method==='GET') return json(res,200,(await store.read()).settings);
@@ -192,7 +199,7 @@ function createWhatsAppServer(options={}) {
         const media=await client.media(jid,id);if(typeof media.base64!=='string') throw new ApiError('Mídia indisponível. Abra a mensagem no celular.');
         return json(res,200,{base64:media.base64,mimeType:media.mimetype || 'application/octet-stream',fileName:media.fileName || 'anexo'});
       }
-      const handled=(await messaging(req,route,url,readBody)) || (await extra(req,route,url,readBody)) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
+      const handled=(await team.handle(req,route,url,readBody)) || (await messaging(req,route,url,readBody)) || (await extra(req,route,url,readBody)) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
       return json(res,404,{error:'Endereço não encontrado.'});
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });
@@ -205,7 +212,7 @@ function createWhatsAppServer(options={}) {
   const pollReplies=()=>{
     if(replyTick) {pollAgain=true;return replyTick;}
     lastPoll=Date.now();
-    replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
+    replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
     return replyTick;
   };
   // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
@@ -215,9 +222,10 @@ function createWhatsAppServer(options={}) {
     clearTimeout(eventTimer);eventTimer=setTimeout(()=>{pollReplies();},400);eventTimer.unref?.();
   };
   server.events=()=>events?.status() || null;
-  server.on('listening',()=>{voice.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(scheduledPoll,5000);replyTimer.unref?.();if(options.events!==false && (production || options.events)) {events=createEvolutionEvents({config:options.config,onEvent,...(typeof options.events==='object'?options.events:{})});events.start();}server.housekeeping().catch(()=>{});cleanTimer=setInterval(()=>{server.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();}});
+  server.team=team;
+  server.on('listening',()=>{voice.start();team.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(scheduledPoll,5000);replyTimer.unref?.();if(options.events!==false && (production || options.events)) {events=createEvolutionEvents({config:options.config,onEvent,...(typeof options.events==='object'?options.events:{})});events.start();}server.housekeeping().catch(()=>{});cleanTimer=setInterval(()=>{server.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();}});
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);clearTimeout(eventTimer);events?.stop();voice.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

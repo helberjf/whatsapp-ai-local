@@ -30,6 +30,8 @@
     const archivedCount=C.chats().filter(chat=>chat.archived===true).length,unansweredCount=C.chats().filter(waiting).length;
     $('filter-archived').hidden=!archivedCount && !showArchived;$('filter-archived-count').textContent=archivedCount;
     $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
+    // Filtros da equipe (Aguardando, Minhas) têm precedência quando ativos.
+    const teamView=globalThis.WhatsAppTeam?.filter?.(list.filter(chat=>chat.archived!==true));if(teamView) return teamView;
     // "Sem resposta" é a fila do atendente: quem espera há mais tempo aparece primeiro.
     if(showUnanswered) return list.filter(waiting).sort((a,b)=>Number(a.lastMessage?.timestamp || 0)-Number(b.lastMessage?.timestamp || 0));
     const visible=searching?list:list.filter(chat=>showArchived?chat.archived===true:chat.archived!==true);
@@ -38,6 +40,7 @@
     return [...pinned,...visible.filter(chat=>chat.pinned!==true)];
   }
   function decorateChat(button,chat,title) {
+    globalThis.WhatsAppTeam?.decorate?.(button,chat,title);
     const flags=[];
     if(chat.pinned) flags.push(['pin','Conversa fixada']);
     if(muted(chat)) flags.push(['mute','Notificações silenciadas']);
@@ -48,17 +51,23 @@
     for(const [name,label] of flags) {const item=el('span','chat-flag '+name);item.title=label;item.setAttribute('aria-label',label);item.append(icon(name));box.append(item);}
     title.append(box);if(chat.pinned) button.classList.add('pinned');
   }
+  function resetFilters() {
+    showArchived=false;showUnanswered=false;
+    for(const id of ['filter-archived','filter-unanswered']) {$(id).classList.remove('active');$(id).setAttribute('aria-pressed','false');}
+  }
   $('filter-unanswered').addEventListener('click',()=>{
+    globalThis.WhatsAppTeam?.resetFilter?.();
     showUnanswered=!showUnanswered;if(showUnanswered && showArchived) {showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');}
     $('filter-unanswered').classList.toggle('active',showUnanswered);$('filter-unanswered').setAttribute('aria-pressed',String(showUnanswered));
     $('inbox-title').firstChild.textContent=showUnanswered?'Sem resposta ':'Conversas ';C.renderChats();
   });
   $('filter-archived').addEventListener('click',()=>{
+    globalThis.WhatsAppTeam?.resetFilter?.();
     if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');}
     showArchived=!showArchived;$('filter-archived').classList.toggle('active',showArchived);$('filter-archived').setAttribute('aria-pressed',String(showArchived));
     $('inbox-title').firstChild.textContent=showArchived?'Arquivadas ':'Conversas ';C.renderChats();
   });
-  for(const id of ['filter-all','filter-pending','nav-conversations','nav-overview']) $(id)?.addEventListener('click',()=>{if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();}if(!showArchived) return;showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();});
+  for(const id of ['filter-all','filter-pending','nav-conversations','nav-overview']) $(id)?.addEventListener('click',()=>{globalThis.WhatsAppTeam?.resetFilter?.();if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();}if(!showArchived) return;showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();});
 
   // ---------- Ações em cada mensagem ----------
   function pendingReactions(jid) {
@@ -353,7 +362,8 @@
   }
   C.hooks.sync.push(()=>{if(selected()) renderChatActions();if(searchState.query) runSearch();});
   globalThis.WhatsAppExtras={
-    arrangeChats,decorateChat,extendActions,pendingReactions,
+    arrangeChats,decorateChat,extendActions,pendingReactions,resetFilters,
+    onChatClick:chat=>globalThis.WhatsAppTeam?.onChatClick?.(chat) || false,
     isStarred:(jid,id)=>starred.has(jid+'|'+id),
     replyFor:jid=>reply?.jid===jid?reply.id:null,
     onSent:jid=>{if(reply?.jid===jid) clearReply();},

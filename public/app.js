@@ -74,7 +74,7 @@
       const preview=el('span','chat-preview');preview.append(el('p','',previewText(chat.lastMessage) || statuses[chat.status]));
       if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
       else if(chat.markedUnread) {const dot=el('span','unread-count marked','');dot.setAttribute('aria-label','Marcada como não lida');preview.append(dot);}
-      copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>selectChat(chat));
+      copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>extras()?.onChatClick?.(chat)?undefined:selectChat(chat));
       return button;
   }
   let virtualScroll=false;
@@ -626,8 +626,8 @@
   function showPanel(section) {
     for(const name of ['attendance','products','assistant','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
   }
-  const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-voice','nav-profile','settings','nav-connection','nav-settings'];
-  const pageIds=['page-contacts','page-knowledge','page-products','page-ai','page-voice','page-profile'];
+  const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-team','nav-voice','nav-profile','settings','nav-connection','nav-settings'];
+  const pageIds=['page-contacts','page-knowledge','page-products','page-ai','page-team','page-voice','page-profile'];
   function showView(view='workspace',nav) {
     const workspace=view==='workspace';$('metrics').hidden=!workspace;$('workspace').hidden=!workspace;
     for(const id of pageIds) $(id).hidden=id!==view;
@@ -656,7 +656,7 @@
   $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);extras()?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
-    try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice('Atendimento salvo.',true);}catch(error) {notice(error.message);}finally {button.disabled=false;}
+    try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice(detail.surveyError?'Atendimento salvo. '+detail.surveyError:detail.surveySent?'Atendimento salvo e pesquisa de satisfação enviada.':'Atendimento salvo.',!detail.surveyError);}catch(error) {notice(error.message);}finally {button.disabled=false;}
   });
   $('note-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
@@ -720,13 +720,13 @@
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});
   globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),send:()=>$('composer').requestSubmit(),isSending:()=>sending,hooks});
   const mainNav=document.querySelector('.main-nav');
-  if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-products','nav-knowledge','nav-ai','nav-voice','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
+  if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-team','nav-products','nav-knowledge','nav-ai','nav-voice','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
   hooks.sync.push(()=>globalThis.WhatsAppTriggers?.onChats?.(chats));hooks.select.push(()=>globalThis.WhatsAppTriggers?.onSelectChat?.(selected));
   (async()=>{try {templates=(await api('/settings')).templates;renderTemplates();}catch(error) {notice(error.message);}await sync();if(new URLSearchParams(location.search).has('conectar') && connection?.reachable && connection.state!=='connected') openQr();})();
   setInterval(sync,4000);
   setInterval(pollTranscriptions,2000);
   // Ponte para pages.js (base de conhecimento, produtos, IA e CRM).
   globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,selected:()=>selected,connection:()=>connection,
-    renderChats,renderMessages:()=>{if(selected) renderMessages(true);},messages:()=>messages,messageRow:id=>messageRows.get(id),previewText,sync:()=>sync(true),loadMessages:()=>loadMessages(),contactPhone,
+    renderChats,templates:()=>templates,reloadContact:()=>loadContact(),renderMessages:()=>{if(selected) renderMessages(true);},messages:()=>messages,messageRow:id=>messageRows.get(id),previewText,sync:()=>sync(true),loadMessages:()=>loadMessages(),contactPhone,
     touchDraft:()=>{editRevision++;pendingSend=null;},draftText:()=>$('message-text').value,setDraftText:value=>{$('message-text').value=value;editRevision++;pendingSend=null;},isSending:()=>sending,contextSnapshot:()=>({jid:selected?.jid || null,selection,revision:editRevision,lastMessageId:messages.at(-1)?.id || null,lastTextId:messages.filter(message=>message.type==='text'&&!message.deleted&&message.canForward!==false&&message.text?.trim()).at(-1)?.id || null})};
 })();

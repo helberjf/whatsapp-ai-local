@@ -145,3 +145,18 @@ test('"Sem resposta" queue lists unanswered conversations with the longest wait 
   await expect(page.locator('#chat-list .chat-item').first()).toContainText('Casey Silva');await expect(page.locator('#inbox-title')).toContainText('Sem resposta');
   await page.locator('#filter-all').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(10);
 });
+test('team tools: waiting queue, slash replies, bulk actions, transfer and dashboard',async({page})=>{
+  await expect(page.locator('#filter-waiting-count')).not.toHaveText('0');await page.locator('#filter-waiting').click();
+  await expect(page.locator('#inbox-title')).toContainText('Aguardando');expect(await page.locator('#chat-list .chat-item').count()).toBeGreaterThan(3);await expect(page.locator('#chat-list .wait-chip').first()).toBeVisible();
+  await page.locator('#filter-all').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(10);
+  await openChat(page);await page.locator('#message-text').pressSequentially('/wel');await expect(page.locator('#slash-menu')).toBeVisible();await expect(page.locator('.slash-item')).toHaveCount(1);
+  await page.locator('#message-text').press('Enter');await expect(page.locator('#message-text')).toHaveValue('Olá! Obrigado pelo contato. Como posso ajudar?');await expect(page.locator('#slash-menu')).toBeHidden();await page.locator('#message-text').fill('');
+  await page.locator('#show-contact').click();await page.locator('#chat-assignee').selectOption({label:'Bruno'});await expect(page.locator('#notes')).toContainText('Transferida de Ana para Bruno');await page.locator('#hide-contact').click();
+  await page.locator('#bulk-toggle').click();await page.locator('.chat-item').filter({hasText:'Taylor Chen'}).click();await page.locator('.chat-item').filter({hasText:'Casey Silva'}).click();await expect(page.locator('#bulk-count')).toHaveText('2 selecionadas');
+  await page.locator('[data-bulk="label"]').click();await page.locator('#bulk-label').fill('Campanha');await page.locator('#bulk-form button[type=submit]').click();await expect(page.locator('#notice')).toContainText('2 conversa(s) atualizada(s)');await expect(page.locator('#bulk-bar')).toBeHidden();
+  await page.locator('#nav-team').click();await expect(page.locator('.kpi')).toHaveCount(7);await expect(page.locator('.kpi').filter({hasText:'Satisfação'})).toContainText('86%');
+  await expect(page.locator('.hour-bar')).toHaveCount(10);await page.locator('.hour-hit[data-hour="10"]').hover();await expect(page.locator('#hours-tooltip')).toHaveText('10h–11h · 11 entradas');
+  await page.locator('#page-team .segmented label').filter({hasText:'7 dias'}).click();await expect(page.locator('#hours-caption')).toContainText('7 dias');
+  await page.locator('#page-team .segmented label').filter({hasText:'Hoje'}).click();await expect(page.locator('#hours-caption')).toContainText('Hoje');await page.mouse.move(0,0);
+  await page.screenshot({path:capturePath('team-dashboard.png')});
+});

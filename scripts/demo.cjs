@@ -25,6 +25,9 @@ async function createDemo({port=8876}={}) {
   histories[0].unshift({...raw(0,'demo-image','',false,110),message:{imageMessage:{mimetype:'image/png',caption:'Imagem de demonstração'}}},{...raw(0,'demo-pdf','',false,100),message:{documentMessage:{mimetype:'application/pdf',fileName:'sample.pdf'}}});
   const store=createStore(directory);
   await store.update(data=>{for(let i=0;i<jids.length;i++) data.contacts[jids[i]]={status:i===3?'closed':i===1?'pending':'open',labels:i<3?['Cliente','Interesse']:[],notes:[],crm:{stage:i===1?'negotiating':'new',notes:'Contato fictício para demonstração.',history:[]}};data.settings.templates=[{name:'Welcome',body:'Olá! Obrigado pelo contato. Como posso ajudar?'}];});
+  // Equipe fictícia e números de exemplo para o painel da demo.
+  const {dayKey}=require('../lib/team.cjs'),hours=Array(24).fill(0);[[8,3],[9,7],[10,11],[11,9],[12,4],[13,6],[14,10],[15,8],[16,5],[17,3]].forEach(([hour,value])=>{hours[hour]=value;});
+  await store.update(data=>{data.team={settings:{members:[{id:'m-ana',name:'Ana',color:'#00a98d'},{id:'m-bruno',name:'Bruno',color:'#5b8def'}]},waiting:{},days:{[dayKey(Date.now())]:{incoming:66,hours,responses:61,responseMs:61*4.2*60_000,auto:38,human:23,onTime:55,late:6,closed:41,handoffs:5,unanswered:2,triaged:0,notices:0,surveys:{sent:30,answered:21,scores:[13,5,2,1]},members:{'m-ana':{responses:14,responseMs:14*5.1*60_000,closed:18},'m-bruno':{responses:9,responseMs:9*6.4*60_000,closed:12}}}}};data.contacts[jids[0]].assignee='m-ana';data.contacts[jids[2]].assignee='m-bruno';});
   await createStore(directory,{file:'ai.json',initial:{}}).update(data=>Object.assign(data,{provider:'ollama',model:'demo-local',embeddingModel:'demo-embed',baseUrl:'http://127.0.0.1:11434',apiKey:''}));
   const fetchConnector=async(url,options={})=>{
     const route=new URL(url).pathname,input=options.body?JSON.parse(options.body):{};let output={};
@@ -76,6 +79,7 @@ async function createDemo({port=8876}={}) {
   await api('/kb',{name:'Product guide.txt',text:'Studio Headphones: comfortable wireless headphones with 24-hour battery life. Price BRL 249.90. Delivery in 2 to 4 business days. Warranty: 12 months. Web Design: responsive personal websites, quoted individually.'});
   await api('/products',{name:'Studio Headphones',kind:'produto',category:'Audio',description:'Wireless headphones with 24-hour battery life and comfortable ear cushions.',price:249.90,stock:18,active:true,warranty:'12 months',sku:'DEMO-001'});
   await api('/products',{name:'Web Design',kind:'servico',category:'Services',description:'Responsive websites tailored to your project.',price:null,stock:null,active:true,sku:'DEMO-002'});
+  await server.team.tick();
   return {server,base,directory,aiCalls,async close(){await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await Promise.all([server.scheduler.idle(),server.triggers.idle(),server.assistant.idle()]);if(path.dirname(directory)!==os.tmpdir() || !path.basename(directory).startsWith('whatsapp-central-demo-')) throw Error('Unsafe demo cleanup path');await fs.rm(directory,{recursive:true,force:true});}};
 }
 // Embeddings fictícios: cada posição conta menções de um assunto, então "fone sem fio" encontra "headphones" sem palavras em comum.

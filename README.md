@@ -17,6 +17,8 @@ These screenshots use the isolated demo with fictional contacts and sample conte
 | ![Recorded audio preview before explicit sending](docs/screenshots/voice-recorder.png) | ![PDF document rendered locally inside the conversation workspace](docs/screenshots/document-preview.png) |
 | Replies, reactions, edits, location and contact cards | Voice flow: transcription → AI reading → text or voice reply |
 | ![Quoted reply, reaction, edited message, shared location and contact card in the demo](docs/screenshots/whatsapp-features.png) | ![Three-stage voice flow with voice settings and preview](docs/screenshots/voice-flow.png) |
+| Team dashboard | |
+| ![Team dashboard with waiting queue, response time, AI share, satisfaction and hourly arrivals](docs/screenshots/team-dashboard.png) | |
 
 ## Try the demo
 
@@ -38,6 +40,7 @@ Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal s
 - **Contacts and CRM:** maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
 - **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
 - **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
+- **Team operation:** an **Aguardando** queue ordered by waiting time with green/yellow/red response deadlines, attendants responsible for conversations (with transfer notes and a **Minhas** filter), bulk actions (close, pending, label, assign, mark read, archive), quick replies with `/` in the editor, and **Equipe e painel** with arrivals per hour, first-response time, the share answered by AI/robots versus people, handoffs and satisfaction. Optional AI triage, queue position notices and a satisfaction poll on closing start disabled.
 - **Voice flow:** turn on, separately, (1) automatic transcription of received audio, (2) the AI reading those transcriptions as customer messages, and (3) AI replies as text, as voice notes, or in the same format the customer used. Voice replies use an installed Windows voice (local) or OpenAI text-to-speech. **Enviar como áudio** turns the editor text into a voice note manually.
 - **AI assistance:** request a draft or opt into automatic answers. Choose classified contacts, all eligible contacts, or genuinely new conversations admitted after activation. Use the catalog, retrieved knowledge, and editable service rules as context.
 - **Knowledge and products:** import supported documents, inspect retrieved passages, manage product and service cards, and review AI-suggested catalog imports before saving.
@@ -134,6 +137,23 @@ In a simulated burst with the default "parecer humano" settings, 60 simultaneous
 
 Scheduled jobs support **text only**. They continue while the browser is closed, but the local services must remain available. A disconnected job can wait up to 15 minutes after its due time; older jobs become missed and require rescheduling. Persisted send reservations reduce duplicate sends. If a process stops during delivery, the result can be **uncertain**: check WhatsApp before creating another send. The application does not promise exactly-once delivery across a remote connector.
 
+## Team operation
+
+Open **Equipe e painel**. Everything that writes to customers starts **off**.
+
+| Tool | What it does |
+| --- | --- |
+| **Aguardando** | Conversations whose latest message is from the customer, oldest wait first. Each row shows the wait with the deadlines set in the panel (default: attention after 5 minutes, late after 15). A conversation leaves the queue when anyone answers, or when it is closed. Reactions, poll votes and system messages do not open a wait. |
+| Attendants | Names for the people sharing this central. Each person picks **Você é** in the sidebar on their browser; **Responsável** in the contact panel assigns a conversation, and a change writes an internal note such as “Transferida de Ana para Bruno por Carla”. **Minhas** lists your open conversations. |
+| Bulk actions | The check button above the list selects conversations (up to 200 per action): close, mark pending, add or remove a label, assign, mark as read, archive. |
+| Quick replies with `/` | Type `/` at the start of a line in the editor to search the quick replies; Enter or Tab inserts one, and `{nome}` becomes the contact's first name. |
+| Dashboard | Today, 7 or 30 days: arrivals (conversations that started waiting), average first-response time and the share within the deadline, answered by AI/robots versus by people, handoffs (AI asked for a person or **Sem resposta**), satisfaction, closed conversations and per-attendant numbers. Arrivals per hour show as a column chart with exact values on hover and an accessible table. People's replies count for the conversation's attendant. |
+| AI triage | Classifies who is waiting into the subjects you list and applies the label `Assunto: …`. It sends the customer's latest text messages to the configured AI provider, at most once a day per conversation. |
+| Queue notice | After the chosen wait (default 90 seconds), sends “you are number N, estimated time …” once per wait, based on the last 7 days' average response time. It is never sent when the AI will answer by itself, nor to paused or blocked contacts, and it does not count as an answer. |
+| Satisfaction poll | When a conversation is closed (by you or in bulk), sends a native WhatsApp poll (Ótimo, Bom, Regular, Ruim), at most once a day per contact. Votes count toward the dashboard's satisfaction (Ótimo or Bom). |
+
+Numbers start counting from the moment this version runs; conversations that were already waiting appear in the queue without being counted as new arrivals. Daily figures are kept for 90 days in `data/central.sqlite`.
+
 ## Voice flow
 
 Open **Fluxo de voz (IA)**. Every stage starts **off** and is saved separately:
@@ -224,6 +244,7 @@ flowchart LR
 | HTTP boundary | [`server.cjs`](server.cjs): request validation, local-origin protections, connector calls, and service routing. |
 | Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
 | Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, retrieval, the voice flow ([`lib/voice-flow.cjs`](lib/voice-flow.cjs)) and speech ([`lib/speech.cjs`](lib/speech.cjs)). |
+| Team | [`lib/team.cjs`](lib/team.cjs): waiting queue, daily metrics, triage, queue notices, satisfaction polls and bulk actions; [`public/team.js`](public/team.js) holds the queue filters, `/` replies, assignment and dashboard. |
 | Synchronization | [`lib/evolution.cjs`](lib/evolution.cjs) shares an incremental conversation list and single-conversation lookups; [`lib/evolution-events.cjs`](lib/evolution-events.cjs) is a minimal Socket.IO client for connector events (Node's built-in WebSocket); [`lib/chat-delta.cjs`](lib/chat-delta.cjs) sends the browser only changed conversations. |
 | WhatsApp operations | [`lib/messaging-routes.cjs`](lib/messaging-routes.cjs): replies, reactions, edits, location, contact, voice notes, presence, chat organization, starred messages, profile and privacy. |
 | Persistence | [`lib/store.cjs`](lib/store.cjs) and [`lib/database.cjs`](lib/database.cjs): one `data/central.sqlite` for attendance, knowledge, catalog, photos and vectors, with serialized updates (only changed items are written, reads copy only what is accessed); the database is opened only during each operation. `ai.json` stays JSON, and credentials use a separate SQLite database. [`lib/housekeeping.cjs`](lib/housekeeping.cjs) prunes old duplicate-reply reservations. |
@@ -274,6 +295,7 @@ See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture bound
 ## Current limits
 
 - Individual conversations only; no bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
+- Attendants are names for people sharing this central on this computer; there is no per-person login, and the central is still reachable only through loopback. Using it from several computers needs accounts, HTTPS and a deployment design that this version does not include.
 - Evolution 2.3.7 does not report archive, block, pin or mute state back. Those flags reflect actions taken in this central; changes made on the phone are not read back. Pinning and muting are local to the central. Desktop notifications depend on browser permission and stop when the central is closed.
 - Real-time events depend on the connector's WebSocket being enabled and reachable; when it is not, the central keeps working with periodic polling. Conversations whose latest change is not a new message (for example, a read on the phone) refresh with the full listing, at most 30 seconds later.
 - Quoting and reacting require the original message to be in the connector's history. Edits follow WhatsApp's 15-minute limit; the connector can still reject an edit.

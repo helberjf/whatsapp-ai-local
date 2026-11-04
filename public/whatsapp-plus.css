@@ -104,3 +104,61 @@
 .filter-tab.unanswered-tab{color:#f3c86b}
 .filter-tab.unanswered-tab.active{background:#4a3a12;color:#ffe2a0}
 .chat-spacer{flex-shrink:0;pointer-events:none}
+
+/* ---------- Equipe: prazos, responsáveis, seleção, respostas com "/" e painel ---------- */
+.wait-chip{display:inline-flex;align-items:center;font-size:9px;font-weight:650;line-height:16px;padding:0 6px;border-radius:8px;white-space:nowrap;border:1px solid transparent}
+.wait-chip::before{content:'⏱';margin-right:3px;font-size:9px}
+.wait-chip.sla-ok{background:#0f3b2c;color:#9ff0cd;border-color:#1f6b51}
+.wait-chip.sla-warn{background:#3d3110;color:#ffe0a0;border-color:#7a6220}
+.wait-chip.sla-late{background:#4a1a1f;color:#ffc4c4;border-color:#9a3a43}
+.wait-chip.sla-late::before{content:'⚠'}
+.assignee-chip{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;border-radius:9px;font-size:8.5px;font-weight:700;color:#06120e}
+.chat-item.selectable{padding-left:8px}
+.select-box{display:grid;place-items:center;width:18px;height:18px;flex-shrink:0;border:1.5px solid #5f7a74;border-radius:5px;font-size:11px;color:#04241c}
+.select-box.checked{background:#00d889;border-color:#00d889}
+.bulk-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px;margin:0 0 8px;background:#11232a;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.bulk-bar[hidden]{display:none}
+.bulk-bar #bulk-count{font-size:11px;font-weight:650;color:#9ff0cd}
+.bulk-actions{display:flex;flex-wrap:wrap;gap:4px;width:100%}
+.bulk-actions .button{flex:0 0 auto;min-height:28px;margin:0;padding:4px 9px;font-size:10.5px}
+#bulk-toggle[aria-pressed="true"]{background:#00a98d33;color:#9ff0cd}
+.waiting-tab{color:#9fd8ff}
+.composer-editor{position:relative}
+.slash-menu{position:absolute;left:0;right:0;bottom:calc(100% + 6px);z-index:20;max-height:260px;overflow:auto;background:#142b30;border:1px solid #45605a;border-radius:8px;box-shadow:0 7px 20px #0006;padding:4px}
+.slash-menu[hidden]{display:none}
+.slash-item{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border-radius:6px;cursor:pointer}
+.slash-item strong{font-size:12px}
+.slash-item span{font-size:11px;color:#b9c8cd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slash-item.active,.slash-item:hover{background:#00a98d33}
+.assignee-field{margin:10px 0 0}
+.me-member{width:100%;margin-top:6px;font-size:11px;padding:5px 6px;border-radius:6px;background:#0d1a20;color:var(--ink);border:1px solid var(--line)}
+.user-card{flex-wrap:wrap}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.kpi{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(115deg,#0f1a20aa,#0b141a99);min-width:0}
+.kpi-label{font-size:11px;color:#99a5b4}
+.kpi-value{font-size:24px;font-weight:650;color:var(--ink);font-variant-numeric:tabular-nums}
+.kpi-detail{font-size:10.5px;color:#8d9aa5;line-height:1.35}
+.kpi.tone-late{border-color:#9a3a43}
+.kpi.tone-late .kpi-value::after{content:' ⚠';font-size:15px;color:#ffc4c4}
+.hours-chart{position:relative;width:100%;min-height:180px}
+.hours-svg{width:100%;height:auto;display:block}
+.hours-svg .grid-line{stroke:#1e2b33;stroke-width:1}
+.hours-svg .axis-label{fill:#8d9aa5;font-size:10px;font-variant-numeric:tabular-nums}
+.hours-svg .hour-bar{fill:#00a98d}
+.hours-svg .hour-hit{fill:transparent;cursor:default}
+.hours-svg .hour-hit:hover{fill:#ffffff08}
+section.panel{position:relative}
+.chart-tooltip{position:absolute;z-index:5;pointer-events:none;background:#0b151b;border:1px solid #3d5a54;border-radius:6px;padding:5px 8px;font-size:11px;color:var(--ink);white-space:nowrap;box-shadow:0 4px 12px #0006}
+.chart-tooltip[hidden]{display:none}
+.member-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;flex-shrink:0}
+.members-list{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.member-row{display:flex;align-items:center;gap:8px}
+.member-row input{flex:1;min-width:0}
+.inline-form{display:flex;gap:8px;align-items:center}
+.inline-form input{flex:1;min-width:0}
+.inline-form .button{margin:0;flex:0 0 auto}
+@media (max-width:640px){.kpi-grid{grid-template-columns:1fr 1fr}.kpi-value{font-size:20px}}
+.segmented label{position:relative}
+.segmented input{left:0;top:0;width:1px;height:1px;margin:0}
+#page-team .table-wrap{overflow-x:auto;max-width:100%}
+#page-team .page-actions{flex-wrap:wrap}
