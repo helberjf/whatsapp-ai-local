@@ -25,7 +25,7 @@ async function createDemo({port=8876}={}) {
   histories[0].unshift({...raw(0,'demo-image','',false,110),message:{imageMessage:{mimetype:'image/png',caption:'Imagem de demonstração'}}},{...raw(0,'demo-pdf','',false,100),message:{documentMessage:{mimetype:'application/pdf',fileName:'sample.pdf'}}});
   const store=createStore(directory);
   await store.update(data=>{for(let i=0;i<jids.length;i++) data.contacts[jids[i]]={status:i===3?'closed':i===1?'pending':'open',labels:i<3?['Cliente','Interesse']:[],notes:[],crm:{stage:i===1?'negotiating':'new',notes:'Contato fictício para demonstração.',history:[]}};data.settings.templates=[{name:'Welcome',body:'Olá! Obrigado pelo contato. Como posso ajudar?'}];});
-  await createStore(directory,{file:'ai.json',initial:{}}).update(data=>Object.assign(data,{provider:'ollama',model:'demo-local',baseUrl:'http://127.0.0.1:11434',apiKey:''}));
+  await createStore(directory,{file:'ai.json',initial:{}}).update(data=>Object.assign(data,{provider:'ollama',model:'demo-local',embeddingModel:'demo-embed',baseUrl:'http://127.0.0.1:11434',apiKey:''}));
   const fetchConnector=async(url,options={})=>{
     const route=new URL(url).pathname,input=options.body?JSON.parse(options.body):{};let output={};
     if(route.includes('/connectionState/')) output={instance:{state:'open'}};
@@ -64,7 +64,12 @@ async function createDemo({port=8876}={}) {
   const aiCalls=[];
   // Voz fictícia: um tom curto no lugar da fala, sem Windows nem OpenAI.
   const speech={windowsAvailable:true,voices:async()=>[{name:'Demo Voice',culture:'pt-BR',gender:'Female'}],synthesize:async()=>({base64:wave().toString('base64'),mimeType:'audio/wav',bytes:96044,provider:'windows'})};
-  const server=createWhatsAppServer({demo:true,storeDir:directory,credentials,localAi,speech,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{aiCalls.push(JSON.parse(options.body));return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. O prazo demonstrativo é de 2 a 4 dias úteis.'}}));}});
+  const server=createWhatsAppServer({demo:true,storeDir:directory,credentials,localAi,speech,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{
+    const body=JSON.parse(options.body);
+    if(url.endsWith('/api/embed')) return new Response(JSON.stringify({embeddings:body.input.map(demoVector)}));
+    aiCalls.push(body);
+    if(body.format==='json' && body.messages?.[0]?.content?.includes('perguntas frequentes')) return new Response(JSON.stringify({message:{content:JSON.stringify({suggestions:DEMO_SUGGESTIONS})}}));
+    return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. O prazo demonstrativo é de 2 a 4 dias úteis.'}}));}});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`,html=await(await fetch(base)).text(),token=html.match(/name="whatsapp-session" content="([a-f0-9]+)"/)[1];
   const api=async(route,input)=>{const response=await fetch(base+'/api'+route,{method:'POST',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify(input)});if(!response.ok) throw Error('Demo fixture failed: '+route);return response.json();};
@@ -73,6 +78,10 @@ async function createDemo({port=8876}={}) {
   await api('/products',{name:'Web Design',kind:'servico',category:'Services',description:'Responsive websites tailored to your project.',price:null,stock:null,active:true,sku:'DEMO-002'});
   return {server,base,directory,aiCalls,async close(){await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await Promise.all([server.scheduler.idle(),server.triggers.idle(),server.assistant.idle()]);if(path.dirname(directory)!==os.tmpdir() || !path.basename(directory).startsWith('whatsapp-central-demo-')) throw Error('Unsafe demo cleanup path');await fs.rm(directory,{recursive:true,force:true});}};
 }
+// Embeddings fictícios: cada posição conta menções de um assunto, então "fone sem fio" encontra "headphones" sem palavras em comum.
+const DEMO_CONCEPTS=[/headphone|fone|audio|som|musica|battery|bateria/g,/delivery|entrega|prazo|frete|envio/g,/warranty|garantia|defeito/g,/website|site|web|design|pagina/g,/price|preco|valor|custa|brl|reais/g];
+const demoVector=text=>{const clean=String(text).normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();return [...DEMO_CONCEPTS.map(pattern=>(clean.match(pattern) || []).length),.05];};
+const DEMO_SUGGESTIONS=[{question:'O fone tem garantia?',keywords:['garantia','defeito'],answer:'Sim! O Studio Headphones tem garantia de 12 meses.'},{question:'Qual é o prazo de entrega?',keywords:['prazo','entrega'],answer:'A entrega leva de 2 a 4 dias úteis.'}];
 function wave() {
   const rate=16000,samples=rate*3,buffer=Buffer.alloc(44+samples*2);
   buffer.write('RIFF');buffer.writeUInt32LE(buffer.length-8,4);buffer.write('WAVEfmt ',8);buffer.writeUInt32LE(16,16);buffer.writeUInt16LE(1,20);buffer.writeUInt16LE(1,22);buffer.writeUInt32LE(rate,24);buffer.writeUInt32LE(rate*2,28);buffer.writeUInt16LE(2,32);buffer.writeUInt16LE(16,34);buffer.write('data',36);buffer.writeUInt32LE(samples*2,40);

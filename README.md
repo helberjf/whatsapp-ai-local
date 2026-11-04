@@ -150,6 +150,37 @@ In **Assistente de IA**, select **Ollama (local)** and click **Ligar IA local** 
 
 ![Local AI startup controls with fictional demo data](docs/screenshots/local-ai.png)
 
+### Answer reliability
+
+Each retrieved passage gets a confidence level. **High** means both searches agree, the embedding similarity is well above the model's cutoff, or, without embeddings, most of the question's words appear in the passage. **Medium** means only one search found it. **Low** means a weak keyword match. Choose how much of that reaches the AI in **Base de Conhecimento → Confiabilidade das respostas**. The choice applies to questions on that page, manual suggestions and automatic replies:
+
+| Level | Passages sent to the AI | Behavior |
+| --- | --- | --- |
+| Rigorosa | High only, up to 3 | Answers only what the context states explicitly and hands off to an operator otherwise. |
+| Equilibrada (default) | High and medium, up to 4 | Current behavior. |
+| Flexível | All levels, up to 6, with a lower semantic cutoff | Also answers greetings and general questions; business facts still come only from the base. |
+
+The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct.
+
+### Robot suggestions from your business
+
+In **Automações**, **Gerar sugestões com IA** reads the knowledge base and catalog and proposes frequent customer questions with keywords and short answers. Each suggestion shows the passage that supports its answer, or a warning when none was found, and flags keywords that an existing rule already uses. **Adicionar como regra** adds it to the rule list **switched off**; nothing is saved or sent until you review it, mark **Regra ativa** and click **Salvar regras**. With local AI on the CPU, generation can take a few minutes.
+
+### Set up the knowledge base for any business
+
+```powershell
+npm run rag:configurar
+```
+
+The wizard asks for the business name and type (restaurant, shop, clinic, salon, repair shop, gym, school, services or other), then opening hours, address, payment, products and prices, policies and type-specific topics. It writes `base-conhecimento/00-sobre-o-negocio.md`, creates customer-style test questions in `base-conhecimento/testes/perguntas.txt` (the `testes` folder is not imported into the base), checks the embedding model and offers to download it with `ollama pull`, then synchronizes the folder and runs the test questions. When the app is open it works through the local API; when it is closed it prepares the data folder directly. `--respostas respostas.json` runs it without prompts.
+
+```powershell
+npm run rag:testar
+npm run rag:testar -- --pergunta "Vocês entregam no meu bairro?" --confiabilidade strict
+```
+
+`rag:testar` prints, for each question, the confidence, the document and the start of the passage found, plus a summary. Questions with no passage show which topics the base is missing.
+
 Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. With a cloud embedding model, **every passage of every knowledge document** is also sent to that provider during indexing, and each question when searching; use a local Ollama model or `off` to avoid this. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
 
 ## Architecture

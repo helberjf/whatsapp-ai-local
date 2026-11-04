@@ -24,7 +24,14 @@
     const on=Boolean(ai?.configured);
     $('status-ai').textContent=on?'Configurada':'Não configurada';$('dot-ai').classList.toggle('on',on);
   }
-  function renderSearch(search) {
+  const reliabilityHints={
+    strict:'Rigorosa: só usa trechos de confiança alta e passa para um atendente quando falta certeza. Menos respostas, menos risco.',
+    balanced:'Equilibrada: usa trechos de confiança alta e média. É o padrão.',
+    flexible:'Flexível: usa até 6 trechos, inclusive os de confiança baixa, e responde cumprimentos e dúvidas gerais. Mais respostas, mais revisão.'
+  };
+  function renderReliability(level) {if(!reliabilityHints[level]) return;$('kb-reliability').value=level;$('kb-reliability-hint').textContent=reliabilityHints[level];}
+  $('kb-reliability').addEventListener('change',guard(async()=>{const result=await api('/kb/settings','PUT',{reliability:$('kb-reliability').value});renderReliability(result.reliability);notice('Confiabilidade salva.',true);}));
+  function renderSearchMode(search) {
     if(!search) return;
     const text=search.indexing?`Preparando busca por significado: ${search.indexed} de ${search.total} documentos…`
       :search.error?`Busca só por palavras-chave. Embeddings indisponíveis com ${search.model}: ${search.error}`
@@ -33,7 +40,7 @@
     $('kb-search').textContent=text;
     clearTimeout(searchTimer);if(search.indexing) searchTimer=setTimeout(guard(refreshKb),3000);
   }
-  async function refreshKb() {const result=await api('/kb');docs=result.documents;renderKb();renderCounters();renderSearch(result.search);}
+  async function refreshKb() {const result=await api('/kb');docs=result.documents;renderKb();renderCounters();renderSearchMode(result.search);renderReliability(result.reliability);}
   async function refreshProducts() {products=(await api('/products')).products;renderProducts();renderPanelProducts();renderCounters();}
   async function refreshAi() {ai=await api('/ai');renderAi();renderCounters();}
 
@@ -90,6 +97,7 @@
     catch(error) {$('paste-error').textContent=error.message;}finally {button.disabled=false;}
   });
 
+  const confidenceLabels={alta:'alta',media:'média',baixa:'baixa',nenhuma:'nenhum trecho confiável'},reliabilityNames={strict:'rigoroso',balanced:'equilibrado',flexible:'flexível'};
   // Resposta da base: texto, trechos usados e (opcional) botão para levar ao editor da conversa.
   function renderAnswer(container,result,insertable) {
     const fragment=document.createDocumentFragment();
@@ -98,11 +106,12 @@
       if(insertable && C.selected()) fragment.append(textButton('Inserir no editor','button secondary full',()=>{C.insertDraft(result.answer);notice('Resposta inserida no editor. Revise antes de enviar.',true);},'edit'));
     }
     if(result.note) fragment.append(el('p','muted',result.note));
+    if(result.confidence) fragment.append(el('p','muted small',`Confiança da busca: ${confidenceLabels[result.confidence]}${result.reliability?' · modo '+reliabilityNames[result.reliability]:''}`));
     if(!result.sources.length) fragment.append(el('p','muted',result.usedAi===false && !result.answer?'Nenhum trecho relevante encontrado.':'Nenhum trecho da base foi usado.'));
     else {
       fragment.append(el('h3','sources-title','Trechos usados'));
       for(const source of result.sources) {
-        const details=el('details','source'),summary=el('summary','',`${source.doc} · ${Math.round(source.relevance*100)}% relevante${source.via?.includes('semantic')?' · por significado':''}`);
+        const details=el('details','source'),summary=el('summary','',`${source.doc} · ${Math.round(source.relevance*100)}% relevante${source.via?.includes('semantic')?' · por significado':''}${source.confidence?' · confiança '+confidenceLabels[source.confidence]:''}`);
         details.append(summary,el('p','source-text',source.text));fragment.append(details);
       }
     }

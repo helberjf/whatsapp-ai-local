@@ -45,7 +45,7 @@ function createWhatsAppServer(options={}) {
   // Fluxo de voz: transcrição automática, leitura dos áudios pela IA e respostas em áudio (voz do Windows ou OpenAI).
   const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
   const voice=createVoiceFlow({store,client,transcriptions,speech,credentials,now:options.now || Date.now});
-  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.embeddings.search,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs,voice});
+  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.retrieve,reliability:extra.services.reliability,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs,voice});
   const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
   const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
   const triggers=createTriggerService({store,client,now:options.now || Date.now,humanizer});
