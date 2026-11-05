@@ -2,7 +2,9 @@
 
 A local WhatsApp workspace for individual customer conversations, contact management, scheduled messages, automatic replies, and answers grounded in a product catalog and knowledge base.
 
-Built with vanilla JavaScript and Node.js, with Evolution API running in Docker. The application is designed for a single Windows user: no hosted account, subscription layer, or public web server is required. The interface is in Brazilian Portuguese.
+Built with vanilla JavaScript and Node.js, with Evolution API running in Docker. The application is designed for one local Windows installation: no hosted account, subscription layer, or public web server is required. Named attendants can organize conversations, but they do not have individual authenticated accounts. The interface is in Brazilian Portuguese.
+
+**Start here:** [Isolated demo](#try-the-demo) · [Architecture](#architecture) · [Trade-offs](#design-trade-offs) · [Validation](#validation)
 
 ## Preview
 
@@ -131,9 +133,16 @@ An automatic reply must still leave within **15 minutes** of the customer's mess
 
 **Synchronization.** The connector's conversation listing scans all stored messages, so the central no longer asks for it on every check. All workers and the browser share one list, refreshed in full every 30 seconds and, in between, only for conversations with recent messages. Checks right before a send query just that conversation. The browser receives only the conversations that changed, and lists above 250 conversations draw only the visible rows. The central also listens to the connector's real-time events over a local WebSocket (`WEBSOCKET_ENABLED` in [`infra/compose.yaml`](infra/compose.yaml); restart through the launcher once to apply it): each new message starts a cycle immediately, and polling every 15 seconds remains as a fallback (5 seconds without events). The sidebar shows **Tempo real** while events arrive.
 
-In a 30-second simulation with 3,000 conversations and the browser open, the connector served 1 full listing instead of 14 (0.8 MB instead of 11.8 MB), and the interface had no blocked frames instead of 1.9 seconds blocked; with 8,000 conversations, 2.3 MB instead of 31.6 MB and no blocking instead of 9.9 seconds.
+<details>
+<summary>Previously reported simulation observations</summary>
 
-In a simulated burst with the default "parecer humano" settings, 60 simultaneous customers were all answered within 1.5 minutes using a ~4-second cloud model, and within 5.3 minutes using a ~20-second local model; 200 customers within 4.7 minutes with the cloud model. The previous sequential worker answered 49 of 60 (cloud) and 26 of 60 (local), and silently skipped the rest. Real throughput depends on the AI provider, the connector and WhatsApp.
+The following figures are historical development observations. A reproducible fixture command, measurement date and source revision are not recorded alongside them, so they should not be treated as a current benchmark or a production-capacity promise.
+
+In a reported 30-second simulation with 3,000 conversations and the browser open, the connector served 1 full listing instead of 14 (0.8 MB instead of 11.8 MB), and the interface had no blocked frames instead of 1.9 seconds blocked; with 8,000 conversations, 2.3 MB instead of 31.6 MB and no blocking instead of 9.9 seconds.
+
+In a reported simulated burst with the default "parecer humano" settings, 60 simultaneous customers were all answered within 1.5 minutes using a ~4-second cloud model, and within 5.3 minutes using a ~20-second local model; 200 customers within 4.7 minutes with the cloud model. The previous sequential worker answered 49 of 60 (cloud) and 26 of 60 (local), and silently skipped the rest. Real throughput depends on the AI provider, the connector and WhatsApp.
+
+</details>
 
 Scheduled jobs support **text only**. They continue while the browser is closed, but the local services must remain available. A disconnected job can wait up to 15 minutes after its due time; older jobs become missed and require rescheduling. Persisted send reservations reduce duplicate sends. If a process stops during delivery, the result can be **uncertain**: check WhatsApp before creating another send. The application does not promise exactly-once delivery across a remote connector.
 
@@ -150,7 +159,7 @@ Open **Equipe e painel**. Everything that writes to customers starts **off**.
 | Dashboard | Today, 7 or 30 days: arrivals (conversations that started waiting), average first-response time and the share within the deadline, answered by AI/robots versus by people, handoffs (AI asked for a person or **Sem resposta**), satisfaction, closed conversations and per-attendant numbers. Arrivals per hour show as a column chart with exact values on hover and an accessible table. People's replies count for the conversation's attendant. |
 | AI triage | Classifies who is waiting into the subjects you list and applies the label `Assunto: …`. It sends the customer's latest text messages to the configured AI provider, at most once a day per conversation. |
 | Queue notice | After the chosen wait (default 90 seconds), sends “you are number N, estimated time …” once per wait, based on the last 7 days' average response time. It is never sent when the AI will answer by itself, nor to paused or blocked contacts, and it does not count as an answer. |
-| Satisfaction poll | When a conversation is closed (by you or in bulk), sends a native WhatsApp poll (Ótimo, Bom, Regular, Ruim), at most once a day per contact. Votes count toward the dashboard's satisfaction (Ótimo or Bom). |
+| Satisfaction poll | When enabled, closing a conversation (manually or in bulk) sends a native WhatsApp poll (Ótimo, Bom, Regular, Ruim). A recorded send within the previous 24 hours prevents another poll for that contact. Votes count toward the dashboard's satisfaction (Ótimo or Bom). |
 
 Numbers start counting from the moment this version runs; conversations that were already waiting appear in the queue without being counted as new arrivals. Daily figures are kept for 90 days in `data/central.sqlite`.
 
@@ -196,11 +205,11 @@ Each retrieved passage gets a confidence level. **High** means both searches agr
 
 | Level | Passages sent to the AI | Behavior |
 | --- | --- | --- |
-| Rigorosa | High only, up to 3 | Answers only what the context states explicitly and hands off to an operator otherwise. |
-| Equilibrada (default) | High and medium, up to 4 | Current behavior. |
-| Flexível | All levels, up to 6, with a lower semantic cutoff | Also answers greetings and general questions; business facts still come only from the base. |
+| Rigorosa | High only, up to 3 | Instructs the AI to use explicit context and hand off to an operator when it cannot support an answer. |
+| Equilibrada (default) | High and medium, up to 4 | Balances retrieval coverage with the confidence filter. |
+| Flexível | All levels, up to 6, with a lower semantic cutoff | Allows greetings and general questions while instructing the AI to ground business facts in the base. |
 
-The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct.
+The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct; prompt instructions do not guarantee factual answers.
 
 ### Robot suggestions from your business
 
@@ -212,14 +221,14 @@ In **Automações**, **Gerar sugestões com IA** reads the knowledge base and ca
 npm run rag:configurar
 ```
 
-The wizard asks for the business name and type (restaurant, shop, clinic, salon, repair shop, gym, school, services or other), then opening hours, address, payment, products and prices, policies and type-specific topics. It writes `base-conhecimento/00-sobre-o-negocio.md`, creates customer-style test questions in `base-conhecimento/testes/perguntas.txt` (the `testes` folder is not imported into the base), checks the embedding model and offers to download it with `ollama pull`, then synchronizes the folder and runs the test questions. When the app is open it works through the local API; when it is closed it prepares the data folder directly. `--respostas respostas.json` runs it without prompts.
+The wizard asks for the business name and type (restaurant, shop, clinic, salon, repair shop, gym, school, services or other), then opening hours, address, payment, products and prices, policies and type-specific topics. It writes `base-conhecimento/00-sobre-o-negocio.md`, creates customer-style test questions in `base-conhecimento/testes/perguntas.txt` (the `testes` folder is not imported into the base), checks the embedding model and offers to download a missing local model with `ollama pull`, then synchronizes the folder and runs retrieval checks. When the app is open it works through the local API; when it is closed it prepares the data folder directly. These commands use the installation's knowledge and data folders, not the isolated demo. `npm run rag:configurar -- --respostas respostas.json` runs without prompts and replaces an existing business-profile file.
 
 ```powershell
 npm run rag:testar
 npm run rag:testar -- --pergunta "Vocês entregam no meu bairro?" --confiabilidade strict
 ```
 
-`rag:testar` prints, for each question, the confidence, the document and the start of the passage found, plus a summary. Questions with no passage show which topics the base is missing.
+`rag:testar` prints, for each question, the confidence, the document and the start of the passage found, plus a summary. Questions with no passage identify topics or wording to investigate. This checks retrieval, not the factual accuracy of generated answers. Both commands can refresh the embedding index and use the configured provider even while the app is closed; see [`scripts/rag-lib.cjs`](scripts/rag-lib.cjs).
 
 Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. With a cloud embedding model, **every passage of every knowledge document** is also sent to that provider during indexing, and each question when searching; use a local Ollama model or `off` to avoid this. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
 
@@ -253,11 +262,26 @@ flowchart LR
 
 The runtime has no npm framework dependencies. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
 
+## Design trade-offs
+
+These trade-offs describe the implemented architecture and its boundaries. The recorded simulation figures above are workload-specific observations, not production capacity guarantees.
+
+| Choice | Benefit | Cost or boundary |
+| --- | --- | --- |
+| Loopback-only Windows application with attendant labels | Keeps account configuration and the workspace on one machine while supporting assignment and queue metrics. | Attendant names do not enforce identity or permissions. Scheduling depends on the machine, Node and Docker remaining available; this is not a hosted multi-user service. |
+| Vanilla browser UI and Node server | Avoids a frontend build pipeline and keeps local installation direct. | UI state, rendering performance and accessibility must be managed explicitly as the interface grows. |
+| SQLite persistence plus Windows DPAPI for AI credentials | Persists local work and binds protected credentials to the Windows account. | The store targets one application process; moving a database does not migrate usable credentials to another machine/user. |
+| Evolution linked-device connector | Provides conversation/media operations through a local integration boundary. | History, delivery acknowledgments and native feature support depend on WhatsApp and the connector. An ambiguous send cannot be treated as exactly once. |
+| Hybrid BM25 and embedding retrieval with a keyword fallback | Combines exact vocabulary and semantic matches while retaining retrieval during embedding failures. | Indexing adds latency, storage and provider cost; cloud embeddings transmit document passages to that provider. Retrieval scores are not calibrated confidence. |
+| Explicit automation switches, per-contact coordination and deadlines | Separates manual suggestions from automatic sending and reduces competing replies. | Missed or uncertain work needs operator review; local claims cannot make a remote send and local persistence one atomic transaction. |
+
+For a technical walkthrough, follow [message routing](lib/messaging-routes.cjs), [reply coordination](lib/concurrency.cjs), [scheduling](lib/scheduler.cjs), [team queues and metrics](lib/team.cjs), [knowledge retrieval](lib/knowledge.cjs), [embeddings](lib/embeddings.cjs) and [credential storage](lib/credentials.cjs), then compare those boundaries with [the testing guide](docs/testing.md).
+
 ## Privacy and persistence
 
-**Where data lives.** Central data uses one SQLite database, `data/central.sqlite`, built into Node.js: no extra service, port, password or npm dependency, and the central still opens while Docker is stopped. Messages and the WhatsApp session stay in the connector's PostgreSQL inside Docker, managed by Evolution API. PostgreSQL for the central itself would only pay off with several computers or attendants sharing the same data, which also requires the multi-user authentication this single-user application does not have. To back up, stop the central and copy `data/` together with the Docker volumes.
+**Where data lives.** Central data uses one SQLite database, `data/central.sqlite`, built into Node.js: no extra service, port, password or npm dependency, and the central still opens while Docker is stopped. Messages and the WhatsApp session stay in the connector's PostgreSQL inside Docker, managed by Evolution API. Sharing the central across computers would require a separate persistence, authentication and deployment design; the current attendant labels do not provide those boundaries. To back up, stop the central and copy `data/` together with the Docker volumes.
 
-This is a local, single-user application, not a hardened multi-user service. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
+This is a local application without per-person authentication. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
 
 AI credentials are encrypted in `data/credentials.sqlite` with **Windows DPAPI for the current Windows user**. The active assistant provider key and the OpenAI transcription key are stored separately; the interface receives only configured/not-configured information. Copying the database to another computer or user does not make those keys decryptable there. On unsupported platforms, credential protection fails explicitly; there is no plaintext fallback.
 
@@ -290,7 +314,7 @@ npm run test:e2e
 
 The Node suite covers domain behavior, HTTP contracts, persistence, retries and uncertain delivery, frontend state, and credential handling. The browser suite uses an isolated fixture server and fake connectors. Neither suite needs a paired WhatsApp session or sends messages to real contacts. The Windows DPAPI test is skipped on non-Windows platforms.
 
-See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture boundaries, and manual checks. A passing fake-connector test verifies the application contract; it does not prove that an upstream WhatsApp session will accept every operation.
+Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture boundaries, test recording with `npm run codegen`, and manual checks. A passing fake-connector test verifies the application contract; it does not prove that an upstream WhatsApp session will accept every operation.
 
 ## Current limits
 
@@ -304,7 +328,7 @@ See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture bound
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
 - Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
 - The local SQLite store is designed for one application process; it is not a shared database for several central instances. Duplicate-reply reservations are kept for 3 days and send idempotency records for 7 days (a message can only be answered automatically in its first 15 minutes; trigger delays reach 24 hours). Transcription results are not pruned.
-- Cloud AI answers and imported catalog suggestions require review appropriate to the task. Retrieval is lexical and can miss differently worded information.
+- Cloud AI answers and imported catalog suggestions require review appropriate to the task. Hybrid retrieval can still miss relevant information; when embeddings are unavailable or disabled, keyword-only fallback is more sensitive to wording.
 - AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a copied SQLite database alone cannot restore access.
 
 For local diagnostics:
