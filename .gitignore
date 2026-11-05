@@ -20,3 +20,8 @@ coverage/
 
 playwright-report/
 test-results/
+
+# Local AI assistant files
+.openclaw/
+.superpowers/
+docs/superpowers/
