@@ -4,6 +4,8 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8768:5432"
     environment:
       POSTGRES_DB: whatsapp
       POSTGRES_USER: whatsapp
@@ -15,7 +17,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    networks: [internal]
+    networks: [internal, database-host]
     logging: {options: {max-size: "10m", max-file: "3"}}
 
   redis:
@@ -97,4 +99,5 @@ volumes:
   instances:
 networks:
   internal: {internal: true}
+  database-host:
   edge:

@@ -19,6 +19,7 @@
     "@playwright/test": "^1.64.1"
   },
   "dependencies": {
-    "pdfjs-dist": "6.4.299"
+    "pdfjs-dist": "6.4.299",
+    "pg": "^8.23.1"
   }
 }

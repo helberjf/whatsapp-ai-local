@@ -102,6 +102,10 @@ dialog{max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contai
 .attachment-card{display:flex;flex-wrap:wrap;gap:9px;align-items:center;min-width:170px;max-width:100%;padding:10px;border:1px solid #34584d;border-radius:10px;background:#102820}
 .attachment-preview-button{display:grid;place-items:center;width:100%;min-height:85px;padding:14px;background:linear-gradient(125deg,#18392f,#0e211c);border:1px solid #396454;border-radius:8px;font-size:13px;color:#c9efdd;cursor:pointer}
 .attachment-preview-button:hover{border-color:#3fe3a5}.attachment-preview-button img{max-width:100%;max-height:200px;object-fit:contain}.attachment-caption{font-size:11px;color:#acc6b8;flex:1;overflow-wrap:anywhere}.attachment-download{font-size:11px}
+.attachment-preview-status{width:100%;margin:0;color:#c8bc9e;font-size:11px;line-height:1.5}.attachment-preview-status[hidden]{display:none}
+.video-metadata{margin:8px 0;color:#acc6b8;font-size:11px;overflow-wrap:anywhere}.video-card .video-load{min-height:40px;margin-top:8px}
+.attachment-info{flex-wrap:wrap}.attachment-info[hidden]{display:none}.attachment-local-preview{order:-1;flex-basis:100%;min-width:0;padding-top:6px}.attachment-local-preview[hidden]{display:none}
+.attachment-local-preview img,.attachment-local-preview video{display:block;max-width:100%;max-height:150px;border-radius:8px;background:#07130e;object-fit:contain}.attachment-local-preview video{width:260px;aspect-ratio:16/9}
 dialog.media-viewer{width:min(1200px,calc(100vw - 32px));height:calc(100dvh - 48px);max-height:calc(100dvh - 24px);padding:0;overflow:hidden;background:#0c1712}
 .media-viewer[open]{display:flex;flex-direction:column}.viewer-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 18px;border-bottom:1px solid #294537;flex-shrink:0}
 .viewer-heading h2{font-size:15px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewer-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.viewer-actions .button{font-size:12px;min-height:34px;text-decoration:none}.viewer-actions form{display:flex}

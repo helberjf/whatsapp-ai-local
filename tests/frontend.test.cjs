@@ -25,7 +25,7 @@ function element(tag='div',fragment=false) {
   return {
     tagName:tag.toUpperCase(),fragment,children:[],value:'',hidden:false,
     disabled:false,readOnly:false,checked:false,open:false,files:[],dataset:{},
-    scrollHeight:100,scrollTop:0,clientHeight:100,classList:{toggle(){}},
+    scrollHeight:100,scrollTop:0,clientHeight:100,classList:{toggle(){},add(){},remove(){}},
     get textContent() {return ownText+this.children.map(child=>child.textContent).join('');},
     set textContent(value) {ownText=String(value);this.children=[];},
     get firstElementChild() {return this.children[0];},
@@ -38,8 +38,8 @@ function element(tag='div',fragment=false) {
     emit(type,event={}) {
       return Promise.all((listeners.get(type)||[]).map(listener=>listener({preventDefault(){},target:this,...event})));
     },
-    setAttribute(){},removeAttribute(){},scrollIntoView(){},focus(){},
-    showModal() {this.open=true;},close() {this.open=false;},requestSubmit(){return this.emit('submit');},click(){return this.emit('click');}
+    setAttribute(){},removeAttribute(name){delete this[name];},scrollIntoView(){},focus(){},pause(){this.paused=true;},load(){},
+    showModal() {this.open=true;},close() {this.open=false;return this.emit('close');},requestSubmit(){return this.emit('submit');},click(){return this.emit('click');}
   };
 }
 
@@ -52,8 +52,9 @@ function message(number) {
 }
 
 const pagesFile=path.join(__dirname,'..','public','pages.js');
-async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({deleted:true}),onAssistantDraft=async()=>({text:'Sugestão contextual'}),onMessages=async()=>{},onForward=async()=>message(2),onContactsSync=async()=>({total:1,named:1}),onMedia=async()=>({base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'}),scheduleModule,FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false,withPages=false,kbDocs=[],catalog=[]}={}) {
-  const nodes=new Map(),intervals=[],requests=[],copied=[];
+async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({deleted:true}),onAssistantDraft=async()=>({text:'Sugestão contextual'}),onMessages=async()=>{},onForward=async()=>message(2),onContactsSync=async()=>({total:1,named:1}),onMedia=async()=>({base64:'aGVsbG8=',mimeType:'audio/ogg',fileName:'audio.ogg'}),scheduleModule,FileReader,chatRecords,templates=[],historyRecords,onTranscriptions=async()=>[],onTranscriptionSettings=async()=>{},aiConfigured=false,withPages=false,withMedia=false,withIntersection=false,kbDocs=[],catalog=[]}={}) {
+  const nodes=new Map(),intervals=[],requests=[],copied=[],createdUrls=[],revokedUrls=[];
+  class BrowserURL extends URL {static createObjectURL(blob) {const url=URL.createObjectURL(blob);createdUrls.push(url);return url;}static revokeObjectURL(url) {revokedUrls.push(url);URL.revokeObjectURL(url);}}
   let history=historyRecords || Array.from({length:count},(_,index)=>message(index+1));
   let transcriptionSettings={defaultProvider:'whisper',whisperModel:'base',language:'pt',aiConfigured,aiModel:'gpt-transcribe'};
   const get=id=>{if(!nodes.has(id)) nodes.set(id,element());return nodes.get(id);};
@@ -92,7 +93,7 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
     else if(url.pathname==='/api/assistant/draft') output=await onAssistantDraft(input);
     else if(url.pathname==='/api/contact/details') output={name:'Ana',phone:'5511998765432',about:'Atendimento',capabilities:{disappearingMessages:false}};
     else if(url.pathname==='/api/read') output={read:true};
-    else if(url.pathname==='/api/media') output=await onMedia();
+    else if(url.pathname==='/api/media') output=await onMedia({id:url.searchParams.get('id'),jid:url.searchParams.get('jid'),signal:options.signal});
     else if(url.pathname==='/api/kb') output={documents:kbDocs,ai:false};
     else if(url.pathname==='/api/products') output={products:catalog};
     else if(url.pathname==='/api/ai') output={provider:'openai',model:'',baseUrl:'',hasKey:false,configured:false,providers:{openai:{label:'OpenAI',model:'gpt-4o-mini',baseUrl:'',key:true}}};
@@ -100,13 +101,16 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
     return {ok:true,json:async()=>output};
   }
   let requestSequence=0;
+  const observers=[];
+  class IntersectionObserver {constructor(callback){this.callback=callback;this.targets=new Set();observers.push(this);}observe(target){this.targets.add(target);}unobserve(target){this.targets.delete(target);}disconnect(){this.targets.clear();}}
   const context=vm.createContext({
-    document,fetch:fetchLocal,Intl,Date,Map,Set,URL,URLSearchParams,AbortSignal,FileReader,File,Blob,Uint8Array,atob,WhatsAppSchedule:scheduleModule,
+    document,fetch:fetchLocal,Intl,Date,Map,Set,URL:BrowserURL,URLSearchParams,AbortController,AbortSignal,FileReader,File,Blob,Uint8Array,atob,WhatsAppSchedule:scheduleModule,...(withIntersection?{IntersectionObserver}:{}),
     navigator:{clipboard:{writeText:async text=>{copied.push(text);}}},
     crypto:{randomUUID:()=> 'frontend-request-'+(++requestSequence)},
     setInterval(callback,delay) {intervals.push({callback,delay});return intervals.length;},
-    setTimeout,clearTimeout,location:{search:''},matchMedia:()=>({matches:false})
+    setTimeout,clearTimeout,clearInterval(){},window:{addEventListener(){}},location:{search:''},matchMedia:()=>({matches:false})
   });
+  if(withMedia) vm.runInContext(fs.readFileSync(path.join(__dirname,'..','public','conversation-media.js'),'utf8'),context);
   vm.runInContext(fs.readFileSync(appFile,'utf8'),context,{filename:appFile});
   if(withPages) vm.runInContext(fs.readFileSync(pagesFile,'utf8'),context,{filename:pagesFile});
   await settle();
@@ -115,7 +119,9 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
   await get('chat-list').children[0].emit('click');
   assert.equal(get('notice').textContent,'','A seleção da conversa não deve falhar.');
   return {
-    get,requests,copied,
+    get,requests,copied,createdUrls,revokedUrls,
+    appendRecords(records) {history.push(...records);},
+    intersectMedia(id,visible=true) {for(const observer of observers) for(const target of observer.targets) if(target.dataset.mediaId===id) observer.callback([{target,isIntersecting:visible}]);},
     appendMessages(amount) {
       const start=history.length;
       history.push(...Array.from({length:amount},(_,index)=>message(start+index+1)));
@@ -145,6 +151,100 @@ test('vídeo carregado preserva posição e elemento quando chega outra mensagem
   assert.match(player.src,/^blob:/);assert.notEqual(player.autoplay,true);player.currentTime=12;
   browser.appendMessages(1);await browser.poll();
   assert.equal(descendants(browser.get('messages')).find(node=>node.tagName==='VIDEO'),player);assert.equal(player.currentTime,12);
+});
+
+const previewPng='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII=';
+const previewJpeg=Buffer.from([255,216,255,224,0,16,74,70,73,70]).toString('base64');
+test('imagem mostra prévia ao abrir a conversa sem abrir o visualizador',async()=>{
+  const browser=await createBrowser({withMedia:true,historyRecords:[{...message(1),type:'image',text:'Foto recebida'}],onMedia:async()=>({base64:previewPng,mimeType:'image/png'})});
+  await settle();const image=descendants(browser.get('messages')).find(node=>node.tagName==='IMG');
+  assert.ok(image,'A imagem recebida precisa de uma prévia automática.');assert.match(image.src,/^blob:/);assert.equal(browser.get('media-viewer').open,false);
+  assert.equal(browser.requests.filter(req=>req.path==='/api/media').length,1);
+});
+
+test('imagem com miniatura e vídeo com capa não baixam o arquivo automaticamente',async()=>{
+  const browser=await createBrowser({withMedia:true,historyRecords:[{...message(1),type:'image',jpegThumbnail:previewJpeg},{...message(2),type:'video',jpegThumbnail:previewJpeg,durationSeconds:63,fileName:'video.mp4'}]});
+  const image=descendants(browser.get('messages')).find(node=>node.tagName==='IMG'),player=descendants(browser.get('messages')).find(node=>node.tagName==='VIDEO');
+  assert.ok(image);assert.match(image.src,/^data:image\/jpeg;base64,/);assert.ok(player);assert.match(player.poster,/^data:image\/jpeg;base64,/);assert.equal(player.hidden,false);
+  assert.equal(player.src,undefined);assert.notEqual(player.autoplay,true);assert.equal(player.preload,'none');assert.match(findClass(browser.get('messages'),'video-card').textContent,/1:03/);
+  assert.equal(browser.requests.filter(req=>req.path==='/api/media').length,0);
+});
+
+test('prévia automática de imagem e abertura simultânea compartilham a requisição',async()=>{
+  const started=deferred(),finish=deferred();
+  const browser=await createBrowser({withMedia:true,historyRecords:[{...message(1),type:'image'}],onMedia:async()=>{started.resolve();await finish.promise;return {base64:previewPng,mimeType:'image/png'};}});
+  assert.equal(browser.requests.filter(req=>req.path==='/api/media').length,1);await started.promise;const opening=findClass(browser.get('messages'),'attachment-preview-button').emit('click');finish.resolve();await opening;
+  assert.equal(browser.requests.filter(req=>req.path==='/api/media').length,1);assert.equal(browser.get('media-viewer').open,true);
+});
+
+test('falha da prévia de imagem mantém a conversa e permite tentar abrir novamente',async()=>{
+  let attempts=0;const browser=await createBrowser({withMedia:true,historyRecords:[{...message(1),type:'image'}],onMedia:async()=>{if(++attempts===1) throw Error('Mídia indisponível');return {base64:previewPng,mimeType:'image/png'};}});
+  await settle();assert.match(findClass(browser.get('messages'),'attachment-card').textContent,/Prévia indisponível/);assert.equal(browser.get('notice').textContent,'');
+  await findClass(browser.get('messages'),'attachment-preview-button').emit('click');assert.equal(attempts,2);assert.equal(browser.get('media-viewer').open,true);
+});
+
+test('imagem e vídeo anexados mostram prévia local e liberam URLs ao substituir e remover',async()=>{
+  const browser=await createBrowser({withMedia:true});
+  browser.get('attachment').files=[new File(['foto'],'foto.png',{type:'image/png'})];await browser.get('attachment').emit('change');
+  let preview=browser.get('attachment-preview');assert.equal(preview.hidden,false);assert.equal(preview.children.length,1,'O anexo deve ter uma prévia local.');assert.equal(preview.firstElementChild.tagName,'IMG');const imageUrl=preview.firstElementChild.src;
+  browser.get('attachment').files=[new File(['vídeo'],'video.mp4',{type:'video/mp4'})];await browser.get('attachment').emit('change');
+  preview=browser.get('attachment-preview');assert.equal(preview.firstElementChild.tagName,'VIDEO');assert.equal(preview.firstElementChild.controls,true);assert.equal(preview.firstElementChild.preload,'metadata');assert.notEqual(preview.firstElementChild.autoplay,true);
+  const videoUrl=preview.firstElementChild.src;assert.ok(browser.revokedUrls.includes(imageUrl));assert.equal(browser.requests.some(req=>req.path==='/api/send-media'),false);
+  await browser.get('remove-attachment').emit('click');assert.ok(browser.revokedUrls.includes(videoUrl));assert.equal(preview.hidden,true);assert.equal(preview.children.length,0);
+});
+
+test('trocar de conversa ou enviar libera a prévia local do anexo',async()=>{
+  class Reader {readAsDataURL(){this.result='data:image/png;base64,aGVsbG8=';this.onload();}}
+  const browser=await createBrowser({withMedia:true,FileReader:Reader,chatRecords:[{jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:'5511999999999@s.whatsapp.net',name:'Bruno',unread:0,status:'open',labels:[]}]});
+  browser.get('attachment').files=[new File(['foto'],'foto.png',{type:'image/png'})];await browser.get('attachment').emit('change');assert.equal(browser.get('attachment-preview').children.length,1);const first=browser.get('attachment-preview').firstElementChild.src;
+  await browser.selectChat(1);assert.ok(browser.revokedUrls.includes(first));assert.equal(browser.get('attachment-preview').hidden,true);
+  browser.get('attachment').files=[new File(['foto'],'outra.png',{type:'image/png'})];await browser.get('attachment').emit('change');const sent=browser.get('attachment-preview').firstElementChild.src;
+  await browser.get('composer').emit('submit');assert.ok(browser.revokedUrls.includes(sent));assert.equal(browser.get('attachment-preview').hidden,true);assert.equal(browser.requests.filter(req=>req.path==='/api/send-media').length,1);
+});
+
+const imageMessage=number=>({...message(number),type:'image'});
+const imageMedia=async()=>({base64:previewPng,mimeType:'image/png'});
+const liveMediaUrls=browser=>browser.createdUrls.filter(url=>!browser.revokedUrls.includes(url));
+test('cache de prévias limita entradas e revoga URLs antigas ao carregar muito histórico',async()=>{
+  const browser=await createBrowser({withMedia:true,historyRecords:Array.from({length:40},(_,index)=>imageMessage(index+1)),onMedia:imageMedia});await settle();
+  assert.equal(browser.createdUrls.length,40);assert.ok(liveMediaUrls(browser).length<=24,'O histórico não pode reter todas as imagens.');assert.ok(browser.revokedUrls.length>=16);
+});
+
+test('cache de prévias também limita bytes mesmo com poucas imagens grandes',async()=>{
+  const bytes=Buffer.alloc(4*1024*1024);Buffer.from(previewPng,'base64').copy(bytes);
+  const browser=await createBrowser({withMedia:true,historyRecords:Array.from({length:5},(_,index)=>imageMessage(index+1)),onMedia:async()=>({base64:bytes.toString('base64'),mimeType:'image/png'})});await settle();
+  assert.equal(browser.createdUrls.length,5);assert.ok(liveMediaUrls(browser).length<=4,'Bytes de Uint8Array e Blob devem entrar no orçamento de 32 MiB.');
+});
+
+test('trocar de conversa libera mídia recebida e recria players antigos apenas sob demanda',async()=>{
+  const other='5511999999999@s.whatsapp.net',browser=await createBrowser({withMedia:true,historyRecords:[imageMessage(1),audio(),{...message(3),type:'video'}],onMedia:async({id})=>id==='1'?imageMedia():{base64:'aGVsbG8=',mimeType:id==='3'?'video/mp4':'audio/ogg'},chatRecords:[{jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:other,name:'Bruno',unread:0,status:'open',labels:[]}]});
+  await findClass(browser.get('messages'),'audio-load').emit('click');await findClass(browser.get('messages'),'video-load').emit('click');
+  const oldPlayers=descendants(browser.get('messages')).filter(node=>['AUDIO','VIDEO'].includes(node.tagName)),oldUrls=[...browser.createdUrls];await browser.selectChat(1);
+  assert.ok(oldUrls.every(url=>browser.revokedUrls.includes(url)));assert.ok(oldPlayers.every(player=>player.paused && player.src===undefined));
+  await browser.selectChat(0);const newPlayers=descendants(browser.get('messages')).filter(node=>['AUDIO','VIDEO'].includes(node.tagName));assert.ok(newPlayers.every(player=>!oldPlayers.includes(player)));assert.ok(newPlayers.every(player=>player.src===undefined));
+});
+
+test('visualizador aberto e vídeo em reprodução resistem à pressão do cache e liberam ao sair',async()=>{
+  const other='5511999999999@s.whatsapp.net',browser=await createBrowser({withMedia:true,historyRecords:[imageMessage(1),{...message(2),type:'video'}],onMedia:async({id})=>id==='2'?{base64:'aGVsbG8=',mimeType:'video/mp4'}:imageMedia(),chatRecords:[{jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:other,name:'Bruno',unread:0,status:'open',labels:[]}]});
+  await findClass(browser.get('messages'),'attachment-preview-button').emit('click');const imageUrl=browser.get('media-viewer-content').firstElementChild.src;
+  await findClass(browser.get('messages'),'video-load').emit('click');const player=descendants(browser.get('messages')).find(node=>node.tagName==='VIDEO');player.paused=false;player.currentTime=12;const videoUrl=player.src;
+  browser.appendRecords(Array.from({length:35},(_,index)=>imageMessage(index+3)));await browser.poll();await settle();
+  assert.equal(browser.revokedUrls.includes(imageUrl),false);assert.equal(browser.revokedUrls.includes(videoUrl),false);assert.equal(player.currentTime,12);
+  await browser.selectChat(1);assert.equal(browser.revokedUrls.includes(videoUrl),true);assert.equal(browser.revokedUrls.includes(imageUrl),false);
+  await browser.get('media-viewer').close();assert.ok(browser.revokedUrls.includes(imageUrl));assert.equal(liveMediaUrls(browser).length,0);
+});
+
+test('resposta de mídia atrasada não recria cache da conversa anterior',async()=>{
+  const finish=deferred(),browser=await createBrowser({withMedia:true,historyRecords:[imageMessage(1)],onMedia:async()=>{await finish.promise;return imageMedia();},chatRecords:[{jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:'5511999999999@s.whatsapp.net',name:'Bruno',unread:0,status:'open',labels:[]}]});
+  await browser.selectChat(1);finish.resolve();await settle();assert.equal(browser.createdUrls.length,0);assert.equal(browser.get('notice').textContent,'');
+});
+
+test('prévia sem miniatura espera entrar na área visível e baixa no máximo duas imagens por vez',async()=>{
+  const finish=deferred();let active=0,maximum=0;
+  const browser=await createBrowser({withMedia:true,withIntersection:true,historyRecords:Array.from({length:8},(_,index)=>imageMessage(index+1)),onMedia:async()=>{maximum=Math.max(maximum,++active);await finish.promise;active--;return imageMedia();}});
+  assert.equal(browser.requests.filter(request=>request.path==='/api/media').length,0);
+  for(let id=1;id<=8;id++) browser.intersectMedia(String(id));await settle();assert.equal(browser.requests.filter(request=>request.path==='/api/media').length,2);finish.resolve();await settle();
+  assert.equal(browser.createdUrls.length,8);assert.equal(maximum,2);
 });
 
 test('apagar mensagem enviada exige confirmação e não envia o rascunho',async()=>{

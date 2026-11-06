@@ -31,7 +31,7 @@ Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal s
 
 - **Conversations:** an expanded conversation column with contact/CRM tools available in a closable details panel. Search and filter by name, phone, labels, unread state, and attendance status; preserve drafts and scroll position during refreshes. Open global search from the sidebar or with **Ctrl+K**.
 - **Messaging:** one attachment button for photos, videos, audio, documents and stickers; **Enter** sends and **Shift+Enter** inserts a line break. Insert quick replies, copy message text, forward supported content, use emoji, create polls, and delete your own messages for everyone when the connector accepts the request.
-- **Media:** record voice messages from the composer, review playback, then explicitly send or discard. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, start video with one play action, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **Media:** received images show an inline preview automatically. Videos display their cover/name/duration when the connector provides those fields; the full video loads only after an explicit play action. Selected photos/videos show a local preview before sending, and removing/replacing the attachment releases its temporary URL. Record voice messages from the composer, review playback, then explicitly send or discard. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
 - **Contacts and CRM:** maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
 - **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
 - **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
@@ -63,7 +63,7 @@ In **Conexão WhatsApp**, choose **Conectar WhatsApp**. On the phone, open **Lin
 
 ### Several WhatsApp accounts
 
-Use the account button at the top of the sidebar to see the status of every account, add another one, or switch between them. Each account is its own Evolution instance, paired with its own QR code. The account that existed before this feature keeps its instance, session, and `data/atendimento.json`: updating requires no new pairing.
+Use the account button at the top of the sidebar to see the status of every account, add another one, or switch between them. Each account is its own Evolution instance, paired with its own QR code. The original account keeps its instance and session; its former `data/atendimento.json` state is migrated to PostgreSQL. Updating requires no new pairing.
 
 | Per account | Shared by all accounts |
 | --- | --- |
@@ -132,7 +132,9 @@ In **Assistente de IA**, select **Ollama (local)** and click **Ligar IA local** 
 
 ![Local AI startup controls with fictional demo data](docs/screenshots/local-ai.png)
 
-Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
+The **Assistente de IA** page offers OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, Groq, Mistral AI, xAI (Grok), OpenRouter, Together AI, Perplexity, Ollama, and custom OpenAI-compatible endpoints. Choose a provider, paste its key, and click **Carregar modelos do provedor** to retrieve the conversation models available to that account (or installed in Ollama). This explicit catalog query uses the pasted or saved key without saving a new key or changing the active assistant. Initial suggestions are not a guarantee of account access. Providers without a model-list endpoint can use the suggestions or **Informar outro modelo…** for an exact model identifier, including private models. Click **Salvar** to persist the configuration and encrypt the key; a blank key preserves the key already saved for that provider. Changing providers clears pasted credentials and the previous API address from the form.
+
+Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
 
 ## Architecture
 
@@ -140,8 +142,9 @@ Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatib
 flowchart LR
     Browser[Vanilla JS browser UI] -->|Loopback HTTP + session token| Node[Node.js HTTP server]
     Node --> Services[CRM · scheduling · triggers · assistant · knowledge]
-    Services --> Files[Local JSON stores and document/media files]
-    Services --> Vault[SQLite + Windows DPAPI AI credentials]
+    Services --> CentralDB[(PostgreSQL · whatsapp_central)]
+    Services --> Files[Local media files]
+    CentralDB --> Vault[Encrypted credentials · Windows DPAPI]
     Node --> Evolution[Evolution API + local extension]
     Evolution --> PostgreSQL[(PostgreSQL)]
     Evolution --> Redis[(Redis)]
@@ -155,38 +158,38 @@ flowchart LR
 | HTTP boundary | [`server.cjs`](server.cjs): request validation, local-origin protections, connector calls, and service routing. |
 | Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
 | Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, and retrieval. |
-| Persistence | [`lib/store.cjs`](lib/store.cjs): serialized updates and atomic JSON replacement; credentials use SQLite separately. |
+| Persistence | [`lib/postgres.cjs`](lib/postgres.cjs): transactional JSONB state, knowledge text and encrypted BYTEA credentials in a dedicated database. [`lib/store.cjs`](lib/store.cjs) remains the isolated file adapter used by tests/demo. |
 | Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
 | Windows lifecycle | [`scripts/`](scripts/): configuration, start/stop, shortcuts, optional sign-in startup, and secret protection. |
 
-The runtime has no npm framework dependencies. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
+The runtime uses `pg` for PostgreSQL and `pdfjs-dist` for PDF rendering; it has no frontend framework. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
 
 ## Privacy and persistence
 
 This is a local, single-user application, not a hardened multi-user service. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
 
-AI credentials are encrypted in `data/credentials.sqlite` with **Windows DPAPI for the current Windows user**. The active assistant provider key and the OpenAI transcription key are stored separately; the interface receives only configured/not-configured information. Copying the database to another computer or user does not make those keys decryptable there. On unsupported platforms, credential protection fails explicitly; there is no plaintext fallback.
+Production stores the central's account registry, contact/CRM metadata, scheduling, automation, send reservations, transcription results, AI configuration, products and knowledge text in the dedicated **`whatsapp_central` PostgreSQL database**, using its own non-superuser login. The Evolution connector retains its separate `whatsapp` database and existing paired instances. The application pool connects only through `127.0.0.1:8768`; the port is not published on other host interfaces. State documents use JSONB with row locks for updates, while knowledge text and credentials have separate tables. This preserves the service contracts; it is not a claim that the existing single-process reply workers support running multiple application servers.
 
-For older installations, the application migrates a plaintext assistant key from `data/ai.json` when it is accessed: it saves the protected value, verifies it can be read back, then removes the JSON field atomically. If protection or verification fails, the original file is preserved and the operation returns an error for a later retry. Existing backups are not rewritten by this migration.
+AI, transcription, connector and integration credentials are encrypted **before database writes**, using Windows DPAPI for the current Windows user, and stored as BYTEA. Each assistant provider has its own credential, separate from the OpenAI transcription key. Switching providers never reuses another provider's key; removing a key affects only the selected provider. The interface receives only configured/not-configured information, never saved secrets. Copying the database to another computer or user does not make those keys decryptable there. On unsupported platforms, credential protection fails explicitly; there is no plaintext fallback.
 
-Connector and container secrets remain local files (`data/config.json` and `infra/.env`). Those files are excluded from Git, but that exclusion is not encryption. Protect the Windows account and backups; do not share the data directory.
+At first production start, the application reserves its HTTP port **before migration**, reads the former JSON state and SQLite ciphertext, and imports them in one PostgreSQL transaction. Legacy plaintext AI/connector/integration keys are encrypted and verified before insertion; they never enter the JSONB documents. Knowledge text is imported from the extracted `.txt` files. The transaction verifies imported contents and records a migration marker only after success. A failed import rolls back and stops startup; a later start can retry. Once marked, startup never re-imports stale local files. All original files remain preserved as migration sources; subsequent writes go to PostgreSQL. PostgreSQL failure does not silently switch production back to JSON or SQLite.
 
-The main local files are:
+The former shared assistant credential is migrated to the configured cloud provider after a verified encrypted write. If the old configuration uses Ollama, its former cloud key has no reliable provider attribution: it is retained in an encrypted, unassigned entry and never sent to another provider. Re-enter the appropriate key when selecting a cloud provider in that case. Model-list requests do not follow redirects or send saved keys to a different API address; paste a key explicitly when querying another address.
+
+The PostgreSQL bootstrap connection is in `data/database.json`. Docker initialization secrets remain in `infra/.env`; the original `data/config.json` is retained as a migration source. These files are excluded from Git, but that exclusion is not encryption. Protect the Windows account and backups; do not share the data directory. The configurator preserves existing connector/container passwords, creates a separate central database password, and the launcher provisions the dedicated login/database before starting the server.
+
+Current persistence locations are:
 
 | Location | Contents |
 | --- | --- |
-| `data/atendimento.json` | Contact metadata, CRM, quick replies, scheduling state, automation rules, send reservations, and transcription results of the original account. |
-| `data/contas.json` | Account list. Created when a second account is added; until then the instance in `data/config.json` is the only account. |
-| `data/contas/<id>/atendimento.json` | The same data for each additional account. |
-| `data/contas-arquivadas/` | Local data of removed accounts. |
-| `data/knowledge.json`, `data/knowledge/` | Knowledge documents and extracted text. |
-| `data/produtos.json`, `data/product-images/` | Catalog and product images. |
-| `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
-| `data/credentials.sqlite` | Separate DPAPI-protected assistant and transcription credentials. |
-| `data/config.json`, `infra/.env` | Generated connector and container configuration. |
+| PostgreSQL `whatsapp_central`, schema `central` | Central state, account registry, archived state, products, knowledge text, provider/model metadata, encrypted credentials and migration marker. |
+| `data/product-images/` | Catalog image files referenced by database records. |
+| `data/trigger-media/` | Immutable media files used by trigger rules, referenced by content hash. |
+| `data/database.json`, `infra/.env` | Bootstrap database connection and Docker initialization secrets. |
+| Former JSON files, `data/knowledge/`, `data/credentials.sqlite` | Preserved migration sources; not the active production state after successful migration. |
 | `data/*.log` | Local diagnostics. |
 
-The connector session and synchronized messages reside in Docker volumes named under `whatsapp-local`. **Do not remove those volumes or use `docker compose down -v` for an ordinary stop.** Backing up the project directory alone does not back up the Docker database and pairing session. The internal Compose name stays stable to retain those volumes.
+The central database, connector database and pairing session reside in Docker volumes named under `whatsapp-local`. **Do not remove those volumes or use `docker compose down -v` for an ordinary stop.** Back up `whatsapp_central` with PostgreSQL tools, the connector database/session, referenced media directories, and bootstrap secrets. Backing up former JSON/SQLite files alone does not capture new production writes. A restore must include both database records and their referenced files, and DPAPI ciphertext still requires the original Windows user/machine. The internal Compose name stays stable to retain existing volumes.
 
 `data/`, connector environment files, logs, generated credentials, and dependencies are excluded from version control. The committed demo and test fixtures use fictional contacts. On Windows installations with HTTPS inspection, the optional trust helper exports a public certificate from an already trusted Windows root; it keeps TLS verification enabled and does not export a private key.
 
@@ -196,9 +199,12 @@ The connector session and synchronized messages reside in Docker volumes named u
 npm test
 npx playwright install chromium
 npm run test:e2e
+# With the local PostgreSQL prepared, run integration tests in isolated qa_* schemas:
+$env:WHATSAPP_PG_TEST='1'
+node --test --test-concurrency=1 tests/postgres.test.cjs
 ```
 
-The Node suite covers domain behavior, HTTP contracts, persistence, retries and uncertain delivery, frontend state, and credential handling. The browser suite uses an isolated fixture server and fake connectors. Neither suite needs a paired WhatsApp session or sends messages to real contacts. The Windows DPAPI test is skipped on non-Windows platforms.
+The Node suite covers domain behavior, HTTP contracts, persistence, retries and uncertain delivery, frontend state, and credential handling. PostgreSQL integration tests are opt-in and create/drop only randomly named `qa_*` schemas; production tables are never used. The browser suite uses isolated fixtures and fake connectors. The media preview spec serves real assets with simulated API replies and exercises actual browser image/video elements. Neither suite needs a paired WhatsApp session or sends messages to real contacts. The Windows DPAPI test is skipped on non-Windows platforms.
 
 See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture boundaries, and manual checks. A passing fake-connector test verifies the application contract; it does not prove that an upstream WhatsApp session will accept every operation.
 
@@ -210,9 +216,9 @@ See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture bound
 - Accounts are separate workspaces: forwarding and search stay inside the account in use, and there is no combined inbox. Up to 10 accounts.
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
 - Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
-- A local JSON store is appropriate for this single-user deployment; it is not a shared transactional database for several application processes.
+- PostgreSQL handles durable central state; reply workers still assume a single application server process.
 - Cloud AI answers and imported catalog suggestions require review appropriate to the task. Retrieval is lexical and can miss differently worded information.
-- AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a copied SQLite database alone cannot restore access.
+- AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a database copy alone cannot restore access.
 
 For local diagnostics:
 

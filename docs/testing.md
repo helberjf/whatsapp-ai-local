@@ -1,5 +1,7 @@
 # Testing and validation
 
+On **2026-11-01**, the PostgreSQL/media work was checked with **48 focused frontend/media tests** and **3 browser preview scenarios**. PostgreSQL integration tests use a real local database and isolated schemas; they were repeated after restoring Docker Desktop availability. Production checks confirmed the PostgreSQL backend, an existing connected WhatsApp session, preserved migration source hashes and no plaintext credential fields in the configuration documents.
+
 Verified on Windows on **2026-10-29**: **255 Node tests** and **17 Playwright tests** passed. The browser suite covers 1440×960, 1133×637 and 390×844 layouts, media playback, safe links, trigger creation, contact details, deletion confirmation and timer options, plus local AI startup and an explicit CPU mode. New conversation checks cover the expanded message area, sidebar search, in-app image/PDF viewing, microphone recording/review/cancellation, permission denial, and rejection of an HTML payload mislabeled as PDF. Connector operations use fixtures; no real messages are sent or deleted for verification. Existing checks cover unclipped message-action popovers, a single attachment picker, Enter/Shift+Enter behavior, one-click video playback and suggestions based on both sides of the latest dialogue.
 
 The project separates automated fixture validation from operations against a real linked WhatsApp account. Automated tests and the portfolio demo use fictional contacts, isolated temporary stores, and controlled connector responses. They must not be pointed at production data or used to send test messages to real contacts.
@@ -22,7 +24,18 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The browser suite starts its own fixture environment. It exercises the real browser interface and application HTTP routes while replacing WhatsApp and AI network boundaries. Keep production services on their normal ports; the browser fixture is independent.
+The browser suite starts its own fixture environment. Most specs exercise the real browser interface and application HTTP routes while replacing WhatsApp and AI network boundaries. `media-previews.spec.cjs` serves real frontend assets and browser media elements with API responses fulfilled in Playwright, isolating visual/lifecycle tests from connector and Windows loopback failures. Keep production services on their normal ports; the browser fixture is independent.
+
+To test PostgreSQL, prepare the local database with the launcher, then explicitly opt in:
+
+```powershell
+$env:WHATSAPP_PG_TEST='1'
+node --test --test-concurrency=1 tests/postgres.test.cjs
+```
+
+These tests use randomly named `qa_*` schemas in the dedicated central database and drop only those schemas after testing. They cover competing updates, transaction rollback, idempotent import, knowledge text, encrypted credential transfer, account restart/isolation, and trigger media references. No production contact or configuration is edited. The ordinary suite skips these tests unless opted in. `bootstrap.test.cjs` separately verifies that an occupied HTTP port prevents initialization/migration.
+
+`persisted-media.test.cjs` checks immutable attachment files, content hashes, the 10 MiB cap, rejected traversal/corruption and recovery after interrupted writes. Database records contain references rather than trigger attachment base64; original legacy files remain preserved after import.
 
 Test totals can change as coverage grows. Use the command's final pass/fail/skip summary as the current result rather than a historical count in documentation.
 
@@ -86,4 +99,4 @@ Cloud provider tests use controlled responses; they do not assert live model ava
 
 [`../tests/ai-credentials.test.cjs`](../tests/ai-credentials.test.cjs) covers the assistant credential boundary with controlled protection functions: no key in saved JSON, verified migration, restart recovery, preservation after failed migration, rotation, deletion, and safe error handling. [`../tests/credentials.test.cjs`](../tests/credentials.test.cjs) also exercises real Windows DPAPI on Windows. The general assistant key uses a separate credential entry from the transcription key.
 
-Legacy plaintext is removed only after a protected write and successful readback verification. A failed migration deliberately leaves the original JSON key intact and returns an error; the application does not silently discard the only usable credential. These tests do not encrypt connector environment files or rewrite old backups.
+The file-adapter credential tests remove legacy plaintext only after a protected write and successful readback verification. Production PostgreSQL import verifies ciphertext before committing, omits credential fields from JSONB and deliberately preserves original migration sources. Failed import rolls back without discarding the original credential. Bootstrap environment files and old backups are not rewritten as encrypted artifacts by these tests.

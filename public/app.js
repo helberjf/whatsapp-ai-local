@@ -2,7 +2,11 @@
   'use strict';
   const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
-  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
+  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),mediaRequests=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
+  const mediaControllers=new Map(),previewViews=new Map(),previewTargets=new WeakMap(),mediaLocks=new Set();
+  const MEDIA_CACHE_ENTRIES=24,MEDIA_CACHE_BYTES=32*1024*1024;
+  let mediaGeneration=0,previewActive=0,previewQueue=[],viewerMediaKey=null,focusedMediaKey=null;
+  const previewObserver=globalThis.IntersectionObserver?new IntersectionObserver(entries=>{for(const entry of entries) {const view=previewTargets.get(entry.target);if(!view) continue;const entered=!view.visible;view.visible=entry.isIntersecting;if(entered && view.visible && !view.hasImage) queuePreview(view);}},{root:$('messages'),rootMargin:'160px'}):null;
   let replyTo=null;
   function clearReply(invalidate=true) {replyTo=null;$('reply-preview').hidden=true;if(invalidate) {editRevision++;pendingSend=null;}}
   $('reply-cancel').addEventListener('click',clearReply);
@@ -16,8 +20,8 @@
   const initials=name=>String(name || '?').split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase();
   const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
   function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
-  async function api(route,method='GET',input,timeout=30000) {
-    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(timeout)});
+  async function api(route,method='GET',input,timeout=30000,signal) {
+    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:signal || AbortSignal.timeout(timeout)});
     const result=await response.json();if(!response.ok) throw new Error(result.error || 'Não foi possível completar a operação.');return result;
   }
   function notice(message,success=false) {$('notice').textContent=message;$('notice').classList.toggle('success',success);$('notice').hidden=!message;}
@@ -160,10 +164,10 @@
     speed.addEventListener('change',()=>{player.playbackRate=Number(speed.value);});
     player.addEventListener('error',()=>{status.textContent='Não foi possível reproduzir este formato de áudio. Tente carregar novamente.';status.hidden=false;load.hidden=false;load.disabled=false;load.textContent='↻ Carregar novamente';});
     load.addEventListener('click',async()=>{
-      if(view.loading) return;view.loading=true;load.disabled=true;load.textContent='Carregando áudio…';status.hidden=true;
+      if(view.loading) return;focusedMediaKey=key;view.loading=true;load.disabled=true;load.textContent='Carregando áudio…';status.hidden=true;
       try {const media=await fetchMedia(message,jid);player.src=media.url;player.hidden=false;speed.disabled=false;load.hidden=true;load.textContent='▶ Carregar áudio';}
       catch(error) {status.textContent=error.message;status.hidden=false;load.textContent='↻ Tentar carregar áudio';}
-      finally {view.loading=false;load.disabled=false;}
+      finally {view.loading=false;load.disabled=false;trimMediaCache();}
     });
     const label=el('div','media-card-label','Mensagem de voz'),wave=el('div','audio-wave');wave.setAttribute('aria-hidden','true');
     for(let index=0;index<32;index++) wave.append(el('i'));
@@ -172,20 +176,22 @@
   function videoCard(message,jid) {
     const key=jid+'|'+message.id;if(videoViews.has(key)) return videoViews.get(key).card;
     const card=el('section','video-card'),label=el('div','media-card-label','Vídeo'),load=el('button','video-load','▶ Reproduzir vídeo'),player=el('video','video-player'),status=el('p','media-status');
-    card.setAttribute('aria-label','Mensagem de vídeo');load.type='button';load.setAttribute('aria-label','Reproduzir vídeo');player.controls=true;player.preload='metadata';player.playsInline=true;player.hidden=true;player.setAttribute('aria-label','Player de vídeo');status.hidden=true;status.setAttribute('role','status');
-    const view={card,player,loading:false};videoViews.set(key,view);
-    load.addEventListener('click',async()=>{if(view.loading) return;const version=selection;view.loading=true;load.disabled=true;load.textContent='Carregando vídeo…';status.hidden=true;
-      try {const media=await fetchMedia(message,jid);player.src=media.url;player.hidden=false;load.hidden=true;player.load?.();
+    card.setAttribute('aria-label','Mensagem de vídeo');load.type='button';load.setAttribute('aria-label','Reproduzir vídeo');player.controls=true;player.preload='none';player.playsInline=true;player.hidden=false;player.setAttribute('aria-label','Player de vídeo');status.hidden=true;status.setAttribute('role','status');
+    const thumbnail=thumbnailUrl(message);if(thumbnail) player.poster=thumbnail;
+    const metadata=el('p','video-metadata',[message.fileName,Number.isFinite(message.durationSeconds)?audioTime(message.durationSeconds):null].filter(Boolean).join(' · ') || 'Carregue o vídeo para reproduzir');
+    const view={card,player,load,status,loading:false};videoViews.set(key,view);
+    load.addEventListener('click',async()=>{if(view.loading) return;focusedMediaKey=key;const version=selection;view.loading=true;load.disabled=true;load.textContent='Carregando vídeo…';status.hidden=true;
+      try {const media=await fetchMedia(message,jid);player.preload='metadata';player.src=media.url;player.hidden=false;load.hidden=true;player.load?.();
         if(selected?.jid===jid && selection===version) {for(const other of document.querySelectorAll('audio,video')) if(other!==player && !other.paused) other.pause?.();
           try {await player.play?.();}catch(error) {status.textContent=error.name==='NotAllowedError'?'Vídeo carregado. Toque no ▶ do player para iniciar.':'Toque no ▶ do player para reproduzir. Se o formato não abrir, use Baixar vídeo.';status.hidden=false;}
         }
       }
       catch(error) {status.textContent=error.message;status.hidden=false;load.hidden=false;load.textContent='↻ Tentar carregar vídeo';}
-      finally {view.loading=false;load.disabled=false;}
+      finally {view.loading=false;load.disabled=false;trimMediaCache();}
     });
     player.addEventListener('error',()=>{status.textContent='Este formato não pode ser reproduzido no navegador. Baixe o arquivo para abrir no seu computador.';status.hidden=false;load.hidden=false;load.textContent='↻ Carregar novamente';});
     const download=el('button','text-button media-download','↓ Baixar vídeo');download.type='button';download.addEventListener('click',()=>downloadMedia(message,jid,download));
-    card.append(label,load,player,download,status);return card;
+    card.append(label,player,metadata,load,download,status);return card;
   }
   function linkedText(text) {
     const paragraph=el('p','message-text'),pattern=/(?:https?:\/\/|www\.)[^\s<>"']+/gi;let position=0;
@@ -299,7 +305,7 @@
   });
   function renderMessages(keepScroll=false,forceBottom=false) {
     const container=$('messages'),nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<90,oldHeight=container.scrollHeight,oldTop=container.scrollTop;
-    const fragment=document.createDocumentFragment();transcriptionViews.clear();messageCopyViews.clear();
+    const fragment=document.createDocumentFragment();transcriptionViews.clear();messageCopyViews.clear();previewObserver?.disconnect();previewViews.clear();previewQueue=[];
     for(const message of messages) {
       const row=el('article','message'+(message.fromMe?' mine':''));
       row.dataset.messageId=message.id;
@@ -330,22 +336,72 @@
     if(keepScroll) container.scrollTop=oldTop+container.scrollHeight-oldHeight;
     else if(nearBottom || forceBottom) container.scrollTop=container.scrollHeight;
   }
+  function cachedMedia(key) {const media=mediaUrls.get(key);if(media) {mediaUrls.delete(key);mediaUrls.set(key,media);}return media;}
+  function releasePlayer(view,video=false) {
+    view.player.pause?.();view.player.removeAttribute('src');view.player.load?.();view.player.hidden=!video;view.load.hidden=false;view.load.disabled=false;
+    if(view.speed) view.speed.disabled=true;
+  }
+  function protectedMedia(key) {return key===viewerMediaKey || key===focusedMediaKey || mediaLocks.has(key) || [audioViews.get(key),videoViews.get(key)].some(view=>view?.player.src && view.player.paused===false);}
+  function discardMedia(key) {
+    const media=mediaUrls.get(key);if(!media) return;
+    previewViews.get(key)?.reset();if(audioViews.has(key)) releasePlayer(audioViews.get(key));if(videoViews.has(key)) releasePlayer(videoViews.get(key),true);
+    mediaUrls.delete(key);URL.revokeObjectURL(media.url);
+  }
+  function trimMediaCache(keepKey) {
+    let bytes=[...mediaUrls.values()].reduce((sum,media)=>sum+media.cacheBytes,0);
+    const candidates=[...mediaUrls.keys()].sort((a,b)=>Number(Boolean(previewViews.get(a)?.visible))-Number(Boolean(previewViews.get(b)?.visible)));
+    for(const key of candidates) {if(mediaUrls.size<=MEDIA_CACHE_ENTRIES && bytes<=MEDIA_CACHE_BYTES) break;if(key===keepKey || protectedMedia(key)) continue;bytes-=mediaUrls.get(key).cacheBytes;discardMedia(key);}
+  }
+  function clearConversationMedia() {
+    mediaGeneration++;focusedMediaKey=null;previewObserver?.disconnect();previewQueue=[];previewViews.clear();
+    for(const controller of mediaControllers.values()) controller.abort();mediaControllers.clear();mediaRequests.clear();
+    for(const view of audioViews.values()) releasePlayer(view);for(const view of videoViews.values()) releasePlayer(view,true);audioViews.clear();videoViews.clear();
+    for(const key of mediaUrls.keys()) if(key!==viewerMediaKey && !mediaLocks.has(key)) discardMedia(key);
+  }
+  function currentPreview(view) {return selected?.jid===view.jid && selection===view.version && previewViews.get(view.key)===view;}
+  function queuePreview(view) {if(!currentPreview(view) || view.queued || view.loading || view.hasImage) return;view.queued=true;previewQueue.push(view);pumpPreviews();}
+  function pumpPreviews() {
+    while(previewActive<2 && previewQueue.length) {
+      const view=previewQueue.shift();view.queued=false;if(!currentPreview(view) || !view.visible || view.hasImage) continue;
+      previewActive++;view.load().finally(()=>{previewActive--;pumpPreviews();});
+    }
+  }
   async function fetchMedia(message,jid) {
-      const key=jid+'|'+message.id;if(mediaUrls.has(key)) return mediaUrls.get(key);
-      const result=await api(`/media?jid=${encodeURIComponent(jid)}&id=${encodeURIComponent(message.id)}`,'GET',undefined,100000);
+      const key=jid+'|'+message.id,cached=cachedMedia(key);if(cached) return cached;
+      if(mediaRequests.has(key)) return mediaRequests.get(key);
+      const generation=mediaGeneration,controller=new AbortController();mediaControllers.set(key,controller);
+      const request=(async()=>{
+      const result=await api(`/media?jid=${encodeURIComponent(jid)}&id=${encodeURIComponent(message.id)}`,'GET',undefined,100000,AbortSignal.any([controller.signal,AbortSignal.timeout(100000)]));
+      if(generation!==mediaGeneration) throw new Error('A conversa foi alterada. Abra o anexo novamente.');
       const raw=result.base64.replace(/^data:[^,]*,/,'');if(!/^[A-Za-z0-9+/=\r\n]+$/.test(raw)) throw new Error('Mídia retornada em formato inválido.');
       const bytes=Uint8Array.from(atob(raw),char=>char.charCodeAt(0));
       const previewMime=globalThis.WhatsAppMedia?.previewMime?.(bytes) || null,mimeType=previewMime || result.mimeType,url=URL.createObjectURL(new Blob([bytes],{type:mimeType}));
-      const media={url,mimeType,previewMime,bytes,fileName:result.fileName || message.fileName || 'anexo'};mediaUrls.set(key,media);return media;
+      const media={url,mimeType,previewMime,bytes,cacheBytes:bytes.byteLength*2,fileName:result.fileName || message.fileName || 'anexo'};mediaUrls.set(key,media);trimMediaCache(key);return media;
+      })();mediaRequests.set(key,request);
+      try {return await request;}finally {if(mediaRequests.get(key)===request) {mediaRequests.delete(key);mediaControllers.delete(key);}}
+  }
+  function thumbnailUrl(message) {
+    const thumbnail=message.jpegThumbnail;
+    if(typeof thumbnail!=='string' || thumbnail.length>350000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(thumbnail)) return null;
+    try {const header=atob(thumbnail.slice(0,4));if(header.charCodeAt(0)===255 && header.charCodeAt(1)===216 && header.charCodeAt(2)===255) return 'data:image/jpeg;base64,'+thumbnail;}catch {}
+    return null;
   }
   function previewCard(message,jid) {
-    const card=el('section','attachment-card'),pdf=message.type==='document',button=el('button','attachment-preview-button',pdf?'Abrir PDF':'Abrir imagem'),label=el('span','attachment-caption',message.fileName || (pdf?'Documento PDF':'Imagem da conversa'));
+    const key=jid+'|'+message.id,card=el('section','attachment-card'),pdf=message.type==='document',button=el('button','attachment-preview-button',pdf?'Abrir PDF':'Abrir imagem'),label=el('span','attachment-caption',message.fileName || (pdf?'Documento PDF':'Imagem da conversa'));
     button.type='button';button.setAttribute('aria-label',pdf?'Abrir PDF':'Abrir imagem');
-    const cached=mediaUrls.get(jid+'|'+message.id);if(cached && !pdf && /^image\/(png|jpeg|gif|webp|avif)$/.test(cached.mimeType)) {button.textContent='';const image=el('img');image.src=cached.url;image.alt=message.text || 'Imagem da conversa';button.append(image);}
-    button.addEventListener('click',async()=>{button.disabled=true;const version=selection;
-      try {const media=await fetchMedia(message,jid);if(selected?.jid!==jid || selection!==version) return;await globalThis.WhatsAppMedia?.open?.(media,pdf?'pdf':'image');}
-      catch(error) {notice(error.message);}finally {button.disabled=false;}
-    });card.append(button,label);const download=el('button','text-button attachment-download','Baixar');download.type='button';download.addEventListener('click',()=>downloadMedia(message,jid,download));card.append(download);return card;
+    const status=el('p','attachment-preview-status');status.hidden=true;status.setAttribute('role','status');
+    const view={key,jid,version:selection,card,visible:!previewObserver,hasImage:false,queued:false,loading:false,load:()=>loadPreview(),reset:()=>{view.image?.removeAttribute('src');view.image=null;view.hasImage=false;button.textContent=pdf?'Abrir PDF':'Abrir imagem';}};
+    previewViews.set(key,view);card.dataset.mediaId=message.id;previewTargets.set(card,view);
+    const showImage=source=>{const image=el('img','conversation-image-preview');image.src=source;image.alt=message.text || 'Imagem da conversa';image.decoding='async';
+      image.addEventListener('error',()=>{view.reset();if(source.startsWith('data:')) queuePreview(view);else {status.textContent='Prévia indisponível. Tente abrir ou baixar a imagem.';status.hidden=false;}});
+      view.image=image;view.hasImage=true;button.replaceChildren(image);status.hidden=true;};
+    const loadPreview=async()=>{view.loading=true;button.textContent='Carregando imagem…';try {const media=await fetchMedia(message,jid);if(!currentPreview(view)) return;if(!/^image\/(png|jpeg|gif|webp|avif)$/.test(media.previewMime || '')) throw Error('Formato sem prévia');showImage(media.url);}
+      catch {if(currentPreview(view)) {view.reset();status.textContent='Prévia indisponível. Tente abrir ou baixar a imagem.';status.hidden=false;}}finally {view.loading=false;trimMediaCache();}};
+    if(!pdf) {const cached=cachedMedia(key),thumbnail=thumbnailUrl(message);if(cached && /^image\/(png|jpeg|gif|webp|avif)$/.test(cached.previewMime || '')) showImage(cached.url);else if(thumbnail) showImage(thumbnail);if(previewObserver) previewObserver.observe(card);else if(!view.hasImage) queuePreview(view);}
+    button.addEventListener('click',async()=>{button.disabled=true;mediaLocks.add(key);const version=selection;
+      try {const media=await fetchMedia(message,jid);if(selected?.jid!==jid || selection!==version) return;viewerMediaKey=key;await globalThis.WhatsAppMedia?.open?.(media,pdf?'pdf':'image');if(!$('media-viewer').open) viewerMediaKey=null;}
+      catch(error) {if(viewerMediaKey===key && !$('media-viewer').open) viewerMediaKey=null;notice(error.message);}finally {mediaLocks.delete(key);button.disabled=false;trimMediaCache();}
+    });card.append(button,label);const download=el('button','text-button attachment-download','Baixar');download.type='button';download.addEventListener('click',()=>downloadMedia(message,jid,download));card.append(download,status);return card;
   }
   async function loadMedia(message,jid,button) {
     button.disabled=true;button.textContent='Carregando…';
@@ -394,6 +450,7 @@
     if(sending) return;
     clearReply();
     if(selected) drafts.set(selected.jid,$('message-text').value);
+    clearConversationMedia();
     selected=chat;selection++;editRevision++;historyQueue=Promise.resolve();historyLoaded=false;messages=[];page=1;pages=1;attachment=null;attachmentKind=null;pendingSend=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;$('send-status').textContent='';
     globalThis.WhatsAppMedia?.onAttachment?.(null);
     $('conversation-empty').hidden=true;$('conversation-content').hidden=false;$('contact-empty').hidden=true;$('contact-details').hidden=false;
@@ -608,7 +665,7 @@
   $('nav-settings').addEventListener('click',()=>{showView('workspace','nav-settings');showPanel('connection');toggleContact(true);});
   $('refresh-top').addEventListener('click',()=>{notice('');sync();});
   $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
-  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
+  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);clearConversationMedia();selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
     try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice('Atendimento salvo.',true);}catch(error) {notice(error.message);}finally {button.disabled=false;}
@@ -672,6 +729,8 @@
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});
   globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',hooks});
+  $('media-viewer').addEventListener('close',()=>{const key=viewerMediaKey;viewerMediaKey=null;if(key && !key.startsWith((selected?.jid || '')+'|')) discardMedia(key);trimMediaCache();});
+  window.addEventListener('pagehide',()=>{viewerMediaKey=null;mediaLocks.clear();clearConversationMedia();});
   const mainNav=document.querySelector('.main-nav');
   if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-products','nav-knowledge','nav-ai','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
   hooks.sync.push(()=>globalThis.WhatsAppTriggers?.onChats?.(chats));hooks.select.push(()=>globalThis.WhatsAppTriggers?.onSelectChat?.(selected));

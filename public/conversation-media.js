@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const $=id=>document.getElementById(id),time=seconds=>Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
-  let context,recorder=null,stream=null,timer=null,generation=0,recordingJid=null,previewUrl=null,busy=false;
+  let context,recorder=null,stream=null,timer=null,generation=0,recordingJid=null,previewUrl=null,attachmentPreviewUrl=null,busy=false;
   function previewMime(bytes) {
     const ascii=(start,end)=>String.fromCharCode(...bytes.slice(start,end));
     if(ascii(0,5)==='%PDF-') return 'application/pdf';
@@ -14,13 +14,25 @@
   }
   function stopTracks() {for(const track of stream?.getTracks() || []) track.stop();stream=null;clearInterval(timer);timer=null;}
   function clearPreview() {$('voice-preview').pause();$('voice-preview').removeAttribute('src');$('voice-preview').hidden=true;if(previewUrl) URL.revokeObjectURL(previewUrl);previewUrl=null;}
+  function clearAttachmentPreview() {
+    const container=$('attachment-preview');for(const node of container.children) {node.pause?.();node.removeAttribute('src');if(node.tagName==='VIDEO') node.load?.();}
+    container.replaceChildren();container.hidden=true;if(attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);attachmentPreviewUrl=null;
+  }
   function refresh() {$('record-audio').disabled=busy || !context.canRecord();$('record-audio').setAttribute('aria-pressed',String(busy));}
   function reset() {
-    generation++;busy=false;if(recorder && recorder.state!=='inactive') recorder.stop();recorder=null;stopTracks();clearPreview();recordingJid=null;
+    generation++;busy=false;if(recorder && recorder.state!=='inactive') recorder.stop();recorder=null;stopTracks();clearPreview();clearAttachmentPreview();recordingJid=null;
     $('voice-recorder').hidden=true;$('voice-recorder').classList.remove('recording');$('voice-stop').hidden=true;refresh();
   }
   function onAttachment(file) {
-    reset();if(!file?.type.startsWith('audio/')) return;
+    reset();if(!file) return;
+    if(file.type.startsWith('image/') || file.type.startsWith('video/')) {
+      const video=file.type.startsWith('video/'),node=document.createElement(video?'video':'img'),container=$('attachment-preview');
+      attachmentPreviewUrl=URL.createObjectURL(file);node.src=attachmentPreviewUrl;
+      if(video) {node.controls=true;node.preload='metadata';node.playsInline=true;node.setAttribute('aria-label','Prévia do vídeo antes de enviar');}
+      else {node.alt='Prévia de '+file.name;node.decoding='async';}
+      container.append(node);container.hidden=false;return;
+    }
+    if(!file.type.startsWith('audio/')) return;
     recordingJid=context.getSelected()?.jid;previewUrl=URL.createObjectURL(file);$('voice-preview').src=previewUrl;$('voice-preview').hidden=false;$('voice-status').textContent='Áudio pronto · ouça antes de enviar';$('voice-recorder').hidden=false;refresh();
   }
   async function record() {
