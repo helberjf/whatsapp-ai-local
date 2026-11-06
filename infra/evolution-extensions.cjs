@@ -4,6 +4,8 @@ const fs=require('node:fs');
 const crypto=require('node:crypto');
 const vm=require('node:vm');
 const MAIN_SHA256='71b49ea87b8d0d7b413b77d067e33a8720c2e95e136f632210c1424862ef6b44';
+const BAILEYS_SOCKET_SHA256='d7e121951ae786d39fb729e193816515869e6ca96babf386515b54de07ef7d61';
+const OFFLINE_BATCH_IDLE_MS=1500;
 const STORE='/evolution/instances/whatsapp-central-disappearing.v1.json';
 const individual=value=>typeof value==='string' && /^[1-9]\d{5,19}@(s\.whatsapp\.net|lid)$/.test(value);
 const expirationValid=value=>[0,86400,604800,7776000].includes(value);
@@ -93,12 +95,50 @@ function patchBundle(source,version) {
   new vm.Script(patched,{filename:'evolution-patched-main.js'});
   return patched;
 }
+// Baileys 7.0.0-rc.9 pede só um lote de 100 itens offline (offline_batch) e nunca o seguinte.
+// Com mais de 100 pendências o servidor para de entregar, inclusive as mensagens novas, e a conexão segue "open".
+// O patch pede um novo lote sempre que o anterior termina, até o servidor confirmar o fim com <ib><offline/>.
+function patchBaileysSocket(source,version) {
+  if(version!=='7.0.0-rc.9') throw new Error('Unsupported Baileys version; expected 7.0.0-rc.9.');
+  if(crypto.createHash('sha256').update(source).digest('hex')!==BAILEYS_SOCKET_SHA256) throw new Error('Baileys socket hash mismatch; refusing to patch unknown code.');
+  const preview=`    ws.on('CB:ib,,offline_preview', async (node) => {
+        logger.info('offline preview received', JSON.stringify(node));
+        await sendNode({
+            tag: 'ib',
+            attrs: {},
+            content: [{ tag: 'offline_batch', attrs: { count: '100' } }]
+        });
+    });`;
+  const done=`    ws.on('CB:ib,,offline', (node) => {
+        const child = getBinaryNodeChild(node, 'offline');`;
+  if([preview,done].some(anchor=>source.split(anchor).length!==2)) throw new Error('Baileys offline patch anchors must each occur exactly once.');
+  const patched=source.replace(preview,`    let offlinePending=false,offlineIdle=null;
+    const requestOfflineBatch=()=>sendNode({tag:'ib',attrs:{},content:[{tag:'offline_batch',attrs:{count:'100'}}]});
+    const scheduleOfflineBatch=()=>{clearTimeout(offlineIdle);if(!offlinePending) return;offlineIdle=setTimeout(()=>{if(offlinePending) requestOfflineBatch().catch(error=>logger.warn({error},'offline batch request failed'));},${OFFLINE_BATCH_IDLE_MS});};
+    for(const tag of ['message','notification','receipt','call']) ws.on('CB:'+tag+',offline',()=>{if(offlinePending) scheduleOfflineBatch();});
+    ws.on('close',()=>{offlinePending=false;clearTimeout(offlineIdle);});
+    ws.on('CB:ib,,offline_preview', async (node) => {
+        logger.info('offline preview received', JSON.stringify(node));
+        offlinePending=true;
+        await requestOfflineBatch();
+        scheduleOfflineBatch();
+    });`).replace(done,`    ws.on('CB:ib,,offline', (node) => {
+        offlinePending=false;clearTimeout(offlineIdle);
+        const child = getBinaryNodeChild(node, 'offline');`);
+  // socket.js é ESM: valida a sintaxe sem executar o módulo.
+  const check=require('node:child_process').spawnSync(process.execPath,['--input-type=module','--check'],{input:patched,encoding:'utf8'});
+  if(check.status!==0) throw new Error('Patched Baileys socket failed the syntax check.');
+  return patched;
+}
 const extension=createExtension();
-module.exports={...extension,createExtension,patchBundle};
+module.exports={...extension,createExtension,patchBundle,patchBaileysSocket};
 if(require.main===module) {
   if(process.argv[2]!=='--patch') throw new Error('Use --patch during the image build.');
   const version=JSON.parse(fs.readFileSync('/evolution/package.json','utf8')).version;
   const path='/evolution/dist/main.js',original=fs.readFileSync(path,'utf8');
   const patched=patchBundle(original,version);fs.writeFileSync(path,patched);
-  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers and send inheritance installed.\n');
+  const baileysRoot='/evolution/node_modules/baileys',baileysVersion=JSON.parse(fs.readFileSync(baileysRoot+'/package.json','utf8')).version;
+  const socketPath=baileysRoot+'/lib/Socket/socket.js';
+  fs.writeFileSync(socketPath,patchBaileysSocket(fs.readFileSync(socketPath,'utf8'),baileysVersion));
+  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers, send inheritance and offline batch catch-up installed.\n');
 }

@@ -174,3 +174,10 @@ test('native timers follow explicit canonical JIDs across LID sends and subseque
 test('bundle patch refuses unknown Evolution versions and content hashes',()=>{
   const {patchBundle}=require('../infra/evolution-extensions.cjs');assert.throws(()=>patchBundle('untrusted','2.3.8'),/versão|version/i);assert.throws(()=>patchBundle('untrusted','2.3.7'),/hash/i);
 });
+test('Baileys patch keeps requesting offline batches until the server reports the backlog is done',()=>{
+  const {patchBaileysSocket}=require('../infra/evolution-extensions.cjs');
+  assert.throws(()=>patchBaileysSocket('untrusted','7.0.0'),/version/i);assert.throws(()=>patchBaileysSocket('untrusted','7.0.0-rc.9'),/hash/i);
+  const original=process.env.BAILEYS_SOCKET_FIXTURE;if(!original) return;
+  const patched=patchBaileysSocket(require('node:fs').readFileSync(original,'utf8'),'7.0.0-rc.9');
+  assert.match(patched,/offlinePending=true;\s*await requestOfflineBatch\(\);/);assert.match(patched,/'CB:'\+tag\+',offline'/);assert.match(patched,/CB:ib,,offline', \(node\) => \{\s*offlinePending=false;/);
+});
