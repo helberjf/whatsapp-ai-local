@@ -5,8 +5,24 @@ $centralUrl='http://127.0.0.1:8766/'
 $composeFile=Join-Path $projectRoot 'infra\compose.yaml'
 $dataPath=Join-Path $projectRoot 'data'
 $nodePath=(Get-Command node -ErrorAction Stop).Source
-function Test-Central {
-  try { $response=Invoke-RestMethod -Uri ($centralUrl+'health') -TimeoutSec 2;return $response.service -eq 'whatsapp-local' } catch { return $false }
+function Get-Central {
+  try { $response=Invoke-RestMethod -Uri ($centralUrl+'health') -TimeoutSec 2;if($response.service -eq 'whatsapp-local') {return $response} } catch {}
+  return $null
+}
+function Test-Central { return $null -ne (Get-Central) }
+# Uma central aberta antes de uma atualização continua rodando o código antigo com a página nova: para ela antes de abrir.
+function Stop-OldCentral($running) {
+  $candidates=@()
+  if($running.pid) {$candidates+=[int]$running.pid}
+  $pidFile=Join-Path $dataPath 'server.pid'
+  if(Test-Path -LiteralPath $pidFile) {try {$candidates+=[int](Get-Content -LiteralPath $pidFile)} catch {}}
+  try {$candidates+=@(Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8766 -State Listen -ErrorAction Stop | ForEach-Object {[int]$_.OwningProcess})} catch {}
+  foreach($candidate in ($candidates | Select-Object -Unique)) {
+    $process=Get-CimInstance Win32_Process -Filter "ProcessId = $candidate" -ErrorAction SilentlyContinue
+    if($process -and $process.Name -eq 'node.exe' -and $process.CommandLine -and $process.CommandLine.Contains('server.cjs')) {Stop-Process -Id $candidate -Force -ErrorAction SilentlyContinue}
+  }
+  for($attempt=0;$attempt -lt 20;$attempt++) {if(-not (Test-Central)) {return $true};Start-Sleep -Milliseconds 500}
+  return $false
 }
 $taskMutex=New-Object System.Threading.Mutex($false,'Local\WhatsAppLocalStart')
 $hasMutex=$false
@@ -38,10 +54,16 @@ try {
   Write-Output 'Preparando WhatsApp, banco e sessão persistente…'
   & docker compose -f $composeFile up -d --build --wait --wait-timeout 180
   if($LASTEXITCODE -ne 0) {throw 'A pilha local não ficou pronta. Consulte docker compose -f infra/compose.yaml logs --tail=50.'}
-  if(Test-Central) {
+  $expectedBuild=(& $nodePath (Join-Path $projectRoot 'lib\build-id.cjs') | Out-String).Trim()
+  $running=Get-Central
+  if($running -and $running.build -and $running.build -eq $expectedBuild) {
     Write-Output 'Central ja iniciada. Reutilizando a sessao.'
     if(-not $NoBrowser) {Start-Process $centralUrl}
     exit 0
+  }
+  if($running) {
+    Write-Output 'A central aberta e de uma versao anterior. Reiniciando com a atualizacao...'
+    if(-not (Stop-OldCentral $running)) {throw 'A central anterior continua aberta. Use Parar WhatsApp.cmd e abra de novo.'}
   }
   # O auxiliar fica em segundo plano, sem depender de uma janela de terminal aberta.
   $scriptPath=Join-Path $projectRoot 'server.cjs'

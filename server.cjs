@@ -27,13 +27,23 @@ const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
 const {createChatDelta}=require('./lib/chat-delta.cjs');
 const {createTeamService}=require('./lib/team.cjs');
 const root=__dirname;
+const {buildId}=require('./lib/build-id.cjs');
+// Código com que esta central iniciou; o de disco é conferido de novo a cada 15 s para perceber atualizações.
+const RUNNING_BUILD=buildId(root);
+let diskBuild={id:RUNNING_BUILD,at:Date.now()};
+function currentBuild() {if(Date.now()-diskBuild.at>15_000) {try {diskBuild={id:buildId(root),at:Date.now()};}catch {diskBuild.at=Date.now();}}return diskBuild.id;}
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const normalizeText=text=>String(text).normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
 // Arquivada: vale o registro mais recente entre o WhatsApp (extensão local) e o que foi feito pela central.
+// Com "Manter conversas arquivadas" desligado no WhatsApp, uma mensagem depois de arquivar tira a conversa das arquivadas.
 function archivedOf(chat,contact,remote) {
   const reported=[chat.jid,...(chat.aliasJids || [])].map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
   const local=Date.parse(contact?.archivedAt || '') || 0;
-  return reported && reported.updatedAt>=local?reported.archived:contact?.archived===true;
+  const fromWhatsApp=Boolean(reported && reported.updatedAt>=local);
+  const archived=fromWhatsApp?reported.archived:contact?.archived===true;
+  const since=fromWhatsApp?reported.lastMessageAt || reported.updatedAt:local;
+  if(archived && remote?.meta?.unarchiveChats===true && since>0 && Number(chat.lastMessage?.timestamp || 0)>since+1000) return false;
+  return archived;
 }
 const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
@@ -65,6 +75,12 @@ function createWhatsAppServer(options={}) {
   const scheduler=createScheduler({store,client,now:options.now || Date.now});
   const team=createTeamService({store,client,ai:extra.services.ai,now:options.now || Date.now});
   const requests=new Map(),chatDelta=createChatDelta();
+  // Uma vez por instalação: traz as conversas arquivadas no celular antes da extensão existir.
+  let archiveSnapshotJob=null,archiveSnapshotRetryAt=0;
+  function autoArchiveSnapshot() {
+    if(archiveSnapshotJob || Date.now()<archiveSnapshotRetryAt || typeof client.archiveSnapshot!=='function') return;
+    archiveSnapshotJob=client.archiveSnapshot().then(()=>client.invalidateChats(),()=>{archiveSnapshotRetryAt=Date.now()+10*60_000;}).finally(()=>{archiveSnapshotJob=null;});
+  }
   let messaging,events=null;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   async function sendOnce(input,send,prepare) {
@@ -90,7 +106,7 @@ function createWhatsAppServer(options={}) {
     if(req.headers.origin && req.headers.origin!==`http://${req.headers.host}`) return json(res,403,{error:'Abra a central no endereço local.'});
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
-      if(req.method==='GET' && route==='/health') return json(res,200,{service:'whatsapp-local',version:1});
+      if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid});}
       if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
@@ -147,9 +163,11 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/connection') return json(res,200,{...await client.connection(),events:events?.status() || {connected:false,lastEventAt:null,lastError:null}});
       if(req.method==='POST' && route==='/api/connect') return json(res,200,await client.connect());
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
+      if(req.method==='POST' && route==='/api/archived/sync') {const result=await client.archiveSnapshot();client.invalidateChats();return json(res,200,result);}
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
+        if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) autoArchiveSnapshot();
         const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
@@ -252,7 +270,7 @@ function createWhatsAppServer(options={}) {
 if(require.main===module) {
   (async()=>{
     const config=JSON.parse(await fs.readFile(path.join(root,'data','config.json'),'utf8')),server=createWhatsAppServer({config}),url='http://127.0.0.1:8766/';
-    server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`A central já pode estar aberta: ${url}`:error.message);process.exitCode=1;});
+    server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`A central já pode estar aberta (talvez uma versão anterior): ${url}\nUse Parar WhatsApp.cmd e depois Abrir WhatsApp.cmd.`:error.message);process.exitCode=1;});
     server.listen(8766,'127.0.0.1',()=>{
       console.log(`Whats AI · ${url}\nSessão preservada no Docker. Não remova os volumes.`);
       if(!process.argv.includes('--no-open')) execFile('powershell.exe',['-NoProfile','-Command',`Start-Process '${url}'`],{windowsHide:true},()=>{});

@@ -23,6 +23,9 @@ async function createDemo({port=8876}={}) {
     {...raw(1,'demo-contact','',false,380),message:{contactMessage:{displayName:'Jamie Costa',vcard:'BEGIN:VCARD\nVERSION:3.0\nFN:Jamie Costa\nitem1.TEL;waid=551100000006:+55 11 0000-0006\nEND:VCARD'}}},last);
   // Imita a extensão local: guarda o estado de arquivada informado pelo WhatsApp (inclusive o do celular).
   const archivedRemote={};
+  // Arquivada no celular antes da extensão existir: só aparece depois de "Buscar no WhatsApp" (leitura do estado do WhatsApp).
+  const phoneOnlyArchived={[jids[8]]:{archived:true,updatedAt:Date.now()-3*86400_000,lastMessageAt:Date.now()-4*86400_000}};
+  let archiveSnapshotAt=null;
   let privacy={readreceipts:'all',profile:'contacts',status:'contacts',online:'all',last:'contacts',groupadd:'contacts'},ownProfile={name:'Demo Operator',status:'Available for the demo'};
   histories[0].unshift({...raw(0,'demo-image','',false,110),message:{imageMessage:{mimetype:'image/png',caption:'Imagem de demonstração'}}},{...raw(0,'demo-pdf','',false,100),message:{documentMessage:{mimetype:'application/pdf',fileName:'sample.pdf'}}});
   const store=createStore(directory);
@@ -36,7 +39,8 @@ async function createDemo({port=8876}={}) {
     if(route.includes('/connectionState/')) output={instance:{state:'open'}};
     else if(route.includes('/fetchInstances')) output=[{name:'demo',ownerJid:jids[0]}];
     else if(route.includes('/findContacts/')) output=[...jids.map((jid,i)=>({remoteJid:jid,name:names[i],pushName:names[i]})),{remoteJid:'5511000000020@s.whatsapp.net',pushName:'Morgan Blake'},{remoteJid:'5511000000021@s.whatsapp.net',pushName:'Quinn Park'}];
-    else if(route.includes('/localArchived/')) output={extensionVersion:1,archiveSync:true,chats:archivedRemote};
+    else if(route.includes('/localArchivedSnapshot/')) {let changed=0;for(const [jid,item] of Object.entries(phoneOnlyArchived)) if(!archivedRemote[jid] || archivedRemote[jid].updatedAt<item.updatedAt) {archivedRemote[jid]=item;changed++;}archiveSnapshotAt=Date.now();output={success:true,archived:Object.values(archivedRemote).filter(item=>item.archived).length,changed,snapshotAt:archiveSnapshotAt,unarchiveChats:false};}
+    else if(route.includes('/localArchived/')) output={extensionVersion:2,archiveSync:true,snapshot:true,snapshotAt:archiveSnapshotAt,unarchiveChats:false,chats:archivedRemote};
     else if(route.includes('/findChats/')) output=jids.map((jid,i)=>({remoteJid:jid,pushName:names[i],unreadCount:i===1?2:0,lastMessage:histories[i].at(-1)}));
     else if(route.includes('/findMessages/')) {const list=histories[jids.indexOf(input.where?.key?.remoteJid)] || [];output={messages:{records:input.where?.key?.id?list.filter(m=>m.key.id===input.where.key.id):list,currentPage:1,pages:1,total:list.length}};}
     else if(route.includes('/getBase64FromMediaMessage/')) {const id=input.message?.key?.id;output=id==='demo-image'?{base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII=',mimetype:'image/png',fileName:'sample.png'}:id==='demo-pdf'?{base64:samplePdf().toString('base64'),mimetype:'application/pdf',fileName:'sample.pdf'}:{base64:id==='demo-video'?(await fs.readFile(path.join(__dirname,'..','tests','fixtures','demo.mp4'))).toString('base64'):wave().toString('base64'),mimetype:id==='demo-video'?'video/mp4':'audio/wav',fileName:id==='demo-video'?'demo.mp4':'demo.wav'};}

@@ -162,7 +162,7 @@ test('team tools: waiting queue, slash replies, bulk actions, transfer and dashb
   await page.screenshot({path:capturePath('team-dashboard.png')});
 });
 test('chats archived on the phone appear under Arquivadas and every filter stays in view',async({page,demo})=>{
-  await expect(page.locator('#archived-row')).toBeHidden();
+  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('0');
   demo.archiveOnPhone(9);await page.locator('#refresh-top').click();
   await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Riley Alves');
@@ -171,6 +171,18 @@ test('chats archived on the phone appear under Arquivadas and every filter stays
     await page.setViewportSize(viewport);
     for(const id of ['filter-all','filter-pending','filter-waiting','archived-row']) {const box=await page.locator('#'+id).boundingBox();expect(box,id).not.toBeNull();const panel=await page.locator('.inbox').boundingBox();expect(box.x+box.width,id+' '+viewport.width).toBeLessThanOrEqual(panel.x+panel.width+1);}
   }
+});
+test('chats archived on the phone before the extension are fetched from WhatsApp on request',async({page})=>{
+  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeVisible();await expect(page.locator('#chat-list .chat-item')).toHaveCount(0);
+  await expect(page.locator('#archived-sync-text')).toContainText('Busque as que estão arquivadas no celular');
+  await page.locator('#archived-sync-button').click();await expect(page.locator('#notice')).toContainText('1 conversa arquivada no WhatsApp.');
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Avery Rocha');
+  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+});
+test('an outdated central shows a restart notice instead of failing silently',async({page})=>{
+  await page.route('**/health',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({service:'whatsapp-local',version:1})}));
+  await page.reload();await expect(page.locator('#update-banner')).toContainText('versão anterior');
+  await page.unroute('**/health');await page.reload();await expect(page.locator('#update-banner')).toHaveCount(0);
 });
 test('contacts page lists the WhatsApp address book with conversations and the right phone',async({page})=>{
   await page.locator('#nav-contacts').click();await expect(page.locator('#contacts-count')).toContainText('12 contato(s) · 10 com conversa');

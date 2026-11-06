@@ -170,3 +170,6 @@ section.panel{position:relative}
 .archived-row:hover,.archived-row:focus-visible{background:#ffffff0a}
 .archived-row .archived-count{margin-left:auto;font-size:11px;color:#6fd8b4;font-weight:650}
 .archived-row.back{color:#9ff0cd}
+.archived-sync{display:flex;align-items:center;gap:10px;padding:8px 16px 10px;font-size:12px;color:#9fb6b0;flex-shrink:0;flex-wrap:wrap}
+.archived-sync[hidden]{display:none}
+.archived-sync span{flex:1;min-width:160px}

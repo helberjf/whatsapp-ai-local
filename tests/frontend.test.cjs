@@ -67,7 +67,8 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
     const input=options.body?JSON.parse(options.body):undefined;
     requests.push({path:url.pathname,jid:url.searchParams.get('jid'),method:options.method||'GET',input});
     let output;
-    if(url.pathname==='/api/settings') output={templates};
+    if(url.pathname==='/health') {requests.pop();return {ok:true,json:async()=>({service:'whatsapp-local',version:1,build:'test',current:'test',stale:false})};}
+    else if(url.pathname==='/api/settings') output={templates};
     else if(url.pathname==='/api/transcription/settings') {
       const result=await onTranscriptionSettings({method:options.method||'GET',input});
       if(options.method==='PATCH') transcriptionSettings={...transcriptionSettings,...(input.whisperModel?{whisperModel:input.whisperModel}:{}),...(input.language?{language:input.language}:{}),...(input.aiApiKey?{aiConfigured:true}:{}),...(input.removeAiKey?{aiConfigured:false}:{})};

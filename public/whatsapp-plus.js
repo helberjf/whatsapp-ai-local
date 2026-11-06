@@ -7,6 +7,7 @@
   const QUICK_REACTIONS=['👍','❤️','😂','😮','😢','🙏'];
   const PRIVACY_LABELS={all:'Todos',contacts:'Meus contatos',contact_blacklist:'Meus contatos, exceto…',none:'Ninguém'};
   const NO_REPLY='Sem resposta';
+  let archiveSyncing=false;
   let reply=null,showArchived=false,showUnanswered=false,starred=new Map(),editState=null,searchState={query:'',hits:[],index:-1};
   let typing={jid:null,at:0},recordingTimer=null,shareTyping=true,notifiedAt=new Map(),notificationsReady=false;
   const pending=new Map(),requestIds=new Map();
@@ -29,7 +30,10 @@
     const searching=Boolean($('search')?.value.trim()),waiting=chat=>Array.isArray(chat.labels) && chat.labels.includes(NO_REPLY);
     const archivedCount=C.chats().filter(chat=>chat.archived===true).length,unansweredCount=C.chats().filter(waiting).length;
     $('filter-archived').hidden=true;$('filter-archived-count').textContent=archivedCount;
-    $('archived-row').hidden=!archivedCount && !showArchived;$('archived-row').setAttribute('aria-pressed',String(showArchived));$('archived-row').classList.toggle('back',showArchived);
+    // A linha fica sempre à mão (como no WhatsApp com arquivadas): por ela também se busca as arquivadas antigas do celular.
+    $('archived-row').hidden=!archivedCount && !showArchived && !C.chats().length;
+    $('archived-sync').hidden=!showArchived;
+    if(showArchived && !archiveSyncing) $('archived-sync-text').textContent=archivedCount?'Arquivou no celular e não aparece? Busque de novo.':'Nenhuma arquivada por aqui. Busque as que estão arquivadas no celular.';$('archived-row').setAttribute('aria-pressed',String(showArchived));$('archived-row').classList.toggle('back',showArchived);
     $('archived-row-label').textContent=showArchived?'← Voltar às conversas':'Arquivadas';$('archived-row-count').textContent=showArchived?'':String(archivedCount);
     $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
     // Filtros da equipe (Aguardando, Minhas) têm precedência quando ativos.
@@ -64,6 +68,14 @@
     $('inbox-title').firstChild.textContent=showUnanswered?'Sem resposta ':'Conversas ';C.renderChats();
   });
   $('archived-row').addEventListener('click',()=>$('filter-archived').click());
+  $('archived-sync-button').addEventListener('click',async()=>{
+    if(archiveSyncing) return;archiveSyncing=true;$('archived-sync-button').disabled=true;$('archived-sync-text').textContent='Buscando as arquivadas no WhatsApp…';
+    try {
+      const result=await api('/archived/sync','POST',{},120000);await C.sync();
+      notice(result.archived?`${result.archived} conversa${result.archived===1?'':'s'} arquivada${result.archived===1?'':'s'} no WhatsApp.`:'O WhatsApp não tem conversas arquivadas.',true);
+    } catch(error) {notice(error.message);}
+    finally {archiveSyncing=false;$('archived-sync-button').disabled=false;C.renderChats();}
+  });
   $('filter-archived').addEventListener('click',()=>{
     globalThis.WhatsAppTeam?.resetFilter?.();
     if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');}

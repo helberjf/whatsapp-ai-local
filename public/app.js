@@ -1,6 +1,17 @@
 (() => {
   'use strict';
   const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
+  // A página vem dos arquivos em disco: se a central em execução for anterior à atualização, avisa para reiniciá-la.
+  async function checkCentralVersion() {
+    try {
+      const health=await fetch('/health',{cache:'no-store'}).then(response=>response.json());
+      if(health?.service!=='whatsapp-local' || (health.build && !health.stale) || $('update-banner')) return;
+      const banner=document.createElement('div');banner.id='update-banner';banner.className='update-banner';banner.setAttribute('role','alert');
+      banner.textContent='A central aberta é de uma versão anterior à atualização baixada, por isso partes da tela podem falhar. Feche esta aba e abra “Abrir WhatsApp” de novo: ele reinicia a central com a versão nova.';
+      document.body.prepend(banner);
+    } catch {}
+  }
+  checkCentralVersion();document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible') checkCentralVersion();});
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
   const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
   let virtualRows=null,rowHeight=0,chatsVersion=null;
