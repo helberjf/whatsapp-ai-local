@@ -28,7 +28,9 @@
   function arrangeChats(list) {
     const searching=Boolean($('search')?.value.trim()),waiting=chat=>Array.isArray(chat.labels) && chat.labels.includes(NO_REPLY);
     const archivedCount=C.chats().filter(chat=>chat.archived===true).length,unansweredCount=C.chats().filter(waiting).length;
-    $('filter-archived').hidden=!archivedCount && !showArchived;$('filter-archived-count').textContent=archivedCount;
+    $('filter-archived').hidden=true;$('filter-archived-count').textContent=archivedCount;
+    $('archived-row').hidden=!archivedCount && !showArchived;$('archived-row').setAttribute('aria-pressed',String(showArchived));$('archived-row').classList.toggle('back',showArchived);
+    $('archived-row-label').textContent=showArchived?'← Voltar às conversas':'Arquivadas';$('archived-row-count').textContent=showArchived?'':String(archivedCount);
     $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
     // Filtros da equipe (Aguardando, Minhas) têm precedência quando ativos.
     const teamView=globalThis.WhatsAppTeam?.filter?.(list.filter(chat=>chat.archived!==true));if(teamView) return teamView;
@@ -61,6 +63,7 @@
     $('filter-unanswered').classList.toggle('active',showUnanswered);$('filter-unanswered').setAttribute('aria-pressed',String(showUnanswered));
     $('inbox-title').firstChild.textContent=showUnanswered?'Sem resposta ':'Conversas ';C.renderChats();
   });
+  $('archived-row').addEventListener('click',()=>$('filter-archived').click());
   $('filter-archived').addEventListener('click',()=>{
     globalThis.WhatsAppTeam?.resetFilter?.();
     if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');}

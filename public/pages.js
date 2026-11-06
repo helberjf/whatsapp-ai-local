@@ -393,28 +393,38 @@
   });
 
   // ---------- Contatos (CRM) ----------
-  function listedContacts() {
-    const search=normalize($('contacts-search').value),status=$('contacts-status').value;
-    return C.chats().filter(chat=>(!status || chat.status===status) && (!search || normalize(`${chat.name} ${chat.jid} ${(chat.labels || []).join(' ')}`).includes(search)));
+  // Contatos: agenda do WhatsApp e conversas, vindos do servidor em páginas de 200 (listas grandes não travam a tela).
+  let contactRows=[],contactsVersion=0,contactsFetchedAt=0,contactsTimer=null;
+  function listedContacts() {return contactRows;}
+  const contactPhoneLabel=row=>row.phone?phoneLabel(row.phone):row.jid.endsWith('@lid')?'Identificador privado':phoneLabel(row.jid.split('@')[0]);
+  async function loadContacts({more=false}={}) {
+    const params=new URLSearchParams({limit:'200',offset:String(more?contactRows.length:0)}),search=$('contacts-search').value.trim(),status=$('contacts-status').value;
+    if(search) params.set('search',search);if(status) params.set('status',status);
+    const version=++contactsVersion,result=await api('/contacts?'+params);if(version!==contactsVersion) return;
+    contactRows=more?[...contactRows,...result.contacts]:result.contacts;contactsFetchedAt=Date.now();drawContacts(result);
   }
-  function renderContacts() {
+  function renderContacts() {loadContacts().catch(error=>notice(error.message));}
+  function drawContacts(result) {
     const fragment=document.createDocumentFragment();
-    const list=listedContacts();
-    for(const chat of list) {
-      const row=el('tr','clickable'),who=el('td','doc-name'),open=el('button','link-button',chat.name);open.type='button';open.addEventListener('click',()=>C.openChat(chat));
-      who.append(el('span','avatar',initials(chat.name)),open);
-      const labels=el('td','labels');for(const label of chat.labels || []) labels.append(el('span','chip',label));
-      const phone=chat.jid.endsWith('@lid')?'Identificador privado':phoneLabel(chat.jid.split('@')[0]);
-      const mode=el('select','cell-input narrow');mode.setAttribute('aria-label','IA para '+chat.name);for(const [value,text] of Object.entries(MODE_LABEL)) {const option=el('option','',text);option.value=value;mode.append(option);}mode.value=chat.aiMode || 'off';
-      mode.addEventListener('change',guard(async()=>{try {await setMode(chat,mode.value);notice('IA de '+chat.name+': '+MODE_LABEL[mode.value]+'.',true);}catch(error) {mode.value=chat.aiMode || 'off';throw error;}}));
+    for(const row of contactRows) {
+      const tr=el('tr','clickable'),who=el('td','doc-name'),open=el('button','link-button',row.name);open.type='button';
+      open.addEventListener('click',()=>C.openChat(C.chats().find(chat=>chat.jid===row.jid || (row.aliasJids || []).includes(chat.jid)) || {...row,unread:0}));
+      who.append(el('span','avatar',initials(row.name)),open);
+      const labels=el('td','labels');for(const label of row.labels || []) labels.append(el('span','chip',label));
+      const mode=el('select','cell-input narrow');mode.setAttribute('aria-label','IA para '+row.name);for(const [value,text] of Object.entries(MODE_LABEL)) {const option=el('option','',text);option.value=value;mode.append(option);}mode.value=row.aiMode || 'off';
+      mode.addEventListener('change',guard(async()=>{try {await setMode(row,mode.value);notice('IA de '+row.name+': '+MODE_LABEL[mode.value]+'.',true);}catch(error) {mode.value=row.aiMode || 'off';throw error;}}));
       const modeCell=el('td');modeCell.append(mode);
-      row.append(who,el('td','',phone),labels,el('td','',statuses[chat.status] || statuses.open),modeCell,el('td','',String((chat.notes || []).length)),el('td','',chat.lastMessage?.text || (chat.lastMessage?.type && chat.lastMessage.type!=='text'?'Anexo':'—')));
-      fragment.append(row);
+      tr.append(who,el('td','',contactPhoneLabel(row)),labels,el('td','',statuses[row.status] || statuses.open),modeCell,el('td','',String(row.notesCount ?? (row.notes || []).length)),el('td','',row.hasChat?(C.previewText?.(row.lastMessage) || '—'):'Sem conversa'));
+      fragment.append(tr);
     }
-    if(!list.length) {const row=el('tr'),cell=el('td','empty-cell',C.chats().length?'Nenhum contato corresponde aos filtros.':'Os contatos aparecem aqui quando o WhatsApp sincroniza as conversas.');cell.colSpan=6;row.append(cell);fragment.append(row);}
+    if(!contactRows.length) {const tr=el('tr'),cell=el('td','empty-cell',$('contacts-search').value.trim() || $('contacts-status').value?'Nenhum contato corresponde aos filtros.':'Os contatos aparecem aqui quando o WhatsApp sincroniza a agenda e as conversas.');cell.colSpan=7;tr.append(cell);fragment.append(tr);}
     $('contacts-body').replaceChildren(fragment);
+    $('contacts-count').textContent=`${result.total} contato(s) · ${result.withChat} com conversa`+(contactRows.length<result.total?` · mostrando ${contactRows.length}`:'');
+    $('contacts-more').hidden=contactRows.length>=result.total;
   }
-  $('contacts-search').addEventListener('input',renderContacts);$('contacts-status').addEventListener('change',renderContacts);
+  const scheduleContacts=()=>{clearTimeout(contactsTimer);contactsTimer=setTimeout(renderContacts,250);};
+  $('contacts-search').addEventListener('input',scheduleContacts);$('contacts-status').addEventListener('change',renderContacts);
+  $('contacts-more').addEventListener('click',guard(async()=>{$('contacts-more').disabled=true;try {await loadContacts({more:true});}finally {$('contacts-more').disabled=false;}}));
 
   // ---------- Busca global ----------
   function renderSearch() {
@@ -538,7 +548,7 @@
     if(!list.length) {notice('Nenhum contato listado.');return;}
     if(!confirm(`Definir IA "${MODE_LABEL[mode]}" para ${list.length} contato(s) listado(s)?`+(mode==='auto'?'\nA IA responderá sozinha quando a chave de respostas automáticas estiver ligada.':''))) return;
     await api('/assistant/classify','POST',{jids:list.map(chat=>chat.jid),aiMode:mode});
-    for(const chat of list) chat.aiMode=mode;
+    for(const chat of list) {chat.aiMode=mode;const listed=C.chats().find(item=>item.jid===chat.jid);if(listed) listed.aiMode=mode;}
     renderContacts();notice(`${list.length} contato(s) atualizado(s).`,true);
   }));
 
@@ -574,7 +584,7 @@
     if(name==='page-ai') {guard(refreshAi)();guard(refreshAssistant)();guard(refreshHuman)();}
     if(name==='page-contacts') renderContacts();
   });
-  C.hooks.sync.push(()=>{if(view==='page-contacts') renderContacts();});
+  C.hooks.sync.push(()=>{if(view==='page-contacts' && Date.now()-contactsFetchedAt>15_000) renderContacts();});
   C.hooks.select.push(renderPanelProducts);
 
   // Carga inicial silenciosa: alimenta contadores e a busca sem interromper o uso.

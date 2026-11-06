@@ -1,5 +1,6 @@
 // Local extension by Codex, 2026-10-29. Evolution API 2.3.7 / Baileys 7.0.0-rc.9.
 // Adds authenticated individual-chat timer settings and inherits confirmed timers on sends.
+// Also keeps the archive state WhatsApp reports for each chat (Evolution 2.3.7 drops it) and serves it to the central.
 const fs=require('node:fs');
 const crypto=require('node:crypto');
 const vm=require('node:vm');
@@ -7,9 +8,28 @@ const MAIN_SHA256='71b49ea87b8d0d7b413b77d067e33a8720c2e95e136f632210c1424862ef6
 const BAILEYS_SOCKET_SHA256='d7e121951ae786d39fb729e193816515869e6ca96babf386515b54de07ef7d61';
 const OFFLINE_BATCH_IDLE_MS=1500;
 const STORE='/evolution/instances/whatsapp-central-disappearing.v1.json';
+const ARCHIVE_STORE='/evolution/instances/whatsapp-central-archived.v1.json';
 const individual=value=>typeof value==='string' && /^[1-9]\d{5,19}@(s\.whatsapp\.net|lid)$/.test(value);
 const expirationValid=value=>[0,86400,604800,7776000].includes(value);
-function createExtension(storage={}) {
+function createExtension(storage={},archiveStorage={}) {
+  const loadArchive=archiveStorage.load || (()=>{try {const stat=fs.statSync(ARCHIVE_STORE);if(stat.size>4_000_000) return {};return JSON.parse(fs.readFileSync(ARCHIVE_STORE,'utf8'));}catch {return {};}});
+  const saveArchive=archiveStorage.save || (value=>{const temporary=ARCHIVE_STORE+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,ARCHIVE_STORE);});
+  let archive,archiveTimer=null;
+  function archives() {if(!archive) {const loaded=loadArchive();archive=loaded && typeof loaded==='object' && !Array.isArray(loaded)?loaded:{};}return archive;}
+  // A sincronização inicial pode trazer milhares de conversas: grava uma vez depois que os avisos param.
+  function scheduleArchiveSave() {
+    if(archiveTimer) return;
+    archiveTimer=setTimeout(()=>{archiveTimer=null;try {saveArchive(archives());}catch { /* the next change tries again */ }},archiveStorage.delayMs ?? 1000);archiveTimer.unref?.();
+  }
+  function rememberArchive(service,jid,archived,updatedAt=Date.now()) {
+    const id=instanceKey(service);if(!id || !individual(jid) || typeof archived!=='boolean') return;
+    const chats=archives()[id] ||= {},previous=chats[jid];
+    if(previous && previous.archived===archived) return;
+    chats[jid]={archived,updatedAt};
+    const ids=Object.keys(chats);if(ids.length>20000) for(const old of ids.sort((a,b)=>chats[a].updatedAt-chats[b].updatedAt).slice(0,ids.length-20000)) delete chats[old];
+    scheduleArchiveSave();
+  }
+  const archiveFrom=(service,list)=>{for(const chat of Array.isArray(list)?list:[]) if(chat && typeof chat.archived==='boolean') rememberArchive(service,chat.id,chat.archived);};
   const load=storage.load || (()=>{try {const stat=fs.statSync(STORE);if(stat.size>2_000_000) throw new Error('Timer store too large');return JSON.parse(fs.readFileSync(STORE,'utf8'));}catch(error) {if(error.code==='ENOENT') return {};throw error;}});
   const save=storage.save || (value=>{const temporary=STORE+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,STORE);});
   let state;
@@ -44,7 +64,11 @@ function createExtension(storage={}) {
         }
       }
     });
+    // Arquivar e desarquivar chegam como atualização de conversa, inclusive as feitas no celular.
+    socket.ev.on('chats.upsert',chats=>archiveFrom(service,chats));
+    socket.ev.on('messaging-history.set',payload=>archiveFrom(service,payload?.chats));
     socket.ev.on('chats.update',updates=>{
+      archiveFrom(service,updates);
       for(const chat of Array.isArray(updates)?updates:[]) {
         if(!expirationValid(chat.ephemeralExpiration)) continue;
         const timestamp=Number(chat.ephemeralSettingTimestamp?.low ?? chat.ephemeralSettingTimestamp);
@@ -81,7 +105,13 @@ function createExtension(storage={}) {
       return response.status(200).json({success:true,jid:number,expiration,updatedAt,source:'central'});
     } catch {return fail(response,502,'Não foi possível confirmar a alteração. Confira a conversa no celular antes de tentar novamente.');}
   };}
-  return {expirationFor,capabilityHandler,ephemeralHandler,observe};
+  function archivedHandler(controller) {return async(request,response)=>{
+    const service=serviceFor(controller,request),id=instanceKey(service);
+    if(!id) return fail(response,503,'O WhatsApp precisa estar conectado.');
+    try {observe(service);return response.status(200).json({extensionVersion:1,archiveSync:true,chats:archives()[id] || {}});}
+    catch {return fail(response,503,'Não foi possível ler as conversas arquivadas.');}
+  };}
+  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,observe,rememberArchive};
 }
 function patchBundle(source,version) {
   if(version!=='2.3.7') throw new Error('Unsupported Evolution version; expected 2.3.7.');
@@ -91,7 +121,7 @@ function patchBundle(source,version) {
   const events='eventHandler(){this.client.ev.process(';
   if([route,send,events].some(anchor=>source.split(anchor).length!==2)) throw new Error('Evolution extension patch anchors must each occur exactly once.');
   const extension='require("/evolution/local/evolution-extensions.cjs")';
-  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`);
+  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`);
   new vm.Script(patched,{filename:'evolution-patched-main.js'});
   return patched;
 }
@@ -140,5 +170,5 @@ if(require.main===module) {
   const baileysRoot='/evolution/node_modules/baileys',baileysVersion=JSON.parse(fs.readFileSync(baileysRoot+'/package.json','utf8')).version;
   const socketPath=baileysRoot+'/lib/Socket/socket.js';
   fs.writeFileSync(socketPath,patchBaileysSocket(fs.readFileSync(socketPath,'utf8'),baileysVersion));
-  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers, send inheritance and offline batch catch-up installed.\n');
+  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers, send inheritance, offline batch catch-up and archive state installed.\n');
 }

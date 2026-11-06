@@ -21,6 +21,8 @@ async function createDemo({port=8876}={}) {
     {key:{id:'demo-reaction',remoteJid:jids[1],fromMe:false},messageType:'reactionMessage',message:{reactionMessage:{key:{id:'reply-1',remoteJid:jids[1],fromMe:true},text:'👍'}},messageTimestamp:stamp-440,status:'READ'},
     {...raw(1,'demo-location','',false,400),message:{locationMessage:{degreesLatitude:-23.561414,degreesLongitude:-46.655881,name:'Demo Store',address:'Fictional Avenue, 100'}}},
     {...raw(1,'demo-contact','',false,380),message:{contactMessage:{displayName:'Jamie Costa',vcard:'BEGIN:VCARD\nVERSION:3.0\nFN:Jamie Costa\nitem1.TEL;waid=551100000006:+55 11 0000-0006\nEND:VCARD'}}},last);
+  // Imita a extensão local: guarda o estado de arquivada informado pelo WhatsApp (inclusive o do celular).
+  const archivedRemote={};
   let privacy={readreceipts:'all',profile:'contacts',status:'contacts',online:'all',last:'contacts',groupadd:'contacts'},ownProfile={name:'Demo Operator',status:'Available for the demo'};
   histories[0].unshift({...raw(0,'demo-image','',false,110),message:{imageMessage:{mimetype:'image/png',caption:'Imagem de demonstração'}}},{...raw(0,'demo-pdf','',false,100),message:{documentMessage:{mimetype:'application/pdf',fileName:'sample.pdf'}}});
   const store=createStore(directory);
@@ -33,7 +35,8 @@ async function createDemo({port=8876}={}) {
     const route=new URL(url).pathname,input=options.body?JSON.parse(options.body):{};let output={};
     if(route.includes('/connectionState/')) output={instance:{state:'open'}};
     else if(route.includes('/fetchInstances')) output=[{name:'demo',ownerJid:jids[0]}];
-    else if(route.includes('/findContacts/')) output=jids.map((jid,i)=>({remoteJid:jid,name:names[i],pushName:names[i]}));
+    else if(route.includes('/findContacts/')) output=[...jids.map((jid,i)=>({remoteJid:jid,name:names[i],pushName:names[i]})),{remoteJid:'5511000000020@s.whatsapp.net',pushName:'Morgan Blake'},{remoteJid:'5511000000021@s.whatsapp.net',pushName:'Quinn Park'}];
+    else if(route.includes('/localArchived/')) output={extensionVersion:1,archiveSync:true,chats:archivedRemote};
     else if(route.includes('/findChats/')) output=jids.map((jid,i)=>({remoteJid:jid,pushName:names[i],unreadCount:i===1?2:0,lastMessage:histories[i].at(-1)}));
     else if(route.includes('/findMessages/')) {const list=histories[jids.indexOf(input.where?.key?.remoteJid)] || [];output={messages:{records:input.where?.key?.id?list.filter(m=>m.key.id===input.where.key.id):list,currentPage:1,pages:1,total:list.length}};}
     else if(route.includes('/getBase64FromMediaMessage/')) {const id=input.message?.key?.id;output=id==='demo-image'?{base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII=',mimetype:'image/png',fileName:'sample.png'}:id==='demo-pdf'?{base64:samplePdf().toString('base64'),mimetype:'application/pdf',fileName:'sample.pdf'}:{base64:id==='demo-video'?(await fs.readFile(path.join(__dirname,'..','tests','fixtures','demo.mp4'))).toString('base64'):wave().toString('base64'),mimetype:id==='demo-video'?'video/mp4':'audio/wav',fileName:id==='demo-video'?'demo.mp4':'demo.wav'};}
@@ -44,7 +47,7 @@ async function createDemo({port=8876}={}) {
     else if(route.includes('/fetchPrivacySettings/')) output=privacy;
     else if(route.includes('/updatePrivacySettings/')) {privacy={...input};output={update:'success',data:privacy};}
     else if(route.includes('/sendPresence/')) output={presence:input.presence};
-    else if(route.includes('/archiveChat/')) output={chatId:input.chat,archived:true};
+    else if(route.includes('/archiveChat/')) {archivedRemote[input.chat]={archived:input.archive,updatedAt:Date.now()};output={chatId:input.chat,archived:true};}
     else if(route.includes('/markChatUnread/')) output={chatId:input.chat,markedChatUnread:true};
     else if(route.includes('/updateBlockStatus/')) output={block:'success'};
     else if(route.includes('/updateMessage/')) {const original=histories.flat().find(m=>m.key.id===input.key?.id);if(original) {if(original.message?.extendedTextMessage) original.message.extendedTextMessage.text=input.text;else original.message={conversation:input.text};original.status='EDITED';}output={key:{id:'edit-'+Date.now(),remoteJid:input.number,fromMe:true},message:{protocolMessage:{type:14,key:input.key}}};}
@@ -80,7 +83,7 @@ async function createDemo({port=8876}={}) {
   await api('/products',{name:'Studio Headphones',kind:'produto',category:'Audio',description:'Wireless headphones with 24-hour battery life and comfortable ear cushions.',price:249.90,stock:18,active:true,warranty:'12 months',sku:'DEMO-001'});
   await api('/products',{name:'Web Design',kind:'servico',category:'Services',description:'Responsive websites tailored to your project.',price:null,stock:null,active:true,sku:'DEMO-002'});
   await server.team.tick();
-  return {server,base,directory,aiCalls,async close(){await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await Promise.all([server.scheduler.idle(),server.triggers.idle(),server.assistant.idle()]);if(path.dirname(directory)!==os.tmpdir() || !path.basename(directory).startsWith('whatsapp-central-demo-')) throw Error('Unsafe demo cleanup path');await fs.rm(directory,{recursive:true,force:true});}};
+  return {server,base,directory,aiCalls,archiveOnPhone(index,archived=true) {archivedRemote[jids[index]]={archived,updatedAt:Date.now()};server.invalidateChats();},async close(){await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await Promise.all([server.scheduler.idle(),server.triggers.idle(),server.assistant.idle()]);if(path.dirname(directory)!==os.tmpdir() || !path.basename(directory).startsWith('whatsapp-central-demo-')) throw Error('Unsafe demo cleanup path');await fs.rm(directory,{recursive:true,force:true});}};
 }
 // Embeddings fictícios: cada posição conta menções de um assunto, então "fone sem fio" encontra "headphones" sem palavras em comum.
 const DEMO_CONCEPTS=[/headphone|fone|audio|som|musica|battery|bateria/g,/delivery|entrega|prazo|frete|envio/g,/warranty|garantia|defeito/g,/website|site|web|design|pagina/g,/price|preco|valor|custa|brl|reais/g];

@@ -162,3 +162,11 @@ section.panel{position:relative}
 .segmented input{left:0;top:0;width:1px;height:1px;margin:0}
 #page-team .table-wrap{overflow-x:auto;max-width:100%}
 #page-team .page-actions{flex-wrap:wrap}
+/* Filtros quebram linha (nada fica escondido fora da vista) e "Arquivadas" fica no topo da lista. */
+.filter-tabs{flex-wrap:wrap;overflow:visible;row-gap:6px}
+.archived-row{display:flex;align-items:center;gap:12px;width:100%;padding:11px 16px;border:0;border-top:1px solid var(--line);background:transparent;color:#cfe0dc;font-size:13px;text-align:left;cursor:pointer;flex-shrink:0}
+.archived-row[hidden]{display:none}
+.archived-row .icon{width:18px;height:18px;color:#6fd8b4}
+.archived-row:hover,.archived-row:focus-visible{background:#ffffff0a}
+.archived-row .archived-count{margin-left:auto;font-size:11px;color:#6fd8b4;font-weight:650}
+.archived-row.back{color:#9ff0cd}

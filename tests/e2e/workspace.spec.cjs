@@ -123,8 +123,9 @@ test('conversation organization: pin, archive, mute and unread stay explicit',as
   await openChat(page);await page.locator('#show-contact').click();
   await page.locator('#chat-pin').click();await expect(page.locator('#chat-pin')).toContainText('Desafixar');await expect(page.locator('.chat-item').first()).toContainText('Alex Morgan');
   await page.locator('#chat-mute').click();await page.locator('[data-mute="-1"]').click();await expect(page.locator('#chat-mute')).toContainText('Reativar');await expect(page.locator('#contact-flags')).toContainText('Silenciada');
-  await page.locator('#chat-archive').click();await expect(page.locator('#filter-archived-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
-  await page.locator('#filter-archived').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await page.locator('#filter-archived').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#chat-archive').click();await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#archived-row')).toContainText('Voltar às conversas');
+  await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
 });
 test('voice flow stages save separately and the voice preview never enables automatic replies',async({page})=>{
   await page.locator('#nav-voice').click();await expect(page.locator('#page-voice')).toBeVisible();await expect(page.locator('#voice-auto-transcribe')).not.toBeChecked();await expect(page.locator('#nav-voice-state')).toHaveText('—');
@@ -159,4 +160,22 @@ test('team tools: waiting queue, slash replies, bulk actions, transfer and dashb
   await page.locator('#page-team .segmented label').filter({hasText:'7 dias'}).click();await expect(page.locator('#hours-caption')).toContainText('7 dias');
   await page.locator('#page-team .segmented label').filter({hasText:'Hoje'}).click();await expect(page.locator('#hours-caption')).toContainText('Hoje');await page.mouse.move(0,0);
   await page.screenshot({path:capturePath('team-dashboard.png')});
+});
+test('chats archived on the phone appear under Arquivadas and every filter stays in view',async({page,demo})=>{
+  await expect(page.locator('#archived-row')).toBeHidden();
+  demo.archiveOnPhone(9);await page.locator('#refresh-top').click();
+  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Riley Alves');
+  await page.locator('#archived-row').click();
+  for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {
+    await page.setViewportSize(viewport);
+    for(const id of ['filter-all','filter-pending','filter-waiting','archived-row']) {const box=await page.locator('#'+id).boundingBox();expect(box,id).not.toBeNull();const panel=await page.locator('.inbox').boundingBox();expect(box.x+box.width,id+' '+viewport.width).toBeLessThanOrEqual(panel.x+panel.width+1);}
+  }
+});
+test('contacts page lists the WhatsApp address book with conversations and the right phone',async({page})=>{
+  await page.locator('#nav-contacts').click();await expect(page.locator('#contacts-count')).toContainText('12 contato(s) · 10 com conversa');
+  const agenda=page.locator('#contacts-body tr').filter({hasText:'Morgan Blake'});await expect(agenda).toContainText('Sem conversa');await expect(agenda).toContainText('+55 11 00000-0020');
+  await expect(page.locator('#contacts-body tr').filter({hasText:'Sam Rivera'})).not.toContainText('[');
+  await page.locator('#contacts-search').fill('quinn');await expect(page.locator('#contacts-body tr')).toHaveCount(1);await expect(page.locator('#contacts-count')).toContainText('1 contato(s)');
+  await page.locator('#contacts-body tr').filter({hasText:'Quinn Park'}).getByRole('button',{name:'Quinn Park'}).click();await expect(page.locator('#contact-name')).toHaveText('Quinn Park');
 });

@@ -28,6 +28,13 @@ const {createChatDelta}=require('./lib/chat-delta.cjs');
 const {createTeamService}=require('./lib/team.cjs');
 const root=__dirname;
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
+const normalizeText=text=>String(text).normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
+// Arquivada: vale o registro mais recente entre o WhatsApp (extensão local) e o que foi feito pela central.
+function archivedOf(chat,contact,remote) {
+  const reported=[chat.jid,...(chat.aliasJids || [])].map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  const local=Date.parse(contact?.archivedAt || '') || 0;
+  return reported && reported.updatedAt>=local?reported.archived:contact?.archived===true;
+}
 const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
 async function readBody(req) {
@@ -142,11 +149,24 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
-        const waiting=data.team?.waiting || {};
-        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
+        const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
+        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
+      }
+      // Contatos: agenda do WhatsApp e conversas numa lista só, com os dados do atendimento e paginação.
+      if(req.method==='GET' && route==='/api/contacts') {
+        const limit=Number(url.searchParams.get('limit') || 200),offset=Number(url.searchParams.get('offset') || 0),status=url.searchParams.get('status') || '',search=normalizeText(url.searchParams.get('search') || '');
+        if(!Number.isInteger(limit) || limit<1 || limit>1000 || !Number.isInteger(offset) || offset<0) throw new ApiError('Paginação inválida.',422);
+        if(status && !['open','pending','closed'].includes(status)) throw new ApiError('Situação inválida.',422);
+        const [chatList,book,data]=await Promise.all([client.chats(),client.contactsList?.().catch(()=>[]) || [],store.read()]),known=new Set(),rows=[];
+        for(const chat of chatList) {for(const id of [chat.jid,...(chat.aliasJids || [])]) known.add(id);rows.push({...chat,hasChat:true});}
+        for(const contact of book) if(contact.nameSource!=='number' && ![contact.jid,...contact.aliasJids].some(id=>known.has(id))) rows.push({...contact,hasChat:false,unread:0,lastMessage:null});
+        const merged=rows.map(row=>{const local=[row.jid,...(row.aliasJids || [])].map(id=>data.contacts?.[id]).find(Boolean) || {};const {notes,...rest}={...contactDefault(),...local};return {...row,...rest,notesCount:(notes || []).length};});
+        const listed=merged.filter(row=>(!status || row.status===status) && (!search || normalizeText(`${row.name} ${row.phone || ''} ${row.jid} ${(row.labels || []).join(' ')}`).includes(search)));
+        listed.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0) || a.name.localeCompare(b.name,'pt-BR'));
+        return json(res,200,{total:listed.length,withChat:listed.filter(row=>row.hasChat).length,offset,limit,contacts:listed.slice(offset,offset+limit)});
       }
       if(req.method==='GET' && route==='/api/messages') {
         const jid=assertJid(url.searchParams.get('jid')),page=Number(url.searchParams.get('page') || 1);
@@ -222,6 +242,7 @@ function createWhatsAppServer(options={}) {
     clearTimeout(eventTimer);eventTimer=setTimeout(()=>{pollReplies();},400);eventTimer.unref?.();
   };
   server.events=()=>events?.status() || null;
+  server.invalidateChats=()=>client.invalidateChats();
   server.team=team;
   server.on('listening',()=>{voice.start();team.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(scheduledPoll,5000);replyTimer.unref?.();if(options.events!==false && (production || options.events)) {events=createEvolutionEvents({config:options.config,onEvent,...(typeof options.events==='object'?options.events:{})});events.start();}server.housekeeping().catch(()=>{});cleanTimer=setInterval(()=>{server.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();}});
   server.cleanup=Promise.resolve();
