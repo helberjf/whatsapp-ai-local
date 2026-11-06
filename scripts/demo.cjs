@@ -34,8 +34,22 @@ async function createDemo({port=8876}={}) {
   const {dayKey}=require('../lib/team.cjs'),hours=Array(24).fill(0);[[8,3],[9,7],[10,11],[11,9],[12,4],[13,6],[14,10],[15,8],[16,5],[17,3]].forEach(([hour,value])=>{hours[hour]=value;});
   await store.update(data=>{data.team={settings:{members:[{id:'m-ana',name:'Ana',color:'#00a98d'},{id:'m-bruno',name:'Bruno',color:'#5b8def'}]},waiting:{},days:{[dayKey(Date.now())]:{incoming:66,hours,responses:61,responseMs:61*4.2*60_000,auto:38,human:23,onTime:55,late:6,closed:41,handoffs:5,unanswered:2,triaged:0,notices:0,surveys:{sent:30,answered:21,scores:[13,5,2,1]},members:{'m-ana':{responses:14,responseMs:14*5.1*60_000,closed:18},'m-bruno':{responses:9,responseMs:9*6.4*60_000,closed:12}}}}};data.contacts[jids[0]].assignee='m-ana';data.contacts[jids[2]].assignee='m-bruno';});
   await createStore(directory,{file:'ai.json',initial:{}}).update(data=>Object.assign(data,{provider:'ollama',model:'demo-local',embeddingModel:'demo-embed',baseUrl:'http://127.0.0.1:11434',apiKey:''}));
+  // Contas adicionadas pela interface: pareiam sozinhas pouco depois do QR Code e começam sem conversas.
+  const added=new Map();
+  function addedInstance(url,route,input) {
+    const name=route==='/instance/create'?input.instanceName:route==='/instance/fetchInstances'?new URL(url).searchParams.get('instanceName'):route.split('/').pop(),item=added.get(name);
+    if(route==='/instance/create') {added.set(name,{state:'connecting',pairAt:null});return {instance:{instanceName:name}};}
+    if(!item) return null;
+    if(route.includes('/connectionState/')) {if(item.pairAt && Date.now()>=item.pairAt) item.state='open';return {instance:{state:item.state}};}
+    if(route==='/instance/fetchInstances') return [{name,ownerJid:'5511000000099@s.whatsapp.net'}];
+    if(route.startsWith('/instance/connect/')) {item.pairAt=Date.now()+1500;return {base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII=',count:1};}
+    if(route.startsWith('/instance/logout/')) {Object.assign(item,{state:'close',pairAt:null});return {status:'SUCCESS'};}
+    if(route.startsWith('/instance/delete/')) {added.delete(name);return {status:'SUCCESS'};}
+    return route.includes('/findChats/') || route.includes('/findContacts/')?[]:{};
+  }
   const fetchConnector=async(url,options={})=>{
     const route=new URL(url).pathname,input=options.body?JSON.parse(options.body):{};let output={};
+    if(route==='/instance/create' || !(route==='/instance/fetchInstances'?new URL(url).searchParams.get('instanceName'):route.split('/').pop()).startsWith('demo')) {const reply=addedInstance(url,route,input);return reply?new Response(JSON.stringify(reply)):new Response('{}',{status:404});}
     if(route.includes('/connectionState/')) output={instance:{state:'open'}};
     else if(route.includes('/fetchInstances')) output=[{name:'demo',ownerJid:jids[0]}];
     else if(route.includes('/findContacts/')) output=[...jids.map((jid,i)=>({remoteJid:jid,name:names[i],pushName:names[i]})),{remoteJid:'5511000000020@s.whatsapp.net',pushName:'Morgan Blake'},{remoteJid:'5511000000021@s.whatsapp.net',pushName:'Quinn Park'}];

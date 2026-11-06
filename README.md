@@ -70,6 +70,18 @@ The Windows launcher creates local connector credentials if none exist, starts D
 
 In **Conexão WhatsApp**, choose **Conectar WhatsApp**. On the phone, open **Linked devices → Link a device**, then scan the QR code shown on the computer. Pairing survives ordinary restarts while its Docker volumes remain intact.
 
+### Several WhatsApp accounts
+
+Use the account button at the top of the sidebar to see the status of every account, add another one, or switch between them. Each account is its own Evolution instance, paired with its own QR code. The account that existed before this feature keeps its instance, session, and data in `data/central.sqlite`: updating requires no new pairing.
+
+| Per account | Shared by all accounts |
+| --- | --- |
+| Conversations, contacts, CRM, quick replies, scheduled messages, triggers, automations, assistant rules and activity, team queue and dashboard, voice flow, human-timing and transcription settings, real-time connector events | Knowledge base, product catalog, AI provider and keys, voices |
+
+Everything a browser tab sends goes through the account that tab is showing; switching reloads the page, and a tab keeps its account. **Desconectar** ends only that account's session and keeps its data. **Remover** deletes that instance from the connector, including its synchronized messages, and exports its local attendance data to `data/contas-arquivadas/`. The last remaining account cannot be removed. If the same number is paired in two accounts, the list shows a warning because automatic replies could be sent twice.
+
+Local integrations with the `X-Integration-Token` header use the first account unless they send `X-WhatsApp-Account` with an account ID. Responses carry the account used in the header of the same name, and an unknown ID returns 404 instead of falling back to another account.
+
 Other entry points:
 
 | Command or launcher | Purpose |
@@ -294,6 +306,9 @@ The main local files are:
 | Location | Contents |
 | --- | --- |
 | `data/central.sqlite` | One SQLite database with all central data, each set in its own store: attendance (contacts, CRM, quick replies, scheduling, automation rules, send reservations, transcriptions, voice flow, chat organization, starred messages), knowledge documents and their extracted text, the product catalog and its photos, and embedding vectors. |
+| `data/contas.json` | Account list. Created when a second account is added; until then the instance in `data/config.json` is the only account, and its data stays in `data/central.sqlite`. |
+| `data/contas/<id>/central.sqlite` | Attendance data of each additional account (same tables, its own file). |
+| `data/contas-arquivadas/` | JSON export of the attendance data of removed accounts. |
 | `*.migrado` | Copies of the previous files after the one-time import into `central.sqlite` (`atendimento.sqlite`/`atendimento.json`, `knowledge.json`, `produtos.json` and the `knowledge/`, `product-images/` and `embeddings/` folders). They are no longer read and can be deleted after you check the central. |
 | `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
 | `data/credentials.sqlite` | Separate DPAPI-protected assistant and transcription credentials. |
@@ -319,6 +334,7 @@ Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing
 ## Current limits
 
 - Individual conversations only; no bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
+- Accounts are separate workspaces: forwarding and search stay inside the account in use, and there is no combined inbox. Up to 10 accounts.
 - Attendants are names for people sharing this central on this computer; there is no per-person login, and the central is still reachable only through loopback. Using it from several computers needs accounts, HTTPS and a deployment design that this version does not include.
 - Evolution 2.3.7 does not keep a chat's archive state, so the bundled connector extension records what WhatsApp reports (including chats archived on the phone and during the initial sync) and the central shows them under **Arquivadas**; the most recent change, from the phone or from the central, wins. Restart through the launcher once so the connector image is rebuilt with it. Chats archived before that rebuild are read once, automatically, from a read-only copy of WhatsApp's own archive state (it never changes the session's sync state); **Arquivadas → Buscar no WhatsApp** reads it again on demand. When WhatsApp's "Keep chats archived" is off, a chat with a message newer than its archive leaves **Arquivadas**, as on the phone. Block, pin and mute state are not read back from the phone: blocking from the central is native, pinning and muting are local to the central. Desktop notifications depend on browser permission and stop when the central is closed.
 - Real-time events depend on the connector's WebSocket being enabled and reachable; when it is not, the central keeps working with periodic polling. Conversations whose latest change is not a new message (for example, a read on the phone) refresh with the full listing, at most 30 seconds later.
