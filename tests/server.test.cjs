@@ -101,10 +101,10 @@ test('falha de envio é informada e não dispara repetição automática',async(
   assert.equal(calls.slice(before).filter(c=>c.url==='/message/sendText/teste').length,1);failSend=false;
 });
 test('quoted replies resolve the original in the same chat before sending',async()=>{
-  await api('/api/send','POST',{jid,text:'Resposta citada',replyTo:'in-1',requestId:'reply-test-001'});
+  await api('/api/send','POST',{jid,text:'Resposta citada',quotedId:'in-1',requestId:'reply-test-001'});
   const send=calls.findLast(c=>c.url==='/message/sendText/teste');assert.equal(send.input.quoted.key.id,'in-1');assert.equal(send.input.quoted.message.conversation,'Olá!');
   const before=calls.filter(c=>c.url==='/message/sendText/teste').length;
-  assert.equal((await request('/api/send','POST',{jid,text:'Origem inválida',replyTo:'missing',requestId:'reply-test-002'})).status,404);
+  assert.equal((await request('/api/send','POST',{jid,text:'Origem inválida',quotedId:'missing',requestId:'reply-test-002'})).status,404);
   assert.equal(calls.filter(c=>c.url==='/message/sendText/teste').length,before);
 });
 test('confirmed read state masks stale connector counts but not a new message',async()=>{

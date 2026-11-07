@@ -42,7 +42,9 @@
   }
   async function refreshKb() {const result=await api('/kb');docs=result.documents;renderKb();renderCounters();renderSearchMode(result.search);renderReliability(result.reliability);}
   async function refreshProducts() {products=(await api('/products')).products;renderProducts();renderPanelProducts();renderCounters();}
-  async function refreshAi() {ai=await api('/ai');renderAi();renderCounters();}
+  // Uma atualização que chega depois de o usuário mexer no formulário não desfaz a escolha dele.
+  let aiEdits=0;
+  async function refreshAi() {const edits=aiEdits,result=await api('/ai');ai=result;if(edits===aiEdits) renderAi();else syncProviderHints();renderCounters();}
 
   // ---------- Base de conhecimento ----------
   function renderKb() {
@@ -412,6 +414,7 @@
     renderModelOptions(modelCatalogs.get(modelCatalogKey()) || item.models,$('ai-provider').value===ai.provider?ai.model || item.model:item.model);syncProviderHints();showModelHint();
   });
   const aiPayload=()=>({provider:$('ai-provider').value,model:$('ai-model').value,embeddingModel:$('ai-embedding').value,baseUrl:$('ai-base').value,...($('ai-key').value.trim()?{apiKey:$('ai-key').value.trim()}:{})});
+  for(const type of ['input','change']) $('ai-form').addEventListener(type,()=>{aiEdits++;});
   $('ai-form').addEventListener('submit',async event=>{
     event.preventDefault();$('ai-status').textContent='';
     try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();$('ai-status').textContent=ai.hasKey?'Configuração salva. Chave criptografada no banco local.':'Configuração salva.';}
@@ -428,28 +431,38 @@
   });
 
   // ---------- Contatos (CRM) ----------
-  function listedContacts() {
-    const search=normalize($('contacts-search').value),status=$('contacts-status').value;
-    return C.chats().filter(chat=>(!status || chat.status===status) && (!search || normalize(`${chat.name} ${chat.jid} ${(chat.labels || []).join(' ')}`).includes(search)));
+  // Contatos: agenda do WhatsApp e conversas, vindos do servidor em páginas de 200 (listas grandes não travam a tela).
+  let contactRows=[],contactsVersion=0,contactsFetchedAt=0,contactsTimer=null;
+  function listedContacts() {return contactRows;}
+  const contactPhoneLabel=row=>row.phone?phoneLabel(row.phone):row.jid.endsWith('@lid')?'Identificador privado':phoneLabel(row.jid.split('@')[0]);
+  async function loadContacts({more=false}={}) {
+    const params=new URLSearchParams({limit:'200',offset:String(more?contactRows.length:0)}),search=$('contacts-search').value.trim(),status=$('contacts-status').value;
+    if(search) params.set('search',search);if(status) params.set('status',status);
+    const version=++contactsVersion,result=await api('/contacts?'+params);if(version!==contactsVersion) return;
+    contactRows=more?[...contactRows,...result.contacts]:result.contacts;contactsFetchedAt=Date.now();drawContacts(result);
   }
-  function renderContacts() {
+  function renderContacts() {loadContacts().catch(error=>notice(error.message));}
+  function drawContacts(result) {
     const fragment=document.createDocumentFragment();
-    const list=listedContacts();
-    for(const chat of list) {
-      const row=el('tr','clickable'),who=el('td','doc-name'),open=el('button','link-button',chat.name);open.type='button';open.addEventListener('click',()=>C.openChat(chat));
-      who.append(el('span','avatar',initials(chat.name)),open);
-      const labels=el('td','labels');for(const label of chat.labels || []) labels.append(el('span','chip',label));
-      const phone=chat.jid.endsWith('@lid')?'Identificador privado':phoneLabel(chat.jid.split('@')[0]);
-      const mode=el('select','cell-input narrow');mode.setAttribute('aria-label','IA para '+chat.name);for(const [value,text] of Object.entries(MODE_LABEL)) {const option=el('option','',text);option.value=value;mode.append(option);}mode.value=chat.aiMode || 'off';
-      mode.addEventListener('change',guard(async()=>{try {await setMode(chat,mode.value);notice('IA de '+chat.name+': '+MODE_LABEL[mode.value]+'.',true);}catch(error) {mode.value=chat.aiMode || 'off';throw error;}}));
+    for(const row of contactRows) {
+      const tr=el('tr','clickable'),who=el('td','doc-name'),open=el('button','link-button',row.name);open.type='button';
+      open.addEventListener('click',()=>C.openChat(C.chats().find(chat=>chat.jid===row.jid || (row.aliasJids || []).includes(chat.jid)) || {...row,unread:0}));
+      who.append(el('span','avatar',initials(row.name)),open);
+      const labels=el('td','labels');for(const label of row.labels || []) labels.append(el('span','chip',label));
+      const mode=el('select','cell-input narrow');mode.setAttribute('aria-label','IA para '+row.name);for(const [value,text] of Object.entries(MODE_LABEL)) {const option=el('option','',text);option.value=value;mode.append(option);}mode.value=row.aiMode || 'off';
+      mode.addEventListener('change',guard(async()=>{try {await setMode(row,mode.value);notice('IA de '+row.name+': '+MODE_LABEL[mode.value]+'.',true);}catch(error) {mode.value=row.aiMode || 'off';throw error;}}));
       const modeCell=el('td');modeCell.append(mode);
-      row.append(who,el('td','',phone),labels,el('td','',statuses[chat.status] || statuses.open),modeCell,el('td','',String((chat.notes || []).length)),el('td','',chat.lastMessage?.text || (chat.lastMessage?.type && chat.lastMessage.type!=='text'?'Anexo':'—')));
-      fragment.append(row);
+      tr.append(who,el('td','',contactPhoneLabel(row)),labels,el('td','',statuses[row.status] || statuses.open),modeCell,el('td','',String(row.notesCount ?? (row.notes || []).length)),el('td','',row.hasChat?(C.previewText?.(row.lastMessage) || '—'):'Sem conversa'));
+      fragment.append(tr);
     }
-    if(!list.length) {const row=el('tr'),cell=el('td','empty-cell',C.chats().length?'Nenhum contato corresponde aos filtros.':'Os contatos aparecem aqui quando o WhatsApp sincroniza as conversas.');cell.colSpan=6;row.append(cell);fragment.append(row);}
+    if(!contactRows.length) {const tr=el('tr'),cell=el('td','empty-cell',$('contacts-search').value.trim() || $('contacts-status').value?'Nenhum contato corresponde aos filtros.':'Os contatos aparecem aqui quando o WhatsApp sincroniza a agenda e as conversas.');cell.colSpan=7;tr.append(cell);fragment.append(tr);}
     $('contacts-body').replaceChildren(fragment);
+    $('contacts-count').textContent=`${result.total} contato(s) · ${result.withChat} com conversa`+(contactRows.length<result.total?` · mostrando ${contactRows.length}`:'');
+    $('contacts-more').hidden=contactRows.length>=result.total;
   }
-  $('contacts-search').addEventListener('input',renderContacts);$('contacts-status').addEventListener('change',renderContacts);
+  const scheduleContacts=()=>{clearTimeout(contactsTimer);contactsTimer=setTimeout(renderContacts,250);};
+  $('contacts-search').addEventListener('input',scheduleContacts);$('contacts-status').addEventListener('change',renderContacts);
+  $('contacts-more').addEventListener('click',guard(async()=>{$('contacts-more').disabled=true;try {await loadContacts({more:true});}finally {$('contacts-more').disabled=false;}}));
 
   // ---------- Busca global ----------
   function renderSearch() {
@@ -473,7 +486,7 @@
   // ---------- Atendimento automático, regras e classificação de contatos ----------
   let assistant=null,rulesDraft=[],audienceSelect=null,audienceSave=null;
   const MODE_LABEL={off:'Desligada',draft:'Rascunho',auto:'Automática'};
-  const ACTION_LABEL={draft:'Rascunho preparado',sent:'Resposta enviada',handoff:'Chamou atendente',error:'Erro'};
+  const ACTION_LABEL={draft:'Rascunho preparado',sent:'Resposta enviada',handoff:'Chamou atendente',error:'Erro',unanswered:'Sem resposta · responda manualmente'};
   const AUDIENCE_LABEL={classified:'Apenas contatos classificados',all:'Todos os contatos',new:'Apenas conversas novas'};
   const AUDIENCE_HINT={
     classified:'A IA prepara rascunhos ou responde conforme a classificação de cada contato. Respostas automáticas exigem a chave geral ligada.',
@@ -518,7 +531,7 @@
     if(!assistant) return;
     $('assistant-enabled').checked=assistant.enabled;
     if(audienceSelect) {audienceSelect.value=assistant.audience || 'classified';renderAudienceHint();}
-    $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.');
+    $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.')+(assistant.load?.conversations?` Agora: ${assistant.load.conversations} conversa(s) em atendimento pela IA, ${assistant.load.ai.waiting} aguardando vaga.`:'')+(assistant.counts.unanswered?` ${assistant.counts.unanswered} conversa(s) com a etiqueta “Sem resposta”.`:'');
     const names=new Map(C.chats().map(chat=>[chat.jid,chat.name])),fragment=document.createDocumentFragment();
     for(const entry of assistant.log) {
       const row=el('li','log-row'),who=names.get(entry.jid) || phoneLabel(entry.jid.split('@')[0]);
@@ -573,7 +586,7 @@
     if(!list.length) {notice('Nenhum contato listado.');return;}
     if(!confirm(`Definir IA "${MODE_LABEL[mode]}" para ${list.length} contato(s) listado(s)?`+(mode==='auto'?'\nA IA responderá sozinha quando a chave de respostas automáticas estiver ligada.':''))) return;
     await api('/assistant/classify','POST',{jids:list.map(chat=>chat.jid),aiMode:mode});
-    for(const chat of list) chat.aiMode=mode;
+    for(const chat of list) {chat.aiMode=mode;const listed=C.chats().find(item=>item.jid===chat.jid);if(listed) listed.aiMode=mode;}
     renderContacts();notice(`${list.length} contato(s) atualizado(s).`,true);
   }));
 
@@ -609,7 +622,7 @@
     if(name==='page-ai') {guard(refreshAi)();guard(refreshAssistant)();guard(refreshHuman)();}
     if(name==='page-contacts') renderContacts();
   });
-  C.hooks.sync.push(()=>{if(view==='page-contacts') renderContacts();});
+  C.hooks.sync.push(()=>{if(view==='page-contacts' && Date.now()-contactsFetchedAt>15_000) renderContacts();});
   C.hooks.select.push(renderPanelProducts);
 
   // Carga inicial silenciosa: alimenta contadores e a busca sem interromper o uso.

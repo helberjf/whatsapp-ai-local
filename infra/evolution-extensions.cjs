@@ -1,5 +1,8 @@
 // Local extension by Codex, 2026-10-29. Evolution API 2.3.7 / Baileys 7.0.0-rc.9.
 // Adds authenticated individual-chat timer settings and inherits confirmed timers on sends.
+// Also keeps the archive state WhatsApp reports for each chat (Evolution 2.3.7 drops it) and serves it to the central.
+// Archived chats from before the extension come from a read-only copy of WhatsApp's app state (collection regular_low):
+// it never changes the session's own sync state and never emits events.
 const fs=require('node:fs');
 const crypto=require('node:crypto');
 const vm=require('node:vm');
@@ -7,9 +10,40 @@ const MAIN_SHA256='71b49ea87b8d0d7b413b77d067e33a8720c2e95e136f632210c1424862ef6
 const BAILEYS_SOCKET_SHA256='d7e121951ae786d39fb729e193816515869e6ca96babf386515b54de07ef7d61';
 const OFFLINE_BATCH_IDLE_MS=1500;
 const STORE='/evolution/instances/whatsapp-central-disappearing.v1.json';
+const ARCHIVE_STORE='/evolution/instances/whatsapp-central-archived.v1.json';
 const individual=value=>typeof value==='string' && /^[1-9]\d{5,19}@(s\.whatsapp\.net|lid)$/.test(value);
 const expirationValid=value=>[0,86400,604800,7776000].includes(value);
-function createExtension(storage={}) {
+const ARCHIVE_META='$meta';
+const SNAPSHOT_COLLECTION='regular_low';
+const numberOf=value=>typeof value==='object' && value?(typeof value.toNumber==='function'?value.toNumber():Number(value.low)):Number(value || 0);
+function createExtension(storage={},archiveStorage={},runtime={}) {
+  const loadBaileys=runtime.loadBaileys || (()=>import('baileys'));
+  const loadArchive=archiveStorage.load || (()=>{try {const stat=fs.statSync(ARCHIVE_STORE);if(stat.size>4_000_000) return {};return JSON.parse(fs.readFileSync(ARCHIVE_STORE,'utf8'));}catch {return {};}});
+  const saveArchive=archiveStorage.save || (value=>{const temporary=ARCHIVE_STORE+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,ARCHIVE_STORE);});
+  let archive,archiveTimer=null;
+  function archives() {if(!archive) {const loaded=loadArchive();archive=loaded && typeof loaded==='object' && !Array.isArray(loaded)?loaded:{};}return archive;}
+  // A sincronização inicial pode trazer milhares de conversas: grava uma vez depois que os avisos param.
+  function scheduleArchiveSave() {
+    if(archiveTimer) return;
+    archiveTimer=setTimeout(()=>{archiveTimer=null;try {saveArchive(archives());}catch { /* the next change tries again */ }},archiveStorage.delayMs ?? 1000);archiveTimer.unref?.();
+  }
+  function rememberArchive(service,jid,archived,updatedAt=Date.now(),{lastMessageAt,onlyNewer=false}={}) {
+    const id=instanceKey(service);if(!id || !individual(jid) || typeof archived!=='boolean') return false;
+    const chats=archives()[id] ||= {},previous=chats[jid];
+    if(onlyNewer && previous && previous.updatedAt>=updatedAt) return false;
+    if(!onlyNewer && previous && previous.archived===archived) return false;
+    chats[jid]={archived,updatedAt,...(Number.isFinite(lastMessageAt) && lastMessageAt>0?{lastMessageAt}:{})};
+    const ids=Object.keys(chats);if(ids.length>20000) for(const old of ids.sort((a,b)=>chats[a].updatedAt-chats[b].updatedAt).slice(0,ids.length-20000)) delete chats[old];
+    scheduleArchiveSave();
+    return true;
+  }
+  const archiveMeta=service=>{const id=instanceKey(service),meta=archives()[ARCHIVE_META] ||= {};return id?meta[id] ||= {}:{};};
+  // "Manter conversas arquivadas" desligado = unarchiveChats true: mensagem nova tira a conversa das arquivadas.
+  function unarchiveSetting(service) {
+    const meta=archiveMeta(service),creds=service?.client?.authState?.creds?.accountSettings?.unarchiveChats;
+    return typeof meta.unarchiveChats==='boolean'?meta.unarchiveChats:typeof creds==='boolean'?creds:null;
+  }
+  const archiveFrom=(service,list)=>{for(const chat of Array.isArray(list)?list:[]) if(chat && typeof chat.archived==='boolean') rememberArchive(service,chat.id,chat.archived);};
   const load=storage.load || (()=>{try {const stat=fs.statSync(STORE);if(stat.size>2_000_000) throw new Error('Timer store too large');return JSON.parse(fs.readFileSync(STORE,'utf8'));}catch(error) {if(error.code==='ENOENT') return {};throw error;}});
   const save=storage.save || (value=>{const temporary=STORE+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,STORE);});
   let state;
@@ -44,7 +78,11 @@ function createExtension(storage={}) {
         }
       }
     });
+    // Arquivar e desarquivar chegam como atualização de conversa, inclusive as feitas no celular.
+    socket.ev.on('chats.upsert',chats=>archiveFrom(service,chats));
+    socket.ev.on('messaging-history.set',payload=>archiveFrom(service,payload?.chats));
     socket.ev.on('chats.update',updates=>{
+      archiveFrom(service,updates);
       for(const chat of Array.isArray(updates)?updates:[]) {
         if(!expirationValid(chat.ephemeralExpiration)) continue;
         const timestamp=Number(chat.ephemeralSettingTimestamp?.low ?? chat.ephemeralSettingTimestamp);
@@ -81,7 +119,63 @@ function createExtension(storage={}) {
       return response.status(200).json({success:true,jid:number,expiration,updatedAt,source:'central'});
     } catch {return fail(response,502,'Não foi possível confirmar a alteração. Confira a conversa no celular antes de tentar novamente.');}
   };}
-  return {expirationFor,capabilityHandler,ephemeralHandler,observe};
+  function archivedHandler(controller) {return async(request,response)=>{
+    const service=serviceFor(controller,request),id=instanceKey(service);
+    if(!id) return fail(response,503,'O WhatsApp precisa estar conectado.');
+    try {
+      observe(service);const meta=archiveMeta(service);
+      return response.status(200).json({extensionVersion:2,archiveSync:true,snapshot:true,snapshotAt:meta.snapshotAt || null,unarchiveChats:unarchiveSetting(service),chats:archives()[id] || {}});
+    }
+    catch {return fail(response,503,'Não foi possível ler as conversas arquivadas.');}
+  };}
+  // Lê do WhatsApp o estado atual de arquivar/desarquivar sem gravar nada na sessão: o mesmo pedido que o
+  // Baileys faz ao sincronizar do zero, mas decodificado aqui, sem alterar a versão salva nem disparar eventos.
+  async function readArchiveSnapshot(socket) {
+    const {extractSyncdPatches,decodeSyncdSnapshot,decodePatches,newLTHashState,S_WHATSAPP_NET}=await loadBaileys();
+    const getKey=async keyId=>(await socket.authState.keys.get('app-state-sync-key',[keyId]))?.[keyId];
+    const name=SNAPSHOT_COLLECTION,mutations={};let state=null;
+    for(let round=0;round<50;round++) {
+      const version=state?.version || 0;
+      const result=await socket.query({tag:'iq',attrs:{to:S_WHATSAPP_NET,xmlns:'w:sync:app:state',type:'set'},content:[{tag:'sync',attrs:{},content:[{tag:'collection',attrs:{name,version:String(version),return_snapshot:String(!version)}}]}]});
+      const decoded=(await extractSyncdPatches(result,{}))?.[name];if(!decoded) break;
+      if(decoded.snapshot) {const next=await decodeSyncdSnapshot(name,decoded.snapshot,getKey,undefined,false);state=next.state;Object.assign(mutations,next.mutationMap);}
+      state ||= newLTHashState();
+      if(decoded.patches?.length) {const next=await decodePatches(name,decoded.patches,state,getKey,{},undefined,undefined,false);state=next.state;Object.assign(mutations,next.mutationMap);}
+      if(!decoded.hasMorePatches) break;
+    }
+    const chats=[];let unarchiveChats=null;
+    for(const {syncAction,index} of Object.values(mutations)) {
+      const [type,jid]=Array.isArray(index)?index:[],value=syncAction?.value;
+      if(value?.unarchiveChatsSetting && typeof value.unarchiveChatsSetting.unarchiveChats==='boolean') unarchiveChats=value.unarchiveChatsSetting.unarchiveChats;
+      const action=value?.archiveChatAction;if(type!=='archive' || !action || typeof action.archived!=='boolean') continue;
+      const lastMessage=numberOf(action.messageRange?.lastMessageTimestamp);
+      chats.push({jid,archived:action.archived,updatedAt:numberOf(value.timestamp) || 0,lastMessageAt:lastMessage>0?lastMessage*1000:undefined});
+    }
+    return {chats,unarchiveChats};
+  }
+  const snapshots=new Map();
+  function archiveSnapshot(service) {
+    const id=instanceKey(service),socket=service?.client;
+    if(!id || typeof socket?.query!=='function' || typeof socket.authState?.keys?.get!=='function') return Promise.reject(Object.assign(new Error('not connected'),{status:503}));
+    if(snapshots.has(id)) return snapshots.get(id);
+    const job=(async()=>{
+      const {chats,unarchiveChats}=await readArchiveSnapshot(socket);
+      let changed=0;for(const chat of chats) if(rememberArchive(service,chat.jid,chat.archived,chat.updatedAt,{lastMessageAt:chat.lastMessageAt,onlyNewer:true})) changed++;
+      const meta=archiveMeta(service);meta.snapshotAt=Date.now();if(typeof unarchiveChats==='boolean') meta.unarchiveChats=unarchiveChats;scheduleArchiveSave();
+      return {archived:chats.filter(chat=>chat.archived && individual(chat.jid)).length,changed,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
+    })().finally(()=>snapshots.delete(id));
+    snapshots.set(id,job);return job;
+  }
+  function archiveSnapshotHandler(controller) {return async(request,response)=>{
+    const service=serviceFor(controller,request);
+    if(!instanceKey(service) || typeof service?.client?.query!=='function') return fail(response,503,'O WhatsApp precisa estar conectado.');
+    try {observe(service);return response.status(200).json({success:true,...await archiveSnapshot(service)});}
+    catch(error) {
+      const missingKey=/failed to find key/i.test(String(error?.message || ''));
+      return fail(response,missingKey?409:502,missingKey?'O WhatsApp ainda não enviou as chaves para ler as arquivadas deste aparelho. Aguarde alguns minutos conectado e tente de novo.':'O WhatsApp não respondeu à leitura das arquivadas. Tente novamente em instantes.');
+    }
+  };}
+  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,observe,rememberArchive};
 }
 function patchBundle(source,version) {
   if(version!=='2.3.7') throw new Error('Unsupported Evolution version; expected 2.3.7.');
@@ -91,7 +185,7 @@ function patchBundle(source,version) {
   const events='eventHandler(){this.client.ev.process(';
   if([route,send,events].some(anchor=>source.split(anchor).length!==2)) throw new Error('Evolution extension patch anchors must each occur exactly once.');
   const extension='require("/evolution/local/evolution-extensions.cjs")';
-  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`);
+  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).post(this.routerPath("localArchivedSnapshot"),...e,${extension}.archiveSnapshotHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`);
   new vm.Script(patched,{filename:'evolution-patched-main.js'});
   return patched;
 }
@@ -140,5 +234,5 @@ if(require.main===module) {
   const baileysRoot='/evolution/node_modules/baileys',baileysVersion=JSON.parse(fs.readFileSync(baileysRoot+'/package.json','utf8')).version;
   const socketPath=baileysRoot+'/lib/Socket/socket.js';
   fs.writeFileSync(socketPath,patchBaileysSocket(fs.readFileSync(socketPath,'utf8'),baileysVersion));
-  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers, send inheritance and offline batch catch-up installed.\n');
+  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers, send inheritance, offline batch catch-up, archive state and archive snapshot installed.\n');
 }

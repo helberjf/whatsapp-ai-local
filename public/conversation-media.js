@@ -1,7 +1,9 @@
 (() => {
   'use strict';
   const $=id=>document.getElementById(id),time=seconds=>Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
-  let context,recorder=null,stream=null,timer=null,generation=0,recordingJid=null,previewUrl=null,attachmentPreviewUrl=null,busy=false;
+  let context,recorder=null,stream=null,timer=null,generation=0,recordingJid=null,previewUrl=null,attachmentPreviewUrl=null,busy=false,sendAfterStop=false;
+  // Botão de envio dentro do gravador: "Parar e enviar" enquanto grava, "Enviar áudio" na revisão.
+  function showSend(label) {$('voice-send').hidden=false;$('voice-send').disabled=false;$('voice-send-label').textContent=label;$('voice-send').setAttribute('aria-label',label);}
   function previewMime(bytes) {
     const ascii=(start,end)=>String.fromCharCode(...bytes.slice(start,end));
     if(ascii(0,5)==='%PDF-') return 'application/pdf';
@@ -20,8 +22,9 @@
   }
   function refresh() {$('record-audio').disabled=busy || !context.canRecord();$('record-audio').setAttribute('aria-pressed',String(busy));}
   function reset() {
+    if(busy && recordingJid) context.onRecording?.(recordingJid,false);
     generation++;busy=false;if(recorder && recorder.state!=='inactive') recorder.stop();recorder=null;stopTracks();clearPreview();clearAttachmentPreview();recordingJid=null;
-    $('voice-recorder').hidden=true;$('voice-recorder').classList.remove('recording');$('voice-stop').hidden=true;refresh();
+    $('voice-recorder').hidden=true;$('voice-recorder').classList.remove('recording');$('voice-stop').hidden=true;$('voice-send').hidden=true;sendAfterStop=false;refresh();
   }
   function onAttachment(file) {
     reset();if(!file) return;
@@ -33,7 +36,7 @@
       container.append(node);container.hidden=false;return;
     }
     if(!file.type.startsWith('audio/')) return;
-    recordingJid=context.getSelected()?.jid;previewUrl=URL.createObjectURL(file);$('voice-preview').src=previewUrl;$('voice-preview').hidden=false;$('voice-status').textContent='Áudio pronto · ouça antes de enviar';$('voice-recorder').hidden=false;refresh();
+    recordingJid=context.getSelected()?.jid;previewUrl=URL.createObjectURL(file);$('voice-preview').src=previewUrl;$('voice-preview').hidden=false;$('voice-status').textContent='Áudio pronto · ouça se quiser e toque em Enviar áudio';$('voice-recorder').hidden=false;showSend('Enviar áudio');refresh();
   }
   async function record() {
     if(busy || !context.canRecord()) {context.notice('Abra uma conversa conectada e remova o anexo atual para gravar.');return;}
@@ -47,13 +50,14 @@
       current.addEventListener('dataavailable',event=>{if(event.data.size) {chunks.push(event.data);size+=event.data.size;}if(size>=9.5*1024*1024 && current.state==='recording') current.stop();});
       current.addEventListener('error',()=>{if(version!==generation) return;reset();context.notice('Não foi possível gravar o áudio. Verifique seu microfone e tente novamente.');});
       current.addEventListener('stop',()=>{
-        if(version!==generation) return;stopTracks();recorder=null;busy=false;
+        if(version!==generation) return;const sendNow=sendAfterStop;stopTracks();recorder=null;busy=false;context.onRecording?.(jid,false);
         if(context.getSelected()?.jid!==jid) {reset();return;}
         const type=(current.mimeType || mime || 'audio/webm').split(';')[0],blob=new Blob(chunks,{type});
         if(!blob.size || blob.size>10*1024*1024) {reset();context.notice('Áudio vazio ou maior que 10 MB. Faça uma nova gravação.');return;}
-        const extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';context.setAttachment(new File([blob],'audio-'+Date.now()+'.'+extension,{type}));
+        const extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';context.setAttachment(new File([blob],'audio-'+Date.now()+'.'+extension,{type}),'voice');
+        if(sendNow) context.send?.();else $('voice-send').focus?.();
       });
-      const started=Date.now();$('voice-status').textContent='Gravando · 0:00';$('voice-recorder').classList.add('recording');$('voice-stop').hidden=false;current.start(250);
+      const started=Date.now();$('voice-status').textContent='Gravando · 0:00';$('voice-recorder').classList.add('recording');$('voice-stop').hidden=false;showSend('Parar e enviar');current.start(250);context.onRecording?.(jid,true);
       timer=setInterval(()=>{const seconds=Math.floor((Date.now()-started)/1000);$('voice-status').textContent='Gravando · '+time(seconds);if(seconds>=300 && current.state==='recording') current.stop();},250);
     } catch(error) {
       if(version!==generation) return;reset();context.notice(['NotAllowedError','SecurityError'].includes(error.name)?'Permita o acesso ao microfone neste navegador para gravar áudio.':'Não foi possível acessar o microfone. Verifique se ele está conectado e tente novamente.');
@@ -70,6 +74,11 @@
   function init(value) {
     context=value;$('record-audio').addEventListener('click',record);$('voice-stop').addEventListener('click',()=>{if(recorder?.state==='recording') {$('voice-stop').disabled=true;recorder.stop();$('voice-stop').disabled=false;}});
     $('voice-cancel').addEventListener('click',()=>{reset();context.setAttachment(null);});
+    $('voice-send').addEventListener('click',()=>{
+      if($('voice-send').disabled || context.isSending?.()) return;
+      if(recorder?.state==='recording') {sendAfterStop=true;$('voice-send').disabled=true;$('voice-send-label').textContent='Enviando…';recorder.stop();return;}
+      context.send?.();
+    });
     context.hooks.select.push(()=>{if(recordingJid && context.getSelected()?.jid!==recordingJid) reset();refresh();});context.hooks.sync.push(refresh);
     context.hooks.view.push(view=>{if(view!=='workspace' && busy) reset();});
     $('media-viewer').addEventListener('close',()=>{globalThis.WhatsAppPdf?.close();$('media-viewer-content').replaceChildren();$('media-download').removeAttribute('href');});

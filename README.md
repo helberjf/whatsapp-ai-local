@@ -2,7 +2,9 @@
 
 A local WhatsApp workspace for individual customer conversations, contact management, scheduled messages, automatic replies, and answers grounded in a product catalog and knowledge base.
 
-Built with vanilla JavaScript and Node.js, with Evolution API running in Docker. The application is designed for a single Windows user: no hosted account, subscription layer, or public web server is required. The interface is in Brazilian Portuguese.
+Built with vanilla JavaScript and Node.js, with Evolution API running in Docker. The application is designed for one local Windows installation: no hosted account, subscription layer, or public web server is required. Named attendants can organize conversations, but they do not have individual authenticated accounts. The interface is in Brazilian Portuguese.
+
+**Start here:** [Isolated demo](#try-the-demo) · [Architecture](#architecture) · [Trade-offs](#design-trade-offs) · [Validation](#validation)
 
 ## Preview
 
@@ -15,6 +17,10 @@ These screenshots use the isolated demo with fictional contacts and sample conte
 | ![Split trigger editor with conditions and response composer](docs/screenshots/triggers.png) | ![Knowledge documents and grounded answer workflow](docs/screenshots/knowledge.png) |
 | Voice message review | In-app PDF reader |
 | ![Recorded audio preview before explicit sending](docs/screenshots/voice-recorder.png) | ![PDF document rendered locally inside the conversation workspace](docs/screenshots/document-preview.png) |
+| Replies, reactions, edits, location and contact cards | Voice flow: transcription → AI reading → text or voice reply |
+| ![Quoted reply, reaction, edited message, shared location and contact card in the demo](docs/screenshots/whatsapp-features.png) | ![Three-stage voice flow with voice settings and preview](docs/screenshots/voice-flow.png) |
+| Team dashboard | |
+| ![Team dashboard with waiting queue, response time, AI share, satisfaction and hourly arrivals](docs/screenshots/team-dashboard.png) | |
 
 ## Try the demo
 
@@ -31,10 +37,13 @@ Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal s
 
 - **Conversations:** an expanded conversation column with contact/CRM tools available in a closable details panel. Search and filter by name, phone, labels, unread state, and attendance status; preserve drafts and scroll position during refreshes. Open global search from the sidebar or with **Ctrl+K**.
 - **Messaging:** one attachment button for photos, videos, audio, documents and stickers; **Enter** sends and **Shift+Enter** inserts a line break. Insert quick replies, copy message text, forward supported content, use emoji, create polls, and delete your own messages for everyone when the connector accepts the request.
-- **Media:** received images show an inline preview automatically. Videos display their cover/name/duration when the connector provides those fields; the full video loads only after an explicit play action. Selected photos/videos show a local preview before sending, and removing/replacing the attachment releases its temporary URL. Record voice messages from the composer, review playback, then explicitly send or discard. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
-- **Contacts and CRM:** maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
+- **WhatsApp features:** reply to a specific message (quoted), react with emoji, edit your own texts within WhatsApp's 15-minute window, share a location (typed coordinates or the browser's location) or a contact card, and open received locations and contact cards. Pin up to three conversations, mute (8 hours, 1 week, always), archive, mark as unread, block/unblock, star messages, search inside the loaded conversation, and get optional desktop notifications and sound. The contact sees "typing…" and "recording audio…" while you write or record (can be turned off). Edit your own WhatsApp name, about text, photo and privacy settings in **Meu perfil e privacidade**.
+- **Media:** received images show an inline preview automatically. Videos display their cover/name/duration when the connector provides those fields; the full video loads only after an explicit play action. Selected photos/videos show a local preview before sending, and removing/replacing the attachment releases its temporary URL. Record voice messages from the composer, review playback, then explicitly send or discard. Recordings are sent as native WhatsApp voice notes (PTT); any text in the editor stays as a draft because voice notes have no caption. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **Contacts and CRM:** **Contatos** lists the WhatsApp address book together with conversations (a phone number and a private `@lid` identifier of the same person count once, with the known phone shown), 200 at a time with search and status filters; contacts without a conversation open a new one. Maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
 - **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
 - **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
+- **Team operation:** an **Aguardando** queue ordered by waiting time with green/yellow/red response deadlines, attendants responsible for conversations (with transfer notes and a **Minhas** filter), bulk actions (close, pending, label, assign, mark read, archive), quick replies with `/` in the editor, and **Equipe e painel** with arrivals per hour, first-response time, the share answered by AI/robots versus people, handoffs and satisfaction. Optional AI triage, queue position notices and a satisfaction poll on closing start disabled.
+- **Voice flow:** turn on, separately, (1) automatic transcription of received audio, (2) the AI reading those transcriptions as customer messages, and (3) AI replies as text, as voice notes, or in the same format the customer used. Voice replies use an installed Windows voice (local) or OpenAI text-to-speech. **Enviar como áudio** turns the editor text into a voice note manually.
 - **AI assistance:** request a draft or opt into automatic answers. Choose classified contacts, all eligible contacts, or genuinely new conversations admitted after activation. Use the catalog, retrieved knowledge, and editable service rules as context.
 - **Knowledge and products:** import supported documents, inspect retrieved passages, manage product and service cards, and review AI-suggested catalog imports before saving.
 
@@ -67,9 +76,9 @@ Use the account button at the top of the sidebar to see the status of every acco
 
 | Per account | Shared by all accounts |
 | --- | --- |
-| Conversations, contacts, CRM, quick replies, scheduled messages, triggers, automations, assistant rules and activity, human-timing and transcription settings | Knowledge base, product catalog, AI provider and keys |
+| Conversations, contacts, CRM, quick replies, scheduled messages, triggers, automations, assistant rules and activity, team queue and dashboard, voice flow, human-timing and transcription settings, real-time connector events | Knowledge base, product catalog, AI provider and keys, voices |
 
-Everything a browser tab sends goes through the account that tab is showing; switching reloads the page, and a tab keeps its account. **Desconectar** ends only that account's session and keeps its data. **Remover** deletes that instance from the connector, including its synchronized messages, and moves its local file to `data/contas-arquivadas/`. The last remaining account cannot be removed. If the same number is paired in two accounts, the list shows a warning because automatic replies could be sent twice.
+Everything a browser tab sends goes through the account that tab is showing; switching reloads the page, and a tab keeps its account. **Desconectar** ends only that account's session and keeps its data. **Remover** deletes that instance from the connector, including its synchronized messages, and keeps its attendance data archived in PostgreSQL instead of deleting it. The last remaining account cannot be removed. If the same number is paired in two accounts, the list shows a warning because automatic replies could be sent twice.
 
 Local integrations with the `X-Integration-Token` header use the first account unless they send `X-WhatsApp-Account` with an account ID. Responses carry the account used in the header of the same name, and an unknown ID returns 404 instead of falling back to another account.
 
@@ -80,7 +89,7 @@ Other entry points:
 | `npm run configure` | Generate missing initial configuration without replacing existing secrets. |
 | `npm run serve` | Run only the Node server when configuration and the connector are already available. |
 | `npm run shortcut` | Create the **Whats AI** desktop shortcut and migrate the previous app shortcut when owned by this project. |
-| `Abrir WhatsApp.cmd` / `Iniciar WhatsApp.cmd` | Start the local stack and open the application. |
+| `Abrir WhatsApp.cmd` / `Iniciar WhatsApp.cmd` | Start the local stack and open the application. A central left running from before an update is restarted with the new code; the page also warns when the running central is older than its files. |
 | `Parar WhatsApp.cmd` | Stop the application and containers while preserving data. |
 | `Ativar inicio com Windows.cmd` | Opt into starting the services at Windows sign-in. |
 | `Desativar inicio com Windows.cmd` | Remove that sign-in shortcut. |
@@ -98,7 +107,15 @@ python -c "import whisper; whisper.load_model('base')"
 
 The second command downloads the model. Audio transcription runs automatically with local Whisper: recent voice messages are discovered in the background while the local server is running, and older audio is queued when its conversation history is opened. Transcripts are stored next to their message identifiers and displayed beneath each audio. Completed results are reused after refresh/restart; interrupted automatic local jobs resume. The automatic queue never uploads audio to a cloud provider. Failed jobs keep their error and can be retried explicitly. Configure model and language in **Transcrição de áudios**; the default is local Whisper `base` in Portuguese. Set `WHATSAPP_WHISPER_PYTHON` or `WHATSAPP_FFMPEG` before launching if the executables are in another location. The application first checks the standard Python 3.10 installation path, then `python.exe` on `PATH`.
 
-Transcription accepts audio up to **10 MB and 10 minutes**, processes one job at a time, and allows up to 20 queued jobs. Temporary audio files are removed after processing. Interrupted or failed jobs require an explicit retry; local failures do not automatically send audio to a cloud provider.
+Transcription accepts audio up to **10 MB and 10 minutes**. In **Transcrição de áudios** you choose how many audios run at the same time (1 to 4; each local job uses up to 4 CPU cores) and the queue limit (10 to 500, default 100). Temporary audio files are removed after processing.
+
+For faster CPU transcription, install [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and download the model once, then select **faster-whisper** as the local engine. The central only uses models already on disk; it never downloads one during a transcription.
+
+```powershell
+python -m pip install faster-whisper
+python -c "from faster_whisper import WhisperModel; WhisperModel('base')"
+```
+ Interrupted or failed jobs require an explicit retry; local failures do not automatically send audio to a cloud provider.
 
 ## Automatic replies and scheduling
 
@@ -120,7 +137,57 @@ AI audience options have distinct meanings:
 
 Explicit **Off**, draft mode, and per-contact automation pauses remain effective. The assistant limits responses per contact, waits at least 20 seconds between answers, and allows at most six responses per hour. Unanswered questions can be handed off to an operator rather than invented. Reply workers coordinate message claims so a trigger, the keyword robot, and the assistant do not all answer the same incoming message. Old messages are not replayed as a catch-up campaign after startup or activation.
 
+### Many messages at once
+
+Conversations are handled in parallel: up to **4 AI generations** and **6 sends** run at the same time, with at most one task per contact, so one customer's "human" wait and typing indicator no longer hold everyone else. Triggers keep priority over the keyword robot and the assistant: each worker claims messages during its scan, in that order, and only the waiting, generation and sending happen in the background.
+
+An automatic reply must still leave within **15 minutes** of the customer's message. When it cannot (a long AI queue, a slow local model, an AI error, or an audio still waiting for transcription), the conversation becomes **Pendente** with the label **Sem resposta**, and the activity log says why. Nothing is sent late. The **Sem resposta** filter in the conversation list shows these conversations, longest wait first. The label is removed when you (or a later automatic reply) answer the conversation. In draft mode, the AI only logs the problem; you are already answering.
+
+**Synchronization.** The connector's conversation listing scans all stored messages, so the central no longer asks for it on every check. All workers and the browser share one list, refreshed in full every 30 seconds and, in between, only for conversations with recent messages. Checks right before a send query just that conversation. The browser receives only the conversations that changed, and lists above 250 conversations draw only the visible rows. The central also listens to the connector's real-time events over a local WebSocket (`WEBSOCKET_ENABLED` in [`infra/compose.yaml`](infra/compose.yaml); restart through the launcher once to apply it): each new message starts a cycle immediately, and polling every 15 seconds remains as a fallback (5 seconds without events). The sidebar shows **Tempo real** while events arrive.
+
+<details>
+<summary>Previously reported simulation observations</summary>
+
+The following figures are historical development observations. A reproducible fixture command, measurement date and source revision are not recorded alongside them, so they should not be treated as a current benchmark or a production-capacity promise.
+
+In a reported 30-second simulation with 3,000 conversations and the browser open, the connector served 1 full listing instead of 14 (0.8 MB instead of 11.8 MB), and the interface had no blocked frames instead of 1.9 seconds blocked; with 8,000 conversations, 2.3 MB instead of 31.6 MB and no blocking instead of 9.9 seconds.
+
+In a reported simulated burst with the default "parecer humano" settings, 60 simultaneous customers were all answered within 1.5 minutes using a ~4-second cloud model, and within 5.3 minutes using a ~20-second local model; 200 customers within 4.7 minutes with the cloud model. The previous sequential worker answered 49 of 60 (cloud) and 26 of 60 (local), and silently skipped the rest. Real throughput depends on the AI provider, the connector and WhatsApp.
+
+</details>
+
 Scheduled jobs support **text only**. They continue while the browser is closed, but the local services must remain available. A disconnected job can wait up to 15 minutes after its due time; older jobs become missed and require rescheduling. Persisted send reservations reduce duplicate sends. If a process stops during delivery, the result can be **uncertain**: check WhatsApp before creating another send. The application does not promise exactly-once delivery across a remote connector.
+
+## Team operation
+
+Open **Equipe e painel**. Everything that writes to customers starts **off**.
+
+| Tool | What it does |
+| --- | --- |
+| **Aguardando** | Conversations whose latest message is from the customer, oldest wait first. Each row shows the wait with the deadlines set in the panel (default: attention after 5 minutes, late after 15). A conversation leaves the queue when anyone answers, or when it is closed. Reactions, poll votes and system messages do not open a wait. |
+| Attendants | Names for the people sharing this central. Each person picks **Você é** in the sidebar on their browser; **Responsável** in the contact panel assigns a conversation, and a change writes an internal note such as “Transferida de Ana para Bruno por Carla”. **Minhas** lists your open conversations. |
+| Bulk actions | The check button above the list selects conversations (up to 200 per action): close, mark pending, add or remove a label, assign, mark as read, archive. |
+| Quick replies with `/` | Type `/` at the start of a line in the editor to search the quick replies; Enter or Tab inserts one, and `{nome}` becomes the contact's first name. |
+| Dashboard | Today, 7 or 30 days: arrivals (conversations that started waiting), average first-response time and the share within the deadline, answered by AI/robots versus by people, handoffs (AI asked for a person or **Sem resposta**), satisfaction, closed conversations and per-attendant numbers. Arrivals per hour show as a column chart with exact values on hover and an accessible table. People's replies count for the conversation's attendant. |
+| AI triage | Classifies who is waiting into the subjects you list and applies the label `Assunto: …`. It sends the customer's latest text messages to the configured AI provider, at most once a day per conversation. |
+| Queue notice | After the chosen wait (default 90 seconds), sends “you are number N, estimated time …” once per wait, based on the last 7 days' average response time. It is never sent when the AI will answer by itself, nor to paused or blocked contacts, and it does not count as an answer. |
+| Satisfaction poll | When enabled, closing a conversation (manually or in bulk) sends a native WhatsApp poll (Ótimo, Bom, Regular, Ruim). A recorded send within the previous 24 hours prevents another poll for that contact. Votes count toward the dashboard's satisfaction (Ótimo or Bom). |
+
+Numbers start counting from the moment this version runs; conversations that were already waiting appear in the queue without being counted as new arrivals. Daily figures are kept for 90 days with the account's state in PostgreSQL.
+
+## Voice flow
+
+Open **Fluxo de voz (IA)**. Every stage starts **off** and is saved separately:
+
+| Stage | What it does | Where data goes |
+| --- | --- | --- |
+| 1. Automatic transcription | Incoming audio messages received after activation (and within the last 2 hours) are queued once each, up to five per cycle, using the normal transcription limits. | Local Whisper by default; OpenAI only if selected for this stage. |
+| 2. AI reading | Completed transcriptions count as customer speech, marked as `[áudio transcrito]`, for suggestions, drafts and automatic replies. An audio is answered only after its transcription is complete. | The configured assistant provider receives the transcription text, as it does for typed messages. |
+| 3. AI reply format | **Texto**, **Áudio** or **Igual ao cliente** (voice note when the customer sent audio, text otherwise). | Windows voice stays local; OpenAI voice receives the reply text. |
+
+Who the AI serves and whether it answers on its own still come from **Assistente de IA**: with the master switch off, the AI only prepares drafts. If voice generation fails before sending, the reply is sent as text and the event is logged in the voice flow activity. Voice replies accept up to 1,500 characters; links are read as "link enviado na conversa" and emojis are not spoken. Text the central sent as audio is kept so the AI can follow the conversation.
+
+The Windows voice uses `System.Speech` through [`scripts/speak.ps1`](scripts/speak.ps1) and prefers an installed `pt-BR` voice (add one in **Settings → Time & language → Speech**). OpenAI voices use `/v1/audio/speech` (`gpt-4o-mini-tts`, `tts-1` or `tts-1-hd`) with the same protected OpenAI key used by AI transcription. Generated audio is sent with the connector's voice-note conversion (OGG/Opus).
 
 ## Knowledge retrieval and AI
 
@@ -150,11 +217,11 @@ Each retrieved passage gets a confidence level. **High** means both searches agr
 
 | Level | Passages sent to the AI | Behavior |
 | --- | --- | --- |
-| Rigorosa | High only, up to 3 | Answers only what the context states explicitly and hands off to an operator otherwise. |
-| Equilibrada (default) | High and medium, up to 4 | Current behavior. |
-| Flexível | All levels, up to 6, with a lower semantic cutoff | Also answers greetings and general questions; business facts still come only from the base. |
+| Rigorosa | High only, up to 3 | Instructs the AI to use explicit context and hand off to an operator when it cannot support an answer. |
+| Equilibrada (default) | High and medium, up to 4 | Balances retrieval coverage with the confidence filter. |
+| Flexível | All levels, up to 6, with a lower semantic cutoff | Allows greetings and general questions while instructing the AI to ground business facts in the base. |
 
-The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct.
+The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct; prompt instructions do not guarantee factual answers.
 
 ### Robot suggestions from your business
 
@@ -166,14 +233,15 @@ In **Automações**, **Gerar sugestões com IA** reads the knowledge base and ca
 npm run rag:configurar
 ```
 
-The wizard asks for the business name and type (restaurant, shop, clinic, salon, repair shop, gym, school, services or other), then opening hours, address, payment, products and prices, policies and type-specific topics. It writes `base-conhecimento/00-sobre-o-negocio.md`, creates customer-style test questions in `base-conhecimento/testes/perguntas.txt` (the `testes` folder is not imported into the base), checks the embedding model and offers to download it with `ollama pull`, then synchronizes the folder and runs the test questions. When the app is open it works through the local API; when it is closed it prepares the data folder directly. `--respostas respostas.json` runs it without prompts.
+The wizard asks for the business name and type (restaurant, shop, clinic, salon, repair shop, gym, school, services or other), then opening hours, address, payment, products and prices, policies and type-specific topics. It writes `base-conhecimento/00-sobre-o-negocio.md`, creates customer-style test questions in `base-conhecimento/testes/perguntas.txt` (the `testes` folder is not imported into the base), checks the embedding model and offers to download a missing local model with `ollama pull`, then synchronizes the folder and runs retrieval checks. When the app is open it works through the local API; when it is closed it prepares the data folder directly. These commands use the installation's knowledge and data folders, not the isolated demo. `npm run rag:configurar -- --respostas respostas.json` runs without prompts and replaces an existing business-profile file.
 
 ```powershell
 npm run rag:testar
 npm run rag:testar -- --pergunta "Vocês entregam no meu bairro?" --confiabilidade strict
 ```
 
-`rag:testar` prints, for each question, the confidence, the document and the start of the passage found, plus a summary. Questions with no passage show which topics the base is missing.
+`rag:testar` prints, for each question, the confidence, the document and the start of the passage found, plus a summary. Questions with no passage identify topics or wording to investigate. This checks retrieval, not the factual accuracy of generated answers. Both commands can refresh the embedding index and use the configured provider even while the app is closed; see [`scripts/rag-lib.cjs`](scripts/rag-lib.cjs).
+
 The **Assistente de IA** page offers OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, Groq, Mistral AI, xAI (Grok), OpenRouter, Together AI, Perplexity, Ollama, and custom OpenAI-compatible endpoints. Choose a provider, paste its key, and click **Carregar modelos do provedor** to retrieve the conversation models available to that account (or installed in Ollama). This explicit catalog query uses the pasted or saved key without saving a new key or changing the active assistant. Initial suggestions are not a guarantee of account access. Providers without a model-list endpoint can use the suggestions or **Informar outro modelo…** for an exact model identifier, including private models. Click **Salvar** to persist the configuration and encrypt the key; a blank key preserves the key already saved for that provider. Changing providers clears pasted credentials and the previous API address from the form.
 
 Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. With a cloud embedding model, **every passage of every knowledge document** is also sent to that provider during indexing, and each question when searching; use a local Ollama model or `off` to avoid this. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
@@ -199,16 +267,36 @@ flowchart LR
 | Browser | [`public/`](public/): native DOM, CSS, and JavaScript; no frontend framework or build step. |
 | HTTP boundary | [`server.cjs`](server.cjs): request validation, local-origin protections, connector calls, and service routing. |
 | Connector adapter | [`lib/evolution.cjs`](lib/evolution.cjs): normalizes Evolution records, validates capabilities, and maps native operations. |
-| Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, and retrieval. |
-| Persistence | [`lib/postgres.cjs`](lib/postgres.cjs): transactional JSONB state, knowledge text and encrypted BYTEA credentials in a dedicated database. [`lib/store.cjs`](lib/store.cjs) remains the isolated file adapter used by tests/demo. |
+| Domain services | [`lib/`](lib/): independently testable workers for scheduling, triggers, assistant, CRM, transcription, retrieval, the voice flow ([`lib/voice-flow.cjs`](lib/voice-flow.cjs)) and speech ([`lib/speech.cjs`](lib/speech.cjs)). |
+| Team | [`lib/team.cjs`](lib/team.cjs): waiting queue, daily metrics, triage, queue notices, satisfaction polls and bulk actions; [`public/team.js`](public/team.js) holds the queue filters, `/` replies, assignment and dashboard. |
+| Synchronization | [`lib/evolution.cjs`](lib/evolution.cjs) shares an incremental conversation list and single-conversation lookups; [`lib/evolution-events.cjs`](lib/evolution-events.cjs) is a minimal Socket.IO client for connector events (Node's built-in WebSocket); [`lib/chat-delta.cjs`](lib/chat-delta.cjs) sends the browser only changed conversations. |
+| WhatsApp operations | [`lib/messaging-routes.cjs`](lib/messaging-routes.cjs): replies, reactions, edits, location, contact, voice notes, presence, chat organization, starred messages, profile and privacy. |
+| Persistence | [`lib/postgres.cjs`](lib/postgres.cjs): transactional JSONB state, knowledge text and encrypted BYTEA credentials in a dedicated database. [`lib/store.cjs`](lib/store.cjs) remains the isolated file adapter used by tests/demo. [`lib/housekeeping.cjs`](lib/housekeeping.cjs) prunes old duplicate-reply reservations. |
 | Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
 | Windows lifecycle | [`scripts/`](scripts/): configuration, start/stop, shortcuts, optional sign-in startup, and secret protection. |
 
 The runtime uses `pg` for PostgreSQL and `pdfjs-dist` for PDF rendering; it has no frontend framework. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
 
+## Design trade-offs
+
+These trade-offs describe the implemented architecture and its boundaries. The recorded simulation figures above are workload-specific observations, not production capacity guarantees.
+
+| Choice | Benefit | Cost or boundary |
+| --- | --- | --- |
+| Loopback-only Windows application with attendant labels | Keeps account configuration and the workspace on one machine while supporting assignment and queue metrics. | Attendant names do not enforce identity or permissions. Scheduling depends on the machine, Node and Docker remaining available; this is not a hosted multi-user service. |
+| Vanilla browser UI and Node server | Avoids a frontend build pipeline and keeps local installation direct. | UI state, rendering performance and accessibility must be managed explicitly as the interface grows. |
+| PostgreSQL persistence plus Windows DPAPI for credentials | Transactional local state and credentials bound to the Windows account. | Needs the Docker database running; workers target one application process; moving a database does not migrate usable credentials to another machine/user. |
+| Evolution linked-device connector | Provides conversation/media operations through a local integration boundary. | History, delivery acknowledgments and native feature support depend on WhatsApp and the connector. An ambiguous send cannot be treated as exactly once. |
+| Hybrid BM25 and embedding retrieval with a keyword fallback | Combines exact vocabulary and semantic matches while retaining retrieval during embedding failures. | Indexing adds latency, storage and provider cost; cloud embeddings transmit document passages to that provider. Retrieval scores are not calibrated confidence. |
+| Explicit automation switches, per-contact coordination and deadlines | Separates manual suggestions from automatic sending and reduces competing replies. | Missed or uncertain work needs operator review; local claims cannot make a remote send and local persistence one atomic transaction. |
+
+For a technical walkthrough, follow [message routing](lib/messaging-routes.cjs), [reply coordination](lib/concurrency.cjs), [scheduling](lib/scheduler.cjs), [team queues and metrics](lib/team.cjs), [knowledge retrieval](lib/knowledge.cjs), [embeddings](lib/embeddings.cjs) and [credential storage](lib/credentials.cjs), then compare those boundaries with [the testing guide](docs/testing.md).
+
 ## Privacy and persistence
 
-This is a local, single-user application, not a hardened multi-user service. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
+**Where data lives.** Central data uses a dedicated PostgreSQL database (`whatsapp_central`) in the local Docker stack, separate from the connector's database; the central needs Docker running. Messages and the WhatsApp session stay in the connector's PostgreSQL, managed by Evolution API. Sharing the central across computers would require a separate persistence, authentication and deployment design; the current attendant labels do not provide those boundaries. To back up, stop the central and copy `data/` together with the Docker volumes.
+
+This is a local application without per-person authentication. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
 
 Production stores the central's account registry, contact/CRM metadata, scheduling, automation, send reservations, transcription results, AI configuration, products and knowledge text in the dedicated **`whatsapp_central` PostgreSQL database**, using its own non-superuser login. The Evolution connector retains its separate `whatsapp` database and existing paired instances. The application pool connects only through `127.0.0.1:8768`; the port is not published on other host interfaces. State documents use JSONB with row locks for updates, while knowledge text and credentials have separate tables. This preserves the service contracts; it is not a claim that the existing single-process reply workers support running multiple application servers.
 
@@ -226,6 +314,7 @@ Current persistence locations are:
 | --- | --- |
 | PostgreSQL `whatsapp_central`, schema `central` | Central state, account registry, archived state, products, knowledge text, provider/model metadata, encrypted credentials and migration marker. |
 | `data/product-images/` | Catalog image files referenced by database records. |
+| `data/embeddings/` | Embedding vectors per knowledge document; rebuilt automatically when missing or when the model changes. |
 | `data/trigger-media/` | Immutable media files used by trigger rules, referenced by content hash. |
 | `data/database.json`, `infra/.env` | Bootstrap database connection and Docker initialization secrets. |
 | Former JSON files, `data/knowledge/`, `data/credentials.sqlite` | Preserved migration sources; not the active production state after successful migration. |
@@ -248,18 +337,23 @@ node --test --test-concurrency=1 tests/postgres.test.cjs
 
 The Node suite covers domain behavior, HTTP contracts, persistence, retries and uncertain delivery, frontend state, and credential handling. PostgreSQL integration tests are opt-in and create/drop only randomly named `qa_*` schemas; production tables are never used. The browser suite uses isolated fixtures and fake connectors. The media preview spec serves real assets with simulated API replies and exercises actual browser image/video elements. Neither suite needs a paired WhatsApp session or sends messages to real contacts. The Windows DPAPI test is skipped on non-Windows platforms.
 
-See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture boundaries, and manual checks. A passing fake-connector test verifies the application contract; it does not prove that an upstream WhatsApp session will accept every operation.
+Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture boundaries, test recording with `npm run codegen`, and manual checks. A passing fake-connector test verifies the application contract; it does not prove that an upstream WhatsApp session will accept every operation.
 
 ## Current limits
 
-- Individual conversations only; no bulk campaigns, group management, billing, or multi-user permissions.
+- Individual conversations only; no bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
+- Accounts are separate workspaces: forwarding and search stay inside the account in use, and there is no combined inbox. Up to 10 accounts.
+- Attendants are names for people sharing this central on this computer; there is no per-person login, and the central is still reachable only through loopback. Using it from several computers needs accounts, HTTPS and a deployment design that this version does not include.
+- Evolution 2.3.7 does not keep a chat's archive state, so the bundled connector extension records what WhatsApp reports (including chats archived on the phone and during the initial sync) and the central shows them under **Arquivadas**; the most recent change, from the phone or from the central, wins. Restart through the launcher once so the connector image is rebuilt with it. Chats archived before that rebuild are read once, automatically, from a read-only copy of WhatsApp's own archive state (it never changes the session's sync state); **Arquivadas → Buscar no WhatsApp** reads it again on demand. When WhatsApp's "Keep chats archived" is off, a chat with a message newer than its archive leaves **Arquivadas**, as on the phone. Block, pin and mute state are not read back from the phone: blocking from the central is native, pinning and muting are local to the central. Desktop notifications depend on browser permission and stop when the central is closed.
+- Real-time events depend on the connector's WebSocket being enabled and reachable; when it is not, the central keeps working with periodic polling. Conversations whose latest change is not a new message (for example, a read on the phone) refresh with the full listing, at most 30 seconds later.
+- Quoting and reacting require the original message to be in the connector's history. Edits follow WhatsApp's 15-minute limit; the connector can still reject an edit.
 - History is limited to what the linked device and connector synchronize. Private `@lid` identifiers may lack a public phone number or address-book name; the application does not guess a mapping.
 - Media and forwarding are limited to supported types and 10 MB. Forwarding recreates content as a new message; Evolution 2.3.7 does not provide the native forwarded badge through this workflow.
 - Accounts are separate workspaces: forwarding and search stay inside the account in use, and there is no combined inbox. Up to 10 accounts.
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
 - Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
-- PostgreSQL handles durable central state; reply workers still assume a single application server process.
-- Cloud AI answers and imported catalog suggestions require review appropriate to the task. Retrieval is lexical and can miss differently worded information.
+- PostgreSQL handles durable central state; reply workers still assume a single application server process. Duplicate-reply reservations are kept for 3 days and send idempotency records for 7 days (a message can only be answered automatically in its first 15 minutes; trigger delays reach 24 hours). Transcription results are not pruned.
+- Cloud AI answers and imported catalog suggestions require review appropriate to the task. Hybrid retrieval can still miss relevant information; when embeddings are unavailable or disabled, keyword-only fallback is more sensitive to wording.
 - AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a database copy alone cannot restore access.
 
 For local diagnostics:
