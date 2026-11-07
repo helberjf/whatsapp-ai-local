@@ -31,17 +31,18 @@ const config={apiUrl:'http://127.0.0.1:8767',apiKey:'chave-local',instanceName:'
 
 test('lista compartilhada: cache curto, uma consulta para chamadas simultâneas, recentes no intervalo e completa no prazo',async()=>{
   let rows=[row(1),row(2)];const fake=connector(()=>rows);
-  const client=createEvolutionClient({...config,chatsCacheMs:60,chatsFullRefreshMs:250},fake.fetchImpl);
+  // Janelas largas: com a suíte inteira em paralelo, poucos milissegundos de atraso não podem mudar o resultado.
+  const client=createEvolutionClient({...config,chatsCacheMs:400,chatsFullRefreshMs:2000},fake.fetchImpl);
   const [first,second]=await Promise.all([client.chats(),client.chats()]);
   assert.equal(fake.chatCalls().length,1,'chamadas ao mesmo tempo dividem uma consulta');assert.deepEqual(fake.chatCalls()[0].input,{});
   assert.deepEqual(first.map(chat=>chat.jid),[jidOf(1),jidOf(2)]);assert.notEqual(first,second);
   await client.chats();assert.equal(fake.chatCalls().length,1,'dentro do cache não consulta de novo');
-  rows=[row(3,'Nova conversa',1793200500),...rows];await wait(70);
+  rows=[row(3,'Nova conversa',1793200500),...rows];await wait(450);
   const recent=await client.chats(),query=fake.chatCalls().at(-1).input;
   assert.ok(query.where.messageTimestamp.gte && query.where.messageTimestamp.lte,'consulta só as conversas recentes');
   assert.ok(Date.parse(query.where.messageTimestamp.lte)>Date.now() && Date.parse(query.where.messageTimestamp.gte)<Date.now()-9*60_000);
   assert.deepEqual(recent.map(chat=>chat.jid),[jidOf(3),jidOf(1),jidOf(2)]);
-  rows=[row(1)];await wait(260);
+  rows=[row(1)];await wait(2100);
   assert.deepEqual((await client.chats()).map(chat=>chat.jid),[jidOf(1)],'a listagem completa remove o que saiu');assert.deepEqual(fake.chatCalls().at(-1).input,{});
 });
 

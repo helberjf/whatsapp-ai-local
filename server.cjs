@@ -228,7 +228,9 @@ function createWhatsAppServer(options={}) {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
         if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
-        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
+        // O conector não zera o contador ao ler pela central: o que já foi lido aqui continua lido.
+        const readHere=(contact,last)=>Boolean(last && contact?.readState && (contact.readState.lastSeenId===last.id || contact.readState.messageIds?.includes(last.id)));
+        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],...(readHere(data.contacts[chat.jid],chat.lastMessage)?{unread:0}:{}),archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
@@ -279,7 +281,9 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/read') {
         const input=await readBody(req),jid=assertJid(input.jid);
         if(!Array.isArray(input.keys) || input.keys.length>100 || input.keys.some(key=>!key || typeof key.id!=='string' || key.id.length>200 || key.fromMe!==false || key.remoteJid!==jid)) throw new ApiError('Mensagens de leitura inválidas.',422);
-        if(input.keys.length) await client.read(jid,input.keys);return json(res,200,{read:true});
+        if(input.lastSeenId!==undefined && (typeof input.lastSeenId!=='string' || input.lastSeenId.length>200)) throw new ApiError('Mensagem de leitura inválida.',422);
+        if(input.keys.length) {await client.read(jid,input.keys);await store.update(data=>{const contact=data.contacts[jid] ||= contactDefault();contact.readState={messageIds:input.keys.map(key=>key.id),lastSeenId:input.lastSeenId || input.keys.at(-1).id};});}
+        return json(res,200,{read:true});
       }
       if(req.method==='POST' && route==='/api/send') {
         const input=await readBody(req),jid=assertJid(input.jid),text=textField(input.text,10000,'Mensagem'),quotedId=quoteId(input.quotedId);

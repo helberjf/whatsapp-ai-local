@@ -6,6 +6,15 @@ const screenshotDir=path.join(__dirname,'..','..','docs','screenshots');
 const capturePath=name=>process.env.WHATSAPP_CAPTURE_DOCS==='1'?path.join(screenshotDir,name):test.info().outputPath(name);
 async function openChat(page) {await page.locator('.chat-item').filter({hasText:'Alex Morgan'}).click();await expect(page.locator('#conversation-content')).toBeVisible();}
 async function insideViewport(locator) {await locator.scrollIntoViewIfNeeded();const box=await locator.boundingBox();expect(box).not.toBeNull();const viewport=locator.page().viewportSize();expect(box.x).toBeGreaterThanOrEqual(-1);expect(box.y).toBeGreaterThanOrEqual(-1);expect(box.x+box.width).toBeLessThanOrEqual(viewport.width+1);expect(box.y+box.height).toBeLessThanOrEqual(viewport.height+1);}
+test('opening an unread conversation stays read after refresh',async({page})=>{
+  await page.locator('.chat-item').filter({hasText:'Sam Rivera'}).click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);
+  await page.locator('#refresh-top').click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);
+});
+test('reply menu quotes the selected message and sends its identifier',async({page})=>{
+  await openChat(page);const message=page.locator('.message').filter({hasText:'Maneiro'});await message.locator('.message-menu-toggle').click();await message.getByRole('button',{name:'Responder',exact:true}).click();
+  await expect(page.locator('#reply-preview')).toContainText('Maneiro');await page.screenshot({path:path.join(__dirname,'..','..','data','reply-preview.png')});await page.locator('#message-text').fill('Respondendo a esta mensagem');
+  const request=page.waitForRequest(req=>req.url().endsWith('/api/send') && req.method()==='POST');await page.locator('#send').click();expect((await request).postDataJSON().replyTo).toBe('demo-short');await expect(page.locator('#reply-preview')).not.toBeVisible();await expect(page.locator('.message.mine .message-quote')).toContainText('Maneiro');
+});
 test.beforeEach(async({page,demo})=>{const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item'),()=>JSON.stringify(errors)).toHaveCount(10);expect(errors).toEqual([]);});
 
 for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {

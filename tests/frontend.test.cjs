@@ -236,6 +236,21 @@ test('dashboard mostra quatro contagens reais e navegação filtra os atendiment
   await browser.get('metric-unread-button').emit('click');
   assert.equal(browser.get('chat-list').children.length,2);
   await browser.get('nav-overview').emit('click');
+  assert.equal(browser.get('page-dashboard').hidden,false);
+  assert.equal(browser.get('workspace').hidden,true);
+  assert.deepEqual(browser.get('dashboard-stats').children.map(card=>card.children[1].textContent),['4','2','1','1']);
+  assert.equal(browser.get('dashboard-recent').children.length,4);
+  assert.equal(browser.get('dashboard-attention-count').textContent,'1');
+  assert.match(browser.get('dashboard-attention').textContent,/Bruno/);
+  assert.doesNotMatch(browser.get('dashboard-attention').textContent,/Carla/);
+  assert.deepEqual(browser.get('dashboard-distribution').children.map(item=>item.children[1].value),[2,1,1]);
+  assert.deepEqual(browser.get('dashboard-ai-summary').children.map(item=>item.children[1].textContent),['0','0','4']);
+  await browser.get('dashboard-ai-open').emit('click');
+  assert.equal(browser.get('page-ai').hidden,false);
+  assert.equal(browser.get('page-dashboard').hidden,true);
+  await browser.get('dashboard-stats').children[0].emit('click');
+  assert.equal(browser.get('page-dashboard').hidden,true);
+  assert.equal(browser.get('workspace').hidden,false);
   assert.equal(browser.get('chat-list').children.length,4);
 });
 
