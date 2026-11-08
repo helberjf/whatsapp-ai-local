@@ -33,13 +33,16 @@
   function arrangeChats(list) {
     const searching=Boolean($('search')?.value.trim()),waiting=chat=>Array.isArray(chat.labels) && chat.labels.includes(NO_REPLY);
     const archivedCount=C.chats().filter(chat=>chat.archived===true).length;
+    // Como no WhatsApp: o número ao lado de "Arquivadas" conta só as arquivadas com mensagem ainda não vista.
+    const archivedUnread=C.chats().filter(chat=>chat.archived===true && Number(chat.unread)>0).length;
     const unansweredCount=C.chats().filter(chat=>chat.archived!==true && waiting(chat)).length;
     $('filter-archived').hidden=true;$('filter-archived-count').textContent=archivedCount;
     // A linha fica sempre à mão (como no WhatsApp com arquivadas): por ela também se busca as arquivadas antigas do celular.
     $('archived-row').hidden=!archivedCount && !showArchived && !C.chats().length;
     $('archived-sync').hidden=!showArchived;
     if(showArchived && !archiveSyncing) $('archived-sync-text').textContent=archivedCount?'Arquivou no celular e não aparece? Busque de novo.':'Nenhuma arquivada por aqui. Busque as que estão arquivadas no celular.';$('archived-row').setAttribute('aria-pressed',String(showArchived));$('archived-row').classList.toggle('back',showArchived);
-    $('archived-row-label').textContent=showArchived?'← Voltar às conversas':'Arquivadas';$('archived-row-count').textContent=showArchived?'':String(archivedCount);
+    $('archived-row-label').textContent=showArchived?'← Voltar às conversas':'Arquivadas';$('archived-row-count').textContent=showArchived || !archivedUnread?'':String(archivedUnread);
+    $('archived-row').title=`${archivedCount} conversa${archivedCount===1?'':'s'} arquivada${archivedCount===1?'':'s'}${archivedUnread?` · ${archivedUnread} com mensagem não vista`:''}`;
     $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
     // A busca e as filas operam dentro da lista atual.
     const visible=list.filter(chat=>(chat.archived===true)===showArchived);

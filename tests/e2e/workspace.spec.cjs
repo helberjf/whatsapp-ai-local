@@ -192,7 +192,7 @@ test('conversation organization: pin, archive, mute and unread stay explicit',as
   await openChat(page);await page.locator('#show-contact').click();
   await page.locator('#chat-pin').click();await expect(page.locator('#chat-pin')).toContainText('Desafixar');await expect(page.locator('.chat-item').first()).toContainText('Alex Morgan');
   await page.locator('#chat-mute').click();await page.locator('[data-mute="-1"]').click();await expect(page.locator('#chat-mute')).toContainText('Reativar');await expect(page.locator('#contact-flags')).toContainText('Silenciada');
-  await page.locator('#chat-archive').click();await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#chat-archive').click();await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#archived-row')).toHaveAttribute('title','1 conversa arquivada');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#archived-row')).toContainText('Voltar às conversas');
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
 });
@@ -231,9 +231,12 @@ test('team tools: waiting queue, slash replies, bulk actions, transfer and dashb
   await page.screenshot({path:capturePath('team-dashboard.png')});
 });
 test('chats archived on the phone appear under Arquivadas and every filter stays in view',async({page,demo})=>{
-  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('0');
+  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('');
   demo.archiveOnPhone(9);await page.locator('#refresh-top').click();
-  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#archived-row')).toHaveAttribute('title','1 conversa arquivada');
+  // Arquivada com mensagem não vista: só ela conta no número, como no WhatsApp.
+  demo.archiveOnPhone(1);await page.locator('#refresh-top').click();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#archived-row')).toHaveAttribute('title','2 conversas arquivadas · 1 com mensagem não vista');
+  demo.archiveOnPhone(1,false);await page.locator('#refresh-top').click();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Riley Alves');
   await page.locator('#archived-row').click();
   for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {
@@ -248,7 +251,7 @@ test('chats archived on the phone before the extension are fetched from WhatsApp
   await expect(page.locator('#chat-list .chat-item')).toHaveCount(2);await expect(page.locator('#chat-list')).toContainText('Avery Rocha');
   // Arquivada no WhatsApp sem conversa na Evolution: aparece com o nome da agenda e abre normalmente.
   await page.locator('#chat-list .chat-item').filter({hasText:'Morgan Blake'}).click();await expect(page.locator('#conversation-content')).toBeVisible();
-  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row-count')).toHaveText('2');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#archived-row')).toHaveAttribute('title','2 conversas arquivadas');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
 });
 test('the inbox search and unanswered filter keep archived chats separate',async({page,demo})=>{
   await page.evaluate(async()=>{
@@ -259,7 +262,7 @@ test('the inbox search and unanswered filter keep archived chats separate',async
     }
   });
   demo.archiveOnPhone(0);await page.locator('#refresh-top').click();
-  await expect(page.locator('#archived-row-count')).toHaveText('1');
+  await expect(page.locator('#archived-row')).toHaveAttribute('title','1 conversa arquivada');
   const search=page.locator('#search'),alex=page.locator('#chat-list .chat-item').filter({hasText:'Alex Morgan'});
   await search.fill('Alex Morgan');await expect(alex).toHaveCount(0,{timeout:3000});
   await page.locator('#archived-row').click();await expect(alex).toHaveCount(1);
