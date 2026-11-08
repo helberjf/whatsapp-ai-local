@@ -163,3 +163,17 @@ test('arquivada por identificador privado (@lid) também vale para o telefone da
   assert.equal(chats[lid].archived,true);assert.equal(chats[jidOf(7)].archived,true,'telefone ganha o mesmo estado, sem o :dispositivo');
   assert.equal(chats[jidOf(8)].archived,true,'atualização ao vivo por @lid também chega ao telefone');
 });
+
+test('arquivadas sem conversa na Evolution entram em Arquivadas, sem duplicar telefone e @lid',async t=>{
+  const now=Date.now(),remote={
+    [jidOf(1)]:{archived:true,updatedAt:now-1000},
+    [jidOf(5)]:{archived:true,updatedAt:now-1000,alias:'555555555555555@lid'},'555555555555555@lid':{archived:true,updatedAt:now-1000,alias:jidOf(5)},
+    '666666666666666@lid':{archived:true,updatedAt:now-1000},[jidOf(6)]:{archived:false,updatedAt:now-1000},[jidOf(7)]:{archived:true,updatedAt:now-1000}
+  };
+  const {call}=await serverWith(t,{'/findChats/':[chatRow(jidOf(1),'Na lista')],'/findContacts/':[{remoteJid:jidOf(5),pushName:'Agenda Cinco'}],'/localArchived/':()=>({extensionVersion:2,archiveSync:true,snapshot:true,snapshotAt:now,unarchiveChats:false,chats:remote}),'/archiveChat/':input=>({chatId:input.chat,archived:true})});
+  await call('/api/chat-state?jid='+encodeURIComponent(jidOf(7)),'PATCH',{archived:false});
+  const chats=(await call('/api/chats')).body,byJid=Object.fromEntries(chats.map(chat=>[chat.jid,chat]));
+  assert.deepEqual(chats.map(chat=>chat.jid).sort(),[jidOf(1),jidOf(5),'666666666666666@lid'].sort(),'telefone e @lid da mesma pessoa viram uma conversa; desarquivada pela central some');
+  assert.equal(byJid[jidOf(5)].name,'Agenda Cinco');assert.equal(byJid[jidOf(5)].archived,true);assert.deepEqual(byJid[jidOf(5)].aliasJids,['555555555555555@lid']);
+  assert.equal(byJid['666666666666666@lid'].name,'Conversa arquivada');assert.equal(byJid['666666666666666@lid'].lastMessage,null);
+});

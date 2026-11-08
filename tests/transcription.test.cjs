@@ -13,7 +13,8 @@ async function fixture(t,options={}) {
   let credentials;
   t.after(async()=>{await credentials?.close();assert.equal(path.dirname(directory),os.tmpdir());assert.match(path.basename(directory),/^wa-transcription-test-/);await fs.rm(directory,{recursive:true,force:true});});
   const store=createStore(directory),calls=[];
-  credentials=createCredentialStore(directory);
+  // Fora do Windows não há DPAPI: no Linux/macOS o teste usa uma proteção reversível de teste.
+  credentials=createCredentialStore(directory,process.platform==='win32'?{}:{protect:async bytes=>Buffer.from('protected:'+bytes.toString('base64')),unprotect:async bytes=>Buffer.from(bytes.toString().slice(10),'base64')});
   const service=createTranscriptionService({store,credentials,mediaLoader:async(...args)=>{calls.push(args);return {base64:'aGVsbG8=',mimetype:'audio/ogg; codecs=opus'};},whisperEngine:async()=>({text:'Olá, tudo bem?'}),aiEngine:async()=>({text:'IA'}),...options});
   return {directory,store,calls,service};
 }

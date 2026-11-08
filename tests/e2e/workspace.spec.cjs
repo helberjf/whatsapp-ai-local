@@ -175,9 +175,11 @@ test('chats archived on the phone appear under Arquivadas and every filter stays
 test('chats archived on the phone before the extension are fetched from WhatsApp on request',async({page})=>{
   await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeVisible();await expect(page.locator('#chat-list .chat-item')).toHaveCount(0);
   await expect(page.locator('#archived-sync-text')).toContainText('Busque as que estão arquivadas no celular');
-  await page.locator('#archived-sync-button').click();await expect(page.locator('#notice')).toContainText('1 conversa arquivada no WhatsApp.');
-  await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Avery Rocha');
-  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#archived-sync-button').click();await expect(page.locator('#notice')).toContainText('2 conversas arquivadas no WhatsApp.');
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(2);await expect(page.locator('#chat-list')).toContainText('Avery Rocha');
+  // Arquivada no WhatsApp sem conversa na Evolution: aparece com o nome da agenda e abre normalmente.
+  await page.locator('#chat-list .chat-item').filter({hasText:'Morgan Blake'}).click();await expect(page.locator('#conversation-content')).toBeVisible();
+  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row-count')).toHaveText('2');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
 });
 test('an outdated central shows a restart notice instead of failing silently',async({page})=>{
   await page.route('**/health',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({service:'whatsapp-local',version:1})}));

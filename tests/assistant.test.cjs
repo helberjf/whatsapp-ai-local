@@ -116,7 +116,9 @@ test('rotas: classificar contatos, editar regras, chave geral e PATCH do contato
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-local-assistant-http-'));
   const seen=[];
   const aiFetch=async(url,options)=>{seen.push(JSON.parse(options.body));return {ok:true,status:200,text:async()=>JSON.stringify({choices:[{message:{content:'Temos importação da China, Europa e EUA e passagens.'}}]})};};
-  const server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:1',apiKey:'x',instanceName:'t'},storeDir:dir,aiFetch,assistantIntervalMs:3_600_000});
+  // Fora do Windows não há DPAPI: o teste usa uma proteção reversível de teste.
+  const credentials=process.platform==='win32'?undefined:require('../lib/credentials.cjs').createCredentialStore(dir,{protect:async bytes=>Buffer.from('protected:'+bytes.toString('base64')),unprotect:async bytes=>Buffer.from(bytes.toString().slice(10),'base64')});
+  const server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:1',apiKey:'x',instanceName:'t'},storeDir:dir,aiFetch,assistantIntervalMs:3_600_000,...(credentials?{credentials}:{})});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const base='http://127.0.0.1:'+server.address().port,token=(await (await fetch(base)).text()).match(/content="([a-f0-9]{64})"/)[1];
   const call=async(route,method='GET',input)=>{const response=await fetch(base+route,{method,headers:{'Content-Type':'application/json','X-WhatsApp-Token':token,Origin:base},...(input===undefined?{}:{body:JSON.stringify(input)})});return {status:response.status,body:await response.json()};};

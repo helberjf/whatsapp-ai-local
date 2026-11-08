@@ -24,7 +24,7 @@ async function createDemo({port=8876}={}) {
   // Imita a extensão local: guarda o estado de arquivada informado pelo WhatsApp (inclusive o do celular).
   const archivedRemote={};
   // Arquivada no celular antes da extensão existir: só aparece depois de "Buscar no WhatsApp" (leitura do estado do WhatsApp).
-  const phoneOnlyArchived={[jids[8]]:{archived:true,updatedAt:Date.now()-3*86400_000,lastMessageAt:Date.now()-4*86400_000}};
+  const phoneOnlyArchived={[jids[8]]:{archived:true,updatedAt:Date.now()-3*86400_000,lastMessageAt:Date.now()-4*86400_000},'5511000000020@s.whatsapp.net':{archived:true,updatedAt:Date.now()-30*86400_000}};
   let archiveSnapshotAt=null;
   let privacy={readreceipts:'all',profile:'contacts',status:'contacts',online:'all',last:'contacts',groupadd:'contacts'},ownProfile={name:'Demo Operator',status:'Available for the demo'};
   histories[0].unshift({...raw(0,'demo-image','',false,110),message:{imageMessage:{mimetype:'image/png',caption:'Imagem de demonstração'}}},{...raw(0,'demo-pdf','',false,100),message:{documentMessage:{mimetype:'application/pdf',fileName:'sample.pdf'}}});

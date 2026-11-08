@@ -46,6 +46,27 @@ function archivedOf(chat,contact,remote) {
   if(archived && remote?.meta?.unarchiveChats===true && since>0 && Number(chat.lastMessage?.timestamp || 0)>since+1000) return false;
   return archived;
 }
+// Arquivadas que o WhatsApp informa mas que a Evolution não lista como conversa (antigas, nunca sincronizadas,
+// ou conhecidas só pelo identificador privado): entram em "Arquivadas" mesmo assim, com o nome da agenda quando houver.
+async function archivedOnlyChats(list,remote,contacts,client) {
+  if(!remote?.size) return [];
+  const known=new Set(list.flatMap(chat=>[chat.jid,...(chat.aliasJids || [])])),missing=[];
+  for(const [jid,item] of remote) {
+    if(!item.archived || known.has(jid) || (item.alias && known.has(item.alias))) continue;
+    known.add(jid);if(item.alias) known.add(item.alias);missing.push([jid,item]);
+  }
+  if(!missing.length) return [];
+  const book=await client.contactsList?.().catch(()=>[]) || [],byJid=new Map();
+  for(const entry of book) for(const id of [entry.jid,...(entry.aliasJids || [])]) byJid.set(id,entry);
+  const result=[];
+  for(const [jid,item] of missing) {
+    const entry=byJid.get(jid) || byJid.get(item.alias),phoneJid=[jid,item.alias].find(id=>id?.endsWith('@s.whatsapp.net'));
+    const id=entry?.jid || phoneJid || jid,phone=entry?.phone || phoneJid?.split('@')[0] || null;
+    const chat={jid:id,aliasJids:[jid,item.alias].filter(value=>value && value!==id),name:entry?.name || (phone?'+'+phone:'Conversa arquivada'),nameSource:entry?.nameSource || 'number',...(phone?{phone}:{}),unread:0,lastMessage:null,archivedOnly:true};
+    if(archivedOf(chat,contacts?.[id],remote)) result.push(chat);
+  }
+  return result;
+}
 const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
 async function readBody(req) {
@@ -227,14 +248,15 @@ function createWhatsAppServer(options={}) {
         const result=await client.archiveSnapshot();client.invalidateChats();
         // Quantas aparecem de fato na lista: ajuda a explicar quando o WhatsApp tem mais arquivadas do que a central consegue casar.
         const [data,remote,list]=await Promise.all([store.read(),client.archivedState({maxAge:0}).catch(()=>null),client.chats()]);
-        const shown=list.filter(chat=>archivedOf(chat,data.contacts?.[chat.jid],remote)).length;
+        const shown=list.filter(chat=>archivedOf(chat,data.contacts?.[chat.jid],remote)).length+(await archivedOnlyChats(list,remote,data.contacts,client)).length;
         return json(res,200,{...result,shown,unarchiveChats:remote?.meta?.unarchiveChats ?? null});
       }
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
         if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
-        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
+        const listed=await client.chats(),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
+        const chats=[...listed,...extra].map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));

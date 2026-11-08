@@ -27,12 +27,13 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(archiveTimer) return;
     archiveTimer=setTimeout(()=>{archiveTimer=null;try {saveArchive(archives());}catch { /* the next change tries again */ }},archiveStorage.delayMs ?? 1000);archiveTimer.unref?.();
   }
-  function rememberArchive(service,jid,archived,updatedAt=Date.now(),{lastMessageAt,onlyNewer=false}={}) {
+  function rememberArchive(service,jid,archived,updatedAt=Date.now(),{lastMessageAt,onlyNewer=false,alias}={}) {
     const id=instanceKey(service);if(!id || !individual(jid) || typeof archived!=='boolean') return false;
     const chats=archives()[id] ||= {},previous=chats[jid];
     if(onlyNewer && previous && previous.updatedAt>=updatedAt) return false;
-    if(!onlyNewer && previous && previous.archived===archived) return false;
-    chats[jid]={archived,updatedAt,...(Number.isFinite(lastMessageAt) && lastMessageAt>0?{lastMessageAt}:{})};
+    if(!onlyNewer && previous && previous.archived===archived) {if(individual(alias) && previous.alias!==alias) {previous.alias=alias;scheduleArchiveSave();}return false;}
+    // alias: o outro identificador da mesma pessoa (telefone <-> @lid), para a central não mostrar a conversa duas vezes.
+    chats[jid]={archived,updatedAt,...(Number.isFinite(lastMessageAt) && lastMessageAt>0?{lastMessageAt}:{}),...(individual(alias)?{alias}:individual(previous?.alias)?{alias:previous.alias}:{})};
     const ids=Object.keys(chats);if(ids.length>20000) for(const old of ids.sort((a,b)=>chats[a].updatedAt-chats[b].updatedAt).slice(0,ids.length-20000)) delete chats[old];
     scheduleArchiveSave();
     return true;
@@ -55,7 +56,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
   }
   function rememberWithPhone(service,jid,archived,updatedAt,options) {
     const changed=rememberArchive(service,jid,archived,updatedAt,options);
-    phoneFor(service,jid).then(phone=>{if(phone) rememberArchive(service,phone,archived,updatedAt ?? Date.now(),options);},()=>{});
+    phoneFor(service,jid).then(phone=>{if(phone) {rememberArchive(service,jid,archived,updatedAt ?? Date.now(),{...options,alias:phone});rememberArchive(service,phone,archived,updatedAt ?? Date.now(),{...options,alias:jid});}},()=>{});
     return changed;
   }
   const archiveFrom=(service,list)=>{for(const chat of Array.isArray(list)?list:[]) if(chat && typeof chat.archived==='boolean') rememberWithPhone(service,chat.id,chat.archived);};
@@ -178,8 +179,9 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
       let changed=0,linked=0;
       for(const chat of chats) {
         const options={lastMessageAt:chat.lastMessageAt,onlyNewer:true};
-        if(rememberArchive(service,chat.jid,chat.archived,chat.updatedAt,options)) changed++;
-        const phone=await phoneFor(service,chat.jid);if(phone) {linked++;rememberArchive(service,phone,chat.archived,chat.updatedAt,options);}
+        const phone=await phoneFor(service,chat.jid);
+        if(rememberArchive(service,chat.jid,chat.archived,chat.updatedAt,{...options,alias:phone || undefined})) changed++;
+        if(phone) {linked++;rememberArchive(service,phone,chat.archived,chat.updatedAt,{...options,alias:chat.jid});}
       }
       const meta=archiveMeta(service);meta.snapshotAt=Date.now();if(typeof unarchiveChats==='boolean') meta.unarchiveChats=unarchiveChats;scheduleArchiveSave();
       return {archived:chats.filter(chat=>chat.archived && individual(chat.jid)).length,lid:chats.filter(chat=>chat.archived && String(chat.jid).endsWith('@lid')).length,linked,changed,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
