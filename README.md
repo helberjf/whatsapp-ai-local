@@ -142,6 +142,14 @@ AI audience options have distinct meanings:
 
 Explicit **Off**, draft mode, and per-contact automation pauses remain effective. The assistant limits responses per contact, waits at least 20 seconds between answers, and allows at most six responses per hour. Unanswered questions can be handed off to an operator rather than invented. Reply workers coordinate message claims so a trigger, the keyword robot, and the assistant do not all answer the same incoming message. Old messages are not replayed as a catch-up campaign after startup or activation.
 
+Under **Assistente de IA**, choose how the assistant answers. These settings apply to automatic replies and manual suggestions:
+
+| Setting | Options |
+| --- | --- |
+| Where answers come from | **Base de conhecimento + conversa** (default): recent messages plus knowledge search and the catalog. **Só a conversa**: only recent messages; no knowledge search or catalog is sent to the AI, and anything the conversation does not already say is handed off instead of invented. |
+| Recent messages read | 2 to 30, default 14. |
+| Tone | **Profissional** (default), or **Natural**: short, warm WhatsApp-style messages without formal phrases such as "Prezado", with at most one emoji. Content limits and the company rules still apply. |
+
 ### Many messages at once
 
 Conversations are handled in parallel: up to **4 AI generations** and **6 sends** run at the same time, with at most one task per contact, so one customer's "human" wait and typing indicator no longer hold everyone else. Triggers keep priority over the keyword robot and the assistant: each worker claims messages during its scan, in that order, and only the waiting, generation and sending happen in the background.

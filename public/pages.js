@@ -529,6 +529,32 @@
     box.append(label,hint,audienceSave,status);anchor.parentNode.insertBefore(box,anchor);renderAudienceHint();
   }
   buildAudienceControls();
+  // ---------- Como a IA responde: de onde tira a resposta, quantas mensagens lê e o tom ----------
+  const SOURCE_HINT={
+    base:'A IA lê as últimas mensagens da conversa e consulta a Base de Conhecimento e o catálogo para dados do negócio.',
+    conversation:'A IA lê só as últimas mensagens da conversa, sem consultar a base nem o catálogo. O que não foi dito na conversa ela passa para um atendente, em vez de inventar.'
+  };
+  const TONE_HINT={formal:'Cordial e objetiva, como um atendimento profissional.',natural:'Como uma pessoa no WhatsApp: frases curtas, sem “Prezado” nem cara de robô, no máximo um emoji.'};
+  function renderStyleHint() {$('assistant-style-hint').textContent=SOURCE_HINT[$('assistant-source').value]+' '+TONE_HINT[$('assistant-tone').value];}
+  function buildStyleControls() {
+    const anchor=$('assistant-summary');if(!anchor?.parentNode) return;
+    const box=el('div','assistant-audience-controls assistant-style-controls'),options=(id,items)=>{const select=el('select');select.id=id;for(const [value,text] of items) {const option=el('option','',text);option.value=value;select.append(option);}select.addEventListener('change',renderStyleHint);return select;};
+    const source=el('label','field','De onde a IA tira as respostas?'),tone=el('label','field','Tom das respostas'),history=el('label','field','Mensagens recentes que a IA lê');
+    source.append(options('assistant-source',[['base','Base de conhecimento + conversa'],['conversation','Só a conversa, sem consultar a base']]));
+    tone.append(options('assistant-tone',[['formal','Profissional'],['natural','Natural, sem formalidade']]));
+    const count=el('input');count.id='assistant-history';count.type='number';count.min=2;count.max=30;count.step=1;count.value=14;history.append(count);
+    const hint=el('p','muted');hint.id='assistant-style-hint';
+    const save=textButton('Salvar jeito de responder','button secondary',async()=>{
+      if(!assistant || save.disabled) return;
+      save.disabled=true;$('assistant-style-status').textContent='Salvando…';
+      try {assistant=await api('/assistant','PUT',{source:$('assistant-source').value,tone:$('assistant-tone').value,history:Number($('assistant-history').value)});renderAssistant();$('assistant-style-status').textContent='Salvo. Vale para as próximas respostas e sugestões.';}
+      catch(error) {$('assistant-style-status').textContent=error.message;}
+      finally {save.disabled=false;}
+    });save.id='assistant-style-save';
+    const status=el('p','form-status');status.id='assistant-style-status';status.setAttribute('role','status');
+    box.append(source,history,tone,hint,save,status);anchor.parentNode.insertBefore(box,anchor);renderStyleHint();
+  }
+  buildStyleControls();
   async function refreshAssistant() {assistant=await api('/assistant');rulesDraft=assistant.rules.map(rule=>({...rule}));renderAssistant();}
   function renderRules() {
     const fragment=document.createDocumentFragment();
@@ -548,6 +574,7 @@
     if(!assistant) return;
     $('assistant-enabled').checked=assistant.enabled;
     if(audienceSelect) {audienceSelect.value=assistant.audience || 'classified';renderAudienceHint();}
+    if($('assistant-source')) {$('assistant-source').value=assistant.source || 'base';$('assistant-tone').value=assistant.tone || 'formal';$('assistant-history').value=assistant.history || 14;renderStyleHint();}
     $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.')+(assistant.load?.conversations?` Agora: ${assistant.load.conversations} conversa(s) em atendimento pela IA, ${assistant.load.ai.waiting} aguardando vaga.`:'')+(assistant.counts.unanswered?` ${assistant.counts.unanswered} conversa(s) com a etiqueta “Sem resposta”.`:'');
     const names=new Map(C.chats().map(chat=>[chat.jid,chat.name])),fragment=document.createDocumentFragment();
     for(const entry of assistant.log) {
