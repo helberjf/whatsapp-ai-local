@@ -137,3 +137,41 @@ test('rotas: ações em massa, responsável validado e pesquisa ao concluir pelo
   assert.equal((await call('/api/team/metrics?days=3')).status,422);
   await call('/api/team','PUT',{members:[]});assert.equal((await call('/api/contact?jid='+encodeURIComponent(jidOf(2)))).body.assignee,null,'atendente removido deixa as conversas sem responsável');
 });
+
+test('fila: abrir a conversa tira da fila, resposta pelo outro identificador fecha, e a opção pode ser desligada',async t=>{
+  const env=await setup(t);
+  const seen=env.customer(1);env.customer(2);env.customer(3);await env.team.tick();
+  assert.equal(Object.keys(await env.team.waiting()).length,3);
+  // Cliente 1: aberto na central (mesmo já lido no celular).
+  await env.store.update(data=>{data.contacts[jidOf(1)]={status:'open',labels:[],notes:[],readState:{messageIds:[],lastSeenId:seen.id,seenAt:env.clock.t}};});
+  // Cliente 2: a mesma pessoa aparece também como @lid, e a resposta saiu por lá.
+  const lid='222222222222222@lid';env.chats.find(chat=>chat.jid===jidOf(2)).aliasJids=[lid];env.clock.t+=1000;env.chats.push({jid:lid,aliasJids:[jidOf(2)],name:'Cliente',lastMessage:{id:'me-lid',jid:lid,fromMe:true,type:'text',text:'Oi!',timestamp:env.clock.t}});
+  await env.team.tick();
+  assert.deepEqual(Object.keys(await env.team.waiting()),[jidOf(3)],'vista e resposta pelo @lid saem da fila');
+  assert.equal((await env.day()).responses,0,'tirar da fila por abrir não conta como resposta');
+  env.customer(1,'Mais uma pergunta');await env.team.tick();assert.ok((await env.team.waiting())[jidOf(1)],'mensagem nova depois de abrir volta para a fila');
+  await env.store.update(data=>{data.team.settings={...data.team.settings,sla:{warnMinutes:5,lateMinutes:15,clearOnView:false}};data.team.waiting={};});
+  const again=env.customer(4);await env.store.update(data=>{data.contacts[jidOf(4)]={status:'open',labels:[],notes:[],readState:{messageIds:[],lastSeenId:again.id,seenAt:env.clock.t}};});
+  await env.team.tick();assert.ok((await env.team.waiting())[jidOf(4)],'com a opção desligada, só a resposta tira da fila');
+  assert.equal(normalizeSettings({sla:{warnMinutes:5,lateMinutes:15,clearOnView:false}},normalizeSettings({},{sla:{warnMinutes:5,lateMinutes:15}})).sla.clearOnView,false);
+  assert.throws(()=>normalizeSettings({sla:{warnMinutes:5,lateMinutes:15,clearOnView:'sim'}},normalizeSettings({},{sla:{warnMinutes:5,lateMinutes:15}})),/inválida/);
+});
+
+test('rotas: abrir conversa já lida registra a vista e "marcar como lida" em massa tira da fila',async t=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-local-team-view-')),reads=[];
+  const fetchImpl=async(url,options={})=>{const route=new URL(url).pathname,input=options.body?JSON.parse(options.body):{};
+    if(route.includes('/findChats/')) return new Response(JSON.stringify([1,2].map(i=>({remoteJid:jidOf(i),pushName:'C'+i,lastMessage:{key:{id:'m'+i,remoteJid:jidOf(i),fromMe:false},message:{conversation:'Oi'},messageTimestamp:1793200000}}))));
+    if(route.includes('/markMessageAsRead/')) {reads.push(input);return new Response('{}');}
+    return new Response(JSON.stringify(route.includes('/findContacts/')?[]:{}));};
+  await createStore(dir).update(data=>{data.team={waiting:{[jidOf(1)]:{since:1,messageId:'m1',lastId:'m1'},[jidOf(2)]:{since:1,messageId:'m2',lastId:'m2'}}};});
+  const credentials={has:async()=>false,get:async()=>null,set:async()=>{},remove:async()=>{},close:async()=>{}};
+  const server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:1',apiKey:'x',instanceName:'t'},storeDir:dir,fetchImpl,credentials,disableWorkers:true});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(async()=>{await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await server.cleanup;await fs.rm(dir,{recursive:true,force:true});});
+  const base='http://127.0.0.1:'+server.address().port,token=(await (await fetch(base)).text()).match(/content="([a-f0-9]{64})"/)[1];
+  const call=async(route,method='GET',input)=>{const response=await fetch(base+route,{method,headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},...(input===undefined?{}:{body:JSON.stringify(input)})});return {status:response.status,body:await response.json()};};
+  assert.equal((await call('/api/read','POST',{jid:jidOf(1),keys:[],lastSeenId:'m1'})).status,200);assert.equal(reads.length,0,'sem confirmar leitura de novo no WhatsApp');
+  let chats=(await call('/api/chats')).body;assert.equal(chats.find(chat=>chat.jid===jidOf(1)).waitingSince,undefined);assert.equal(chats.find(chat=>chat.jid===jidOf(2)).waitingSince,1);
+  assert.equal((await call('/api/chats/bulk','POST',{jids:[jidOf(2)],action:'read'})).body.updated,1);
+  chats=(await call('/api/chats')).body;assert.equal(chats.find(chat=>chat.jid===jidOf(2)).waitingSince,undefined);
+});

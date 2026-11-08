@@ -103,7 +103,7 @@ test('extensão lê as arquivadas antigas do WhatsApp sem alterar a sessão e se
   assert.equal(body.snapshot,true);assert.ok(body.snapshotAt>=at);assert.equal(body.unarchiveChats,true);
   await extension.archiveSnapshotHandler({waMonitor:{waInstances:{}}})({params:{instanceName:'teste'},query:{}},response);assert.equal(status,503);
   const failing=createExtension({load:()=>({}),save:()=>{}},{load:()=>({}),save:()=>{}},{loadBaileys:async()=>({...library,extractSyncdPatches:async()=>{throw new Error('failed to find key "abc" to decode mutation');}})});
-  await failing.archiveSnapshotHandler(controller)({params:{instanceName:'teste'},query:{}},response);assert.equal(status,409);assert.match(body.error,/chaves/);
+  await failing.archiveSnapshotHandler(controller)({params:{instanceName:'teste'},query:{}},response);assert.equal(status,200);assert.equal(body.success,false);assert.equal(body.reason,'missing-key');assert.match(body.error,/chaves/);assert.match(body.detail,/failed to find key/);
 });
 
 test('central busca as arquivadas antigas, avisa extensão desatualizada e aplica "mensagem nova desarquiva"',async t=>{
@@ -176,4 +176,17 @@ test('arquivadas sem conversa na Evolution entram em Arquivadas, sem duplicar te
   assert.deepEqual(chats.map(chat=>chat.jid).sort(),[jidOf(1),jidOf(5),'666666666666666@lid'].sort(),'telefone e @lid da mesma pessoa viram uma conversa; desarquivada pela central some');
   assert.equal(byJid[jidOf(5)].name,'Agenda Cinco');assert.equal(byJid[jidOf(5)].archived,true);assert.deepEqual(byJid[jidOf(5)].aliasJids,['555555555555555@lid']);
   assert.equal(byJid['666666666666666@lid'].name,'Conversa arquivada');assert.equal(byJid['666666666666666@lid'].lastMessage,null);
+});
+
+test('leitura das arquivadas: falha depois do snapshot guarda o que já leu; motivo da falha chega à central',async t=>{
+  const at=Date.now(),m=(jid,archived)=>({index:['archive',jid],syncAction:{value:{timestamp:{toNumber:()=>at-1000},archiveChatAction:{archived}}}});
+  let call=0;const library={S_WHATSAPP_NET:'@s.whatsapp.net',newLTHashState:()=>({version:0}),
+    extractSyncdPatches:async()=>{call++;if(call===1) return {regular_low:{snapshot:{version:3,mutations:[m(jidOf(1),true)]},patches:[],hasMorePatches:true}};throw new Error('Timed Out');},
+    decodeSyncdSnapshot:async(name,snapshot)=>({state:{version:snapshot.version},mutationMap:{a:snapshot.mutations[0]}}),decodePatches:async()=>{throw new Error('nunca');}};
+  const saved=[],extension=createExtension({load:()=>({}),save:()=>{}},{load:()=>({}),save:value=>saved.push(structuredClone(value)),delayMs:5},{loadBaileys:async()=>library});
+  const service={instanceId:'inst',client:{ev:{on(){}},query:async()=>({}),authState:{creds:{},keys:{get:async()=>({})}}}};
+  const result=await extension.archiveSnapshot(service);assert.equal(result.partial,true);assert.equal(result.archived,1);
+  await wait(30);assert.equal(saved.at(-1).inst[jidOf(1)].archived,true);
+  const {call:api}=await serverWith(t,{'/findChats/':[],'/findContacts/':[],'/localArchivedSnapshot/':()=>({success:false,reason:'timeout',error:'O WhatsApp não respondeu à leitura das arquivadas.',detail:'Timed Out'})});
+  const failed=await api('/api/archived/sync','POST',{});assert.equal(failed.status,502);assert.match(failed.body.error,/motivo informado: Timed Out/);
 });

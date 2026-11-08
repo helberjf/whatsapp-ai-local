@@ -189,14 +189,26 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
   async function readArchiveSnapshot(socket) {
     const {extractSyncdPatches,decodeSyncdSnapshot,decodePatches,newLTHashState,S_WHATSAPP_NET}=await loadBaileys();
     const getKey=async keyId=>(await socket.authState.keys.get('app-state-sync-key',[keyId]))?.[keyId];
-    const name=SNAPSHOT_COLLECTION,mutations={};let state=null;
+    const name=SNAPSHOT_COLLECTION,mutations={};let state=null,partial=false;
+    const ask=async version=>{
+      const node={tag:'iq',attrs:{to:S_WHATSAPP_NET,xmlns:'w:sync:app:state',type:'set'},content:[{tag:'sync',attrs:{},content:[{tag:'collection',attrs:{name,version:String(version),return_snapshot:String(!version)}}]}]};
+      // Uma nova tentativa quando o WhatsApp demora a responder.
+      try {return await socket.query(node);}catch(error) {if(!/time/i.test(String(error?.message))) throw error;return socket.query(node);}
+    };
     for(let round=0;round<50;round++) {
       const version=state?.version || 0;
-      const result=await socket.query({tag:'iq',attrs:{to:S_WHATSAPP_NET,xmlns:'w:sync:app:state',type:'set'},content:[{tag:'sync',attrs:{},content:[{tag:'collection',attrs:{name,version:String(version),return_snapshot:String(!version)}}]}]});
-      const decoded=(await extractSyncdPatches(result,{}))?.[name];if(!decoded) break;
+      let result,decoded;
+      try {
+        result=await ask(version);decoded=(await extractSyncdPatches(result,{}))?.[name];
+      } catch(error) {if(!state) throw error;partial=true;break;}
+      if(!decoded) break;
       if(decoded.snapshot) {const next=await decodeSyncdSnapshot(name,decoded.snapshot,getKey,undefined,false);state=next.state;Object.assign(mutations,next.mutationMap);}
       state ||= newLTHashState();
-      if(decoded.patches?.length) {const next=await decodePatches(name,decoded.patches,state,getKey,{},undefined,undefined,false);state=next.state;Object.assign(mutations,next.mutationMap);}
+      if(decoded.patches?.length) {
+        // Mudanças depois do snapshot: se alguma não puder ser lida, fica com o que já foi lido (marcado como parcial).
+        try {const next=await decodePatches(name,decoded.patches,state,getKey,{},undefined,undefined,false);state=next.state;Object.assign(mutations,next.mutationMap);}
+        catch(error) {if(!Object.keys(mutations).length) throw error;partial=true;break;}
+      }
       if(!decoded.hasMorePatches) break;
     }
     const chats=[];let unarchiveChats=null;
@@ -207,7 +219,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
       const lastMessage=numberOf(action.messageRange?.lastMessageTimestamp);
       chats.push({jid,archived:action.archived,updatedAt:numberOf(value.timestamp) || 0,lastMessageAt:lastMessage>0?lastMessage*1000:undefined});
     }
-    return {chats,unarchiveChats};
+    return {chats,unarchiveChats,partial};
   }
   const snapshots=new Map();
   function archiveSnapshot(service) {
@@ -215,7 +227,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(!id || typeof socket?.query!=='function' || typeof socket.authState?.keys?.get!=='function') return Promise.reject(Object.assign(new Error('not connected'),{status:503}));
     if(snapshots.has(id)) return snapshots.get(id);
     const job=(async()=>{
-      const {chats,unarchiveChats}=await readArchiveSnapshot(socket);
+      const {chats,unarchiveChats,partial}=await readArchiveSnapshot(socket);
       let changed=0,linked=0;
       for(const chat of chats) {
         const options={lastMessageAt:chat.lastMessageAt,onlyNewer:true};
@@ -224,7 +236,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
         if(phone) {linked++;rememberArchive(service,phone,chat.archived,chat.updatedAt,{...options,alias:chat.jid});}
       }
       const meta=archiveMeta(service);meta.snapshotAt=Date.now();if(typeof unarchiveChats==='boolean') meta.unarchiveChats=unarchiveChats;scheduleArchiveSave();
-      return {archived:chats.filter(chat=>chat.archived && individual(chat.jid)).length,lid:chats.filter(chat=>chat.archived && String(chat.jid).endsWith('@lid')).length,linked,changed,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
+      return {archived:chats.filter(chat=>chat.archived && individual(chat.jid)).length,lid:chats.filter(chat=>chat.archived && String(chat.jid).endsWith('@lid')).length,linked,changed,partial,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
     })().finally(()=>snapshots.delete(id));
     snapshots.set(id,job);return job;
   }
@@ -233,8 +245,11 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(!instanceKey(service) || typeof service?.client?.query!=='function') return fail(response,503,'O WhatsApp precisa estar conectado.');
     try {observe(service);return response.status(200).json({success:true,...await archiveSnapshot(service)});}
     catch(error) {
-      const missingKey=/failed to find key/i.test(String(error?.message || ''));
-      return fail(response,missingKey?409:502,missingKey?'O WhatsApp ainda não enviou as chaves para ler as arquivadas deste aparelho. Aguarde alguns minutos conectado e tente de novo.':'O WhatsApp não respondeu à leitura das arquivadas. Tente novamente em instantes.');
+      // Responde 200 com o motivo para a central mostrar o que houve (o detalhe vai também para o log da Evolution).
+      const message=String(error?.message || error || ''),missingKey=/failed to find key/i.test(message);
+      try {console.error('[whatsapp-central] leitura das arquivadas falhou:',error?.stack || message);}catch {}
+      return response.status(200).json({success:false,reason:missingKey?'missing-key':/time/i.test(message)?'timeout':'failed',detail:message.replace(/[^\p{L}\p{N} .,:'"()_-]/gu,'').slice(0,160),
+        error:missingKey?'O WhatsApp ainda não enviou as chaves para ler as arquivadas deste aparelho. Deixe conectado alguns minutos e tente de novo.':'O WhatsApp não respondeu à leitura das arquivadas.'});
     }
   };}
   return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,observe,rememberArchive,viewOnceHandler};

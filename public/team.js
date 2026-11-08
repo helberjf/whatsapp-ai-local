@@ -226,7 +226,7 @@
   }
   function fillSettings() {
     draftMembers=members().map(member=>({...member}));renderMembersEditor();
-    $('sla-warn').value=settings.sla.warnMinutes;$('sla-late').value=settings.sla.lateMinutes;
+    $('sla-warn').value=settings.sla.warnMinutes;$('sla-late').value=settings.sla.lateMinutes;$('sla-clear-on-view').checked=settings.sla.clearOnView!==false;
     $('triage-enabled').checked=settings.triage.enabled;$('triage-categories').value=settings.triage.categories.join('\n');
     $('notice-enabled').checked=settings.queueNotice.enabled;$('notice-after').value=settings.queueNotice.afterSeconds;$('notice-cooldown').value=settings.queueNotice.cooldownHours;$('notice-text').value=settings.queueNotice.text;
     $('survey-enabled').checked=settings.survey.enabled;$('survey-question').value=settings.survey.question;
@@ -235,7 +235,7 @@
   $('member-add').addEventListener('submit',event=>{event.preventDefault();const name=$('member-name').value.trim();if(!name) return;draftMembers.push({name});$('member-name').value='';renderMembersEditor();});
   $('team-save-members').addEventListener('click',async()=>{
     $('team-save-members').disabled=true;$('members-status').textContent='Salvando…';
-    try {settings=(await api('/team','PUT',{members:draftMembers.map(member=>({...(member.id?{id:member.id}:{}),name:member.name,...(member.color?{color:member.color}:{})})),sla:{warnMinutes:Number($('sla-warn').value),lateMinutes:Number($('sla-late').value)}})).settings;fillSettings();renderMembersSelects();$('members-status').textContent='Atendentes e prazos salvos.';loadMetrics();}
+    try {settings=(await api('/team','PUT',{members:draftMembers.map(member=>({...(member.id?{id:member.id}:{}),name:member.name,...(member.color?{color:member.color}:{})})),sla:{warnMinutes:Number($('sla-warn').value),lateMinutes:Number($('sla-late').value),clearOnView:$('sla-clear-on-view').checked}})).settings;fillSettings();renderMembersSelects();$('members-status').textContent='Atendentes e prazos salvos.';loadMetrics();}
     catch(error) {$('members-status').textContent=error.message;}finally {$('team-save-members').disabled=false;}
   });
   $('team-save-automations').addEventListener('click',async()=>{

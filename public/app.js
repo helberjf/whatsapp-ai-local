@@ -548,8 +548,13 @@
     // Áudio novo pode já estar na fila da transcrição automática: busca o estado para mostrar o texto quando ficar pronto.
     if(changed && historyLoaded && result.messages.some(message=>message.type==='audio' && !latestKnownTranscription(jid,message.id))) loadTranscriptions(jid,version).catch(()=>{});
     const unread=result.messages.filter(message=>!message.fromMe && message.key?.fromMe===false && message.key.remoteJid===jid && !readIds.has(jid+'|'+message.id));
+    const lastSeenId=selected?.jid===jid?selected.lastMessage?.id:undefined;
+    if(!unread.length && lastSeenId && document.visibilityState==='visible' && !readIds.has(jid+'|seen|'+lastSeenId)) {
+      // Conversa já lida no celular: avisa só que foi aberta (tira da fila "Aguardando"), sem confirmar leitura de novo.
+      readIds.add(jid+'|seen|'+lastSeenId);api('/read','POST',{jid,keys:[],lastSeenId}).catch(()=>{});
+    }
     if(unread.length && document.visibilityState==='visible') {
-      await api('/read','POST',{jid,keys:unread.map(message=>({...message.key,remoteJid:jid})),lastSeenId:selected?.lastMessage?.id});
+      await api('/read','POST',{jid,keys:unread.map(message=>({...message.key,remoteJid:jid})),lastSeenId});
       if(selected?.jid===jid) {unread.forEach(message=>readIds.add(jid+'|'+message.id));const chat=chats.find(item=>item.jid===jid);if(chat) chat.unread=0;renderChats();}
     }
   }

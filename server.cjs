@@ -354,7 +354,9 @@ function createWhatsAppServer(options={}) {
         const input=await readBody(req),jid=assertJid(input.jid);
         if(!Array.isArray(input.keys) || input.keys.length>100 || input.keys.some(key=>!key || typeof key.id!=='string' || key.id.length>200 || key.fromMe!==false || key.remoteJid!==jid)) throw new ApiError('Mensagens de leitura inválidas.',422);
         if(input.lastSeenId!==undefined && (typeof input.lastSeenId!=='string' || input.lastSeenId.length>200)) throw new ApiError('Mensagem de leitura inválida.',422);
-        if(input.keys.length) {await client.read(jid,input.keys);await store.update(data=>{const contact=data.contacts[jid] ||= contactDefault();contact.readState={messageIds:input.keys.map(key=>key.id),lastSeenId:input.lastSeenId || input.keys.at(-1).id};});}
+        if(input.keys.length) await client.read(jid,input.keys);
+        // Também registra a abertura de conversas já lidas (por exemplo, no celular): a fila "Aguardando" usa isso.
+        if(input.keys.length || input.lastSeenId) await store.update(data=>{const contact=data.contacts[jid] ||= contactDefault();contact.readState={messageIds:input.keys.map(key=>key.id),lastSeenId:input.lastSeenId || input.keys.at(-1).id,seenAt:Date.now()};if(data.team?.settings?.sla?.clearOnView!==false && data.team?.waiting?.[jid]) delete data.team.waiting[jid];});
         return json(res,200,{read:true});
       }
       if(req.method==='POST' && route==='/api/send') {
