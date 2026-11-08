@@ -149,3 +149,17 @@ test('health informa a versão do código em execução para o iniciador reinici
   await fs.mkdir(path.join(dir,'lib'));await fs.writeFile(path.join(dir,'server.cjs'),'a');const first=buildId(dir);
   await fs.writeFile(path.join(dir,'lib','x.cjs'),'b');assert.notEqual(buildId(dir),first,'qualquer arquivo novo da central muda a versão');
 });
+
+test('arquivada por identificador privado (@lid) também vale para o telefone da conversa',async()=>{
+  const rounds=[{snapshot:{version:1,mutations:[{index:['archive',lid],syncAction:{value:{timestamp:{toNumber:()=>Date.now()-1000},archiveChatAction:{archived:true}}}}]},patches:[],hasMorePatches:false}];
+  const {library}=fakeBaileys(rounds),saved=[],handlers={};
+  const extension=createExtension({load:()=>({}),save:()=>{}},{load:()=>({}),save:value=>saved.push(structuredClone(value)),delayMs:5},{loadBaileys:async()=>library});
+  const socket={ev:{on(event,handler){(handlers[event] ||= []).push(handler);}},query:async()=>({}),authState:{creds:{},keys:{get:async()=>({})}},signalRepository:{lidMapping:{getPNForLID:async jid=>jid===lid?jidOf(7).replace('@',':0@'):jid==='999999999999999@lid'?jidOf(8).replace('@',':3@'):null}}};
+  const service={instanceId:'inst',client:socket};
+  const result=await extension.archiveSnapshot(service);
+  assert.deepEqual({archived:result.archived,lid:result.lid,linked:result.linked},{archived:1,lid:1,linked:1});
+  extension.observe(service);for(const handler of handlers['chats.update']) handler([{id:'999999999999999@lid',archived:true}]);
+  await wait(40);const chats=saved.at(-1).inst;
+  assert.equal(chats[lid].archived,true);assert.equal(chats[jidOf(7)].archived,true,'telefone ganha o mesmo estado, sem o :dispositivo');
+  assert.equal(chats[jidOf(8)].archived,true,'atualização ao vivo por @lid também chega ao telefone');
+});
