@@ -12,7 +12,7 @@
     } catch {}
   }
   checkCentralVersion();document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible') checkCentralVersion();});
-  let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
+  let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,submitQueued=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
   const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
   let virtualRows=null,rowHeight=0,chatsVersion=null;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),mediaRequests=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
@@ -663,9 +663,12 @@
   $('remove-attachment').addEventListener('click',()=>setAttachment(null));
   const fileBase64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));reader.readAsDataURL(file);});
   $('composer').addEventListener('submit',async event=>{
-    event.preventDefault();if(!selected || sending || connection?.state!=='connected') return;
+    event.preventDefault();if(!selected) return;
+    // Enter durante um envio não se perde: a próxima mensagem sai assim que a atual terminar.
+    if(sending) {submitQueued=true;return;}
+    if(connection?.state!=='connected') {$('send-status').textContent='WhatsApp desconectado: a mensagem não foi enviada e continua no editor.';return;}
     if(globalThis.WhatsAppMedia?.isRecording?.()) {notice('Pare a gravação para ouvir e enviar o áudio.');return;}
-    const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,kind=attachmentKind,submittedRevision=editRevision;if(!file && !text) return;
+    const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,kind=attachmentKind;let submittedRevision=editRevision,cleared=false,sent=false;if(!file && !text) return;
     sending=true;$('send').disabled=true;$('voice-send').disabled=true;$('send-status').textContent='Enviando…';
     try {
       let submitted=pendingSend;
@@ -677,13 +680,24 @@
         submitted=file && kind==='voice'?{route:'/send-voice',voice:true,input:{jid,base64:await fileBase64(file),mimeType:file.type || 'audio/webm',requestId,...quote}}:file?{route:kind==='sticker'?'/send-sticker':'/send-media',input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType:kind==='document'?'document':file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':'document',requestId,...quote}}:{route:'/send',input:{jid,text,requestId,...quote}};
         if(editRevision===submittedRevision) pendingSend=submitted;
       }
+      // O editor esvazia já no envio: o que for digitado enquanto o conector responde é a próxima mensagem, não sobra da anterior.
+      if(!submitted.voice && editRevision===submittedRevision) {$('message-text').value='';drafts.delete(jid);editRevision++;submittedRevision=editRevision;cleared=true;}
       await api(submitted.route,'POST',submitted.input);if(pendingSend===submitted) pendingSend=null;
-      if(editRevision===submittedRevision) {if(!submitted.voice) {$('message-text').value='';drafts.delete(jid);}attachment=null;attachmentKind=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;globalThis.WhatsAppMedia?.onAttachment?.(null);}
+      sent=true;
+      if(file && attachment===file) {attachment=null;attachmentKind=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;globalThis.WhatsAppMedia?.onAttachment?.(null);}
       extras()?.onSent?.(jid);
       $('send-status').textContent=submitted.voice?'Mensagem de voz aceita pelo conector.'+(text?' O texto continua no editor.':''):'Mensagem aceita pelo conector. O status será atualizado no histórico.';
-      await loadMessages();
-    } catch(error) {$('send-status').textContent=error.message+' Confira a conversa antes de tentar outro envio.';}
+    } catch(error) {
+      $('send-status').textContent=error.message+' Confira a conversa antes de tentar outro envio.';
+      // Falhou: o texto volta ao editor da conversa certa, sem apagar o que já foi digitado depois.
+      if(cleared && !sent) {
+        if(selected?.jid===jid) {const typed=$('message-text').value;$('message-text').value=typed?text+'\n'+typed:text;if(typed) {editRevision++;pendingSend=null;}}
+        else if(!drafts.get(jid)) drafts.set(jid,text);
+      }
+    }
     finally {sending=false;$('send').disabled=connection?.state!=='connected';$('voice-send').disabled=false;}
+    if(sent) await loadMessages().catch(()=>{});
+    if(submitQueued) {submitQueued=false;if(sent) $('composer').requestSubmit();}
   });
   $('new-chat').addEventListener('click',()=>{$('new-error').textContent='';$('new-dialog').showModal();});
   $('new-form').addEventListener('submit',async event=>{

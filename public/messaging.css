@@ -26,7 +26,7 @@
 .contact-form{min-width:0}
 .workflow-card{flex-shrink:0}
 .message{overflow-wrap:anywhere;min-width:0;max-width:min(88%,640px)}
-.message .message-text{font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.message .message-text{font-size:13px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
 .message-link{color:#83d9ff;text-decoration:underline;text-underline-offset:3px;word-break:break-word}
 .message-link:hover{color:#c7edff}
 .message-deleted{font-style:italic;opacity:.72}
