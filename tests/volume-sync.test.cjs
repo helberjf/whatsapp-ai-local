@@ -85,6 +85,21 @@ test('eventos: protocolo Socket.IO, ping, filtro de instância e reconexão',asy
   listener.stop();await wait(30);assert.equal(FakeSocket.instances.length,2,'parado não reconecta');
 });
 
+test('eventos: anexo binário e quadro inesperado não derrubam a central; evento binário também conta',async()=>{
+  FakeSocket.instances=[];const events=[];
+  const listener=createEvolutionEvents({config,WebSocketImpl:FakeSocket,retryMs:[10],onEvent:(name,data)=>events.push([name,data])});
+  listener.start();const socket=FakeSocket.instances[0];
+  assert.equal(socket.binaryType,'arraybuffer','quadros binários chegam como ArrayBuffer, não como Blob');
+  socket.receive('0{"sid":"a","pingInterval":25000,"pingTimeout":20000}');socket.receive('40{"sid":"b"}');
+  // Evolution manda miniaturas como anexo binário: texto "451-[...]" seguido do quadro binário.
+  socket.receive('451-["messages.upsert",{"instance":"teste","data":{"key":{"id":"y"},"thumb":{"_placeholder":true,"num":0}}}]');
+  for(const frame of [new Blob([new Uint8Array([255,216,255])]),new Uint8Array([1,2,3]).buffer,new Uint8Array([4,5]),{inesperado:true},null]) assert.doesNotThrow(()=>socket.receive(frame));
+  socket.receive('42["messages.upsert",{"instance":"teste","data":{"key":{"id":"z"}}}]');
+  assert.deepEqual(events.map(([name,data])=>[name,data?.key?.id ?? null]),[['connected',null],['messages.upsert','y'],['messages.upsert','z']]);
+  assert.equal(listener.status().connected,true,'a conexão segue aberta');
+  listener.stop();
+});
+
 test('servidor: evento novo invalida a lista e dispara o ciclo na hora; /api/connection informa o tempo real',async t=>{
   FakeSocket.instances=[];
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-local-events-'));
