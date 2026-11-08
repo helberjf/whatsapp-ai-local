@@ -26,6 +26,7 @@ const {pruneState}=require('./lib/housekeeping.cjs');
 const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
 const {createChatDelta}=require('./lib/chat-delta.cjs');
 const {createTeamService}=require('./lib/team.cjs');
+const {createAccountRegistry,archiveAccount,accountDir}=require('./lib/accounts.cjs');
 const root=__dirname;
 const {buildId}=require('./lib/build-id.cjs');
 // Código com que esta central iniciou; o de disco é conferido de novo a cada 15 s para perceber atualizações.
@@ -60,44 +61,89 @@ function createWhatsAppServer(options={}) {
   const localAi=options.localAi || createLocalAi();
   // Na central real, a lista de conversas é compartilhada (2 s) e completa a cada 30 s; nos testes, cada consulta é direta.
   const production=!options.storeDir;
-  const client=createEvolutionClient({chatsCacheMs:options.chatsCacheMs ?? (production?2000:0),chatsFullRefreshMs:options.chatsFullRefreshMs ?? (production?30_000:0),...options.config},options.fetchImpl),store=createStore(dataDir),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
-  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,rules,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),rules,credentials});
-  // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
-  const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
-  const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
-  // Fluxo de voz: transcrição automática, leitura dos áudios pela IA e respostas em áudio (voz do Windows ou OpenAI).
+  const now=options.now || Date.now;
+  const accounts=createAccountRegistry(dataDir,options.config,now);
+  // Base de conhecimento, produtos, provedor de IA e voz são compartilhados; as regras do robô vêm da conta do pedido.
+  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),credentials});
   const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
-  const voice=createVoiceFlow({store,client,transcriptions,speech,credentials,now:options.now || Date.now});
-  const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.retrieve,reliability:extra.services.reliability,catalogText:extra.services.catalogText,now:options.now || Date.now,intervalMs:options.assistantIntervalMs,voice});
-  const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
-  const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
-  const triggers=createTriggerService({store,client,now:options.now || Date.now,humanizer});
-  const scheduler=createScheduler({store,client,now:options.now || Date.now});
-  const team=createTeamService({store,client,ai:extra.services.ai,now:options.now || Date.now});
-  const requests=new Map(),chatDelta=createChatDelta();
-  // Uma vez por instalação: traz as conversas arquivadas no celular antes da extensão existir.
-  let archiveSnapshotJob=null,archiveSnapshotRetryAt=0;
-  function autoArchiveSnapshot() {
-    if(archiveSnapshotJob || Date.now()<archiveSnapshotRetryAt || typeof client.archiveSnapshot!=='function') return;
-    archiveSnapshotJob=client.archiveSnapshot().then(()=>client.invalidateChats(),()=>{archiveSnapshotRetryAt=Date.now()+10*60_000;}).finally(()=>{archiveSnapshotJob=null;});
-  }
-  let messaging,events=null;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
-  async function sendOnce(input,send,prepare) {
-    const id=textField(input.requestId,100,'Identificador do envio');if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new ApiError('Identificador do envio inválido.',422);
-    const hash=createHash('sha256').update(JSON.stringify(input)).digest('hex');
-    if(requests.has(id)) {const item=requests.get(id);if(item.hash!==hash) throw new ApiError('Identificador reutilizado com outra mensagem.',409);return item.promise;}
-    // Um pedido pendente após falha/reinício nunca é reenviado automaticamente: o WhatsApp pode já tê-lo recebido.
-    let claimed=false;
-    const promise=(async()=>{
-      const previous=(await store.read()).requests[id];
-      if(previous) {claimed=true;if(previous.hash!==hash) throw new ApiError('Identificador reutilizado.',409);if(previous.result) return previous.result;throw new ApiError('O envio anterior ficou sem confirmação. Confira a conversa antes de tentar novamente.',409);}
-      const prepared=prepare?await prepare():undefined;
-      await store.update(data=>{data.requests[id]={hash,at:Date.now()};const old=Object.keys(data.requests).filter(key=>data.requests[key].at<Date.now()-7*86400000);for(const key of old) delete data.requests[key];});
-      claimed=true;const result=await send(prepared);await store.update(data=>{data.requests[id].result=result;});return result;
-    })().catch(error=>{if(!claimed && requests.get(id)?.promise===promise) requests.delete(id);throw error;});
-    requests.set(id,{hash,promise});if(requests.size>1000) requests.delete(requests.keys().next().value);
-    return promise;
+  // Cada conta tem conector, dados de atendimento, robôs, fila de equipe e eventos próprios: conversas, regras e envios nunca se misturam.
+  function createAccountRuntime(account) {
+    const config={...options.config,instanceName:account.instanceName};
+    const client=createEvolutionClient({chatsCacheMs:options.chatsCacheMs ?? (production?2000:0),chatsFullRefreshMs:options.chatsFullRefreshMs ?? (production?30_000:0),...config},options.fetchImpl),store=createStore(accountDir(dataDir,account.id)),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
+    // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
+    const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
+    const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
+    // Fluxo de voz: transcrição automática, leitura dos áudios pela IA e respostas em áudio (voz do Windows ou OpenAI).
+    const voice=createVoiceFlow({store,client,transcriptions,speech,credentials,now});
+    const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.retrieve,reliability:extra.services.reliability,catalogText:extra.services.catalogText,now,intervalMs:options.assistantIntervalMs,voice});
+    const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
+    const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
+    const triggers=createTriggerService({store,client,now,humanizer});
+    const scheduler=createScheduler({store,client,now});
+    const team=createTeamService({store,client,ai:extra.services.ai,now});
+    const requests=new Map(),chatDelta=createChatDelta();
+    let events=null;
+    // Uma vez por instalação: traz as conversas arquivadas no celular antes da extensão existir.
+    let archiveSnapshotJob=null,archiveSnapshotRetryAt=0;
+    function autoArchiveSnapshot() {
+      if(archiveSnapshotJob || Date.now()<archiveSnapshotRetryAt || typeof client.archiveSnapshot!=='function') return;
+      archiveSnapshotJob=client.archiveSnapshot().then(()=>client.invalidateChats(),()=>{archiveSnapshotRetryAt=Date.now()+10*60_000;}).finally(()=>{archiveSnapshotJob=null;});
+    }
+    async function sendOnce(input,send,prepare) {
+      const id=textField(input.requestId,100,'Identificador do envio');if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new ApiError('Identificador do envio inválido.',422);
+      const hash=createHash('sha256').update(JSON.stringify(input)).digest('hex');
+      if(requests.has(id)) {const item=requests.get(id);if(item.hash!==hash) throw new ApiError('Identificador reutilizado com outra mensagem.',409);return item.promise;}
+      // Um pedido pendente após falha/reinício nunca é reenviado automaticamente: o WhatsApp pode já tê-lo recebido.
+      let claimed=false;
+      const promise=(async()=>{
+        const previous=(await store.read()).requests[id];
+        if(previous) {claimed=true;if(previous.hash!==hash) throw new ApiError('Identificador reutilizado.',409);if(previous.result) return previous.result;throw new ApiError('O envio anterior ficou sem confirmação. Confira a conversa antes de tentar novamente.',409);}
+        const prepared=prepare?await prepare():undefined;
+        await store.update(data=>{data.requests[id]={hash,at:Date.now()};const old=Object.keys(data.requests).filter(key=>data.requests[key].at<Date.now()-7*86400000);for(const key of old) delete data.requests[key];});
+        claimed=true;const result=await send(prepared);await store.update(data=>{data.requests[id].result=result;});return result;
+      })().catch(error=>{if(!claimed && requests.get(id)?.promise===promise) requests.delete(id);throw error;});
+      requests.set(id,{hash,promise});if(requests.size>1000) requests.delete(requests.keys().next().value);
+      return promise;
+    }
+    const messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,now});
+    const housekeeping=()=>store.update(data=>pruneState(data,now()));
+    let replyTick=null,lastPoll=0,pollAgain=false,eventTimer=null,stopped=false;
+    const pollReplies=()=>{
+      if(stopped) return Promise.resolve();
+      if(replyTick) {pollAgain=true;return replyTick;}
+      lastPoll=Date.now();
+      replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
+      return replyTick;
+    };
+    // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
+    const scheduledPoll=()=>{if(events?.status().connected && Date.now()-lastPoll<15_000) return;pollReplies();};
+    const onEvent=name=>{
+      if(!['connected','disconnected'].includes(name)) client.invalidateChats();
+      clearTimeout(eventTimer);eventTimer=setTimeout(()=>{pollReplies();},400);eventTimer.unref?.();
+    };
+    const start=()=>{
+      voice.start();team.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();
+      if(!options.disableWorkers) {
+        if(options.events!==false && (production || options.events)) {events=createEvolutionEvents({config,onEvent,...(typeof options.events==='object'?options.events:{})});events.start();}
+        housekeeping().catch(()=>{});
+      }
+    };
+    const stop=()=>{stopped=true;clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();};
+    const idle=()=>Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle()]);
+    return {account,client,store,rules,transcriptions,voice,assistant,avatars,crm,automation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
+  }
+  const runtimes=new Map(accounts.list().map(account=>[account.id,createAccountRuntime(account)]));
+  async function accountList() {
+    const rows=await Promise.all(accounts.list().filter(account=>runtimes.has(account.id)).map(async account=>({...account,connection:await runtimes.get(account.id).client.connection()})));
+    return rows.map(({connection,...account})=>({...account,state:connection.state,reachable:connection.reachable,exists:connection.exists,phone:connection.phone,duplicatePhone:Boolean(connection.phone) && rows.some(other=>other.id!==account.id && other.connection.phone===connection.phone)}));
+  }
+  async function removeAccount(id) {
+    await accounts.remove(id,()=>runtimes.get(id).client.remove());
+    const runtime=runtimes.get(id);runtimes.delete(id);runtime.stop();
+    // Uma espera humanizada não pode segurar a resposta; ao terminar, o robô já encontra a parada.
+    await Promise.race([runtime.idle(),new Promise(resolve=>{const timer=setTimeout(resolve,3000);timer.unref?.();})]);
+    await archiveAccount(dataDir,id,runtime.store,now);
   }
   const server=http.createServer(async(req,res)=>{
     for(const [name,value] of Object.entries({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' data: blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})) res.setHeader(name,value);
@@ -107,9 +153,9 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid});}
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js','/assets/accounts.js','/assets/accounts.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
-        if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n</head>`);
+        if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n<meta name="whatsapp-accounts" content="${accounts.list().map(item=>item.id).join(',')}">\n</head>`);
         if(file==='index.html' && options.demo) content=content.replace('<body>','<body class="demo-mode"><div class="demo-banner" role="status">DEMO · Fictional contacts · No real WhatsApp connection</div>');
         res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'});return res.end(content);
       }
@@ -129,6 +175,20 @@ function createWhatsAppServer(options={}) {
       } else {
         const given=req.headers['x-whatsapp-token'];if(typeof given!=='string' || !/^[a-f0-9]{64}$/.test(given) || !timingSafeEqual(Buffer.from(token),Buffer.from(given))) return json(res,403,{error:'Sessão inválida. Recarregue a página.'});
       }
+      // A conta vem do cabeçalho X-WhatsApp-Account; sem ele, vale a primeira conta (a original).
+      const chosen=req.headers['x-whatsapp-account'],runtime=runtimes.get(chosen===undefined?accounts.fallback().id:chosen);
+      if(!runtime) return json(res,404,{error:'Conta não encontrada. Recarregue a página.'});
+      const {account,client,store,rules,transcriptions,assistant,avatars,crm,automation,triggers,scheduler,team,chatDelta,sendOnce,messaging}=runtime;
+      res.setHeader('X-WhatsApp-Account',account.id);
+      if(route==='/api/accounts' && req.method==='GET') return json(res,200,await accountList());
+      if(route==='/api/accounts' && req.method==='POST') {
+        const created=await accounts.add((await readBody(req)).name),added=createAccountRuntime(created);
+        runtimes.set(created.id,added);if(server.listening) added.start();return json(res,201,created);
+      }
+      const accountMatch=route.match(/^\/api\/accounts\/([a-z0-9-]{1,40})(\/disconnect)?$/);
+      if(accountMatch && req.method==='PATCH' && !accountMatch[2]) {const renamed=await accounts.rename(accountMatch[1],(await readBody(req)).name);Object.assign(runtimes.get(renamed.id).account,renamed);return json(res,200,renamed);}
+      if(accountMatch && req.method==='POST' && accountMatch[2]) {accounts.get(accountMatch[1]);await readBody(req);await runtimes.get(accountMatch[1]).client.disconnect();return json(res,200,{disconnected:true});}
+      if(accountMatch && req.method==='DELETE' && !accountMatch[2]) {await removeAccount(accountMatch[1]);return json(res,200,{removed:true});}
       if(route==='/api/ai/local' && req.method==='GET') return json(res,200,await localAi.status({...(url.searchParams.has('model')?{model:url.searchParams.get('model')}:{}),baseUrl:url.searchParams.get('baseUrl') || '',device:url.searchParams.get('device') || 'auto'}));
       if(route==='/api/ai/local/start' && req.method==='POST') {const input=await readBody(req),state=await localAi.start(input);const config=await extra.services.ai.save({provider:'ollama',model:state.model,baseUrl:'http://127.0.0.1:11434',ollamaNumGpu:input.device==='cpu'?0:null});return json(res,200,{...state,config});}
       if(route==='/api/triggers' && ['GET','PUT'].includes(req.method)) return json(res,200,req.method==='GET'?await triggers.settings():await triggers.saveSettings(await readBody(req)));
@@ -160,7 +220,7 @@ function createWhatsAppServer(options={}) {
       if(route==='/api/automation/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await automation.settings():await automation.saveSettings(await readBody(req)));
       if(req.method==='POST' && route==='/api/automation/simulate') return json(res,200,await automation.simulate(await readBody(req)));
       if(req.method==='GET' && route==='/api/automation/executions') return json(res,200,await automation.executions());
-      if(req.method==='GET' && route==='/api/connection') return json(res,200,{...await client.connection(),events:events?.status() || {connected:false,lastEventAt:null,lastError:null}});
+      if(req.method==='GET' && route==='/api/connection') return json(res,200,{...await client.connection(),accountId:account.id,accountName:account.name,events:runtime.events() || {connected:false,lastEventAt:null,lastError:null}});
       if(req.method==='POST' && route==='/api/connect') return json(res,200,await client.connect());
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
       if(req.method==='POST' && route==='/api/archived/sync') {
@@ -173,7 +233,7 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
-        if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) autoArchiveSnapshot();
+        if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
         const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
@@ -243,34 +303,29 @@ function createWhatsAppServer(options={}) {
         const media=await client.media(jid,id);if(typeof media.base64!=='string') throw new ApiError('Mídia indisponível. Abra a mensagem no celular.');
         return json(res,200,{base64:media.base64,mimeType:media.mimetype || 'application/octet-stream',fileName:media.fileName || 'anexo'});
       }
-      const handled=(await team.handle(req,route,url,readBody)) || (await messaging(req,route,url,readBody)) || (await extra(req,route,url,readBody)) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
+      const handled=(await team.handle(req,route,url,readBody)) || (await messaging(req,route,url,readBody)) || (await extra(req,route,url,readBody,{rules})) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
       return json(res,404,{error:'Endereço não encontrado.'});
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });
-  messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,now:options.now || Date.now});
-  server.transcriptions=transcriptions;server.voice=voice;
-  server.housekeeping=()=>store.update(data=>pruneState(data,(options.now || Date.now)()));
-  server.scheduler=scheduler;
-  server.triggers=triggers;server.assistant=assistant;
-  let replyTimer=null,replyTick=null,cleanTimer=null,lastPoll=0,pollAgain=false,eventTimer=null;
-  const pollReplies=()=>{
-    if(replyTick) {pollAgain=true;return replyTick;}
-    lastPoll=Date.now();
-    replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
-    return replyTick;
-  };
-  // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
-  const scheduledPoll=()=>{if(events?.status().connected && Date.now()-lastPoll<15_000) return;pollReplies();};
-  const onEvent=name=>{
-    if(!['connected','disconnected'].includes(name)) client.invalidateChats();
-    clearTimeout(eventTimer);eventTimer=setTimeout(()=>{pollReplies();},400);eventTimer.unref?.();
-  };
-  server.events=()=>events?.status() || null;
-  server.invalidateChats=()=>client.invalidateChats();
-  server.team=team;
-  server.on('listening',()=>{voice.start();team.start();triggers.start({poll:false});automation.start({poll:false});assistant.start({poll:false});scheduler.start();if(!options.disableWorkers) {replyTimer=setInterval(scheduledPoll,5000);replyTimer.unref?.();if(options.events!==false && (production || options.events)) {events=createEvolutionEvents({config:options.config,onEvent,...(typeof options.events==='object'?options.events:{})});events.start();}server.housekeeping().catch(()=>{});cleanTimer=setInterval(()=>{server.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();}});
+  // Atalhos dos testes e da demonstração: apontam para a conta principal (a primeira da lista).
+  const main=runtimes.get(accounts.fallback().id);
+  server.transcriptions=main.transcriptions;server.voice=main.voice;
+  server.housekeeping=main.housekeeping;
+  server.scheduler=main.scheduler;
+  server.triggers=main.triggers;server.assistant=main.assistant;
+  server.events=()=>main.events();
+  server.invalidateChats=()=>main.client.invalidateChats();
+  server.team=main.team;server.accounts=runtimes;
+  let replyTimer=null,cleanTimer=null;
+  server.on('listening',()=>{
+    for(const runtime of runtimes.values()) runtime.start();
+    if(!options.disableWorkers) {
+      replyTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.scheduledPoll();},5000);replyTimer.unref?.();
+      cleanTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();
+    }
+  });
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();server.cleanup=Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {
