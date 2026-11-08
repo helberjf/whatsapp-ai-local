@@ -210,6 +210,8 @@ Set **Modelo de embeddings** to another model, or to `off` to keep keyword-only 
 
 In **Assistente de IA**, select **Ollama (local)** and click **Ligar IA local** to start the installed runtime in the background and load the chosen model. The status changes to **Pronta para usar** after the model is confirmed in memory. This selects the local provider without changing automatic-reply switches. The button uses loopback only, never downloads missing models automatically, and shows an installation message if Ollama or the model is missing. If the GPU has insufficient memory, select **Usar CPU** and start again. This saves the CPU preference for subsequent Ollama answers; CPU inference may be slower.
 
+When the central depends on the local Ollama server (Ollama chat model, or embeddings through local Ollama, as with Anthropic), it checks `127.0.0.1:11434` every minute. If the server is down, it starts `ollama serve` in the background, at most once every two minutes, without loading or downloading models. While it is down, a banner at the top of the central and the **IA** status in the sidebar say so, because knowledge search falls back to keywords and AI replies stop. When the server answers again, by this restart or any other, the central reports it and resumes embedding search immediately. Remote Ollama addresses and cloud providers are not touched. `GET /api/ai/health` returns this state.
+
 ![Local AI startup controls with fictional demo data](docs/screenshots/local-ai.png)
 
 ### Answer reliability

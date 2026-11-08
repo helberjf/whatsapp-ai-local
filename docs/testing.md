@@ -54,6 +54,8 @@ npm run codegen
 
 `tests/e2e/rag.spec.cjs` runs against the demo, whose AI fixture returns deterministic topic embeddings and fixed robot suggestions. It covers a question found only by meaning, an off-topic question with no passage, the strict level discarding a medium-confidence passage and persisting after reload, and robot suggestions entering the rule list switched off without being saved. `npm run codegen` opens the same demo with Playwright's recorder; the recording is saved in `tests/recordings/`, outside the suite, so copy its steps into a test that uses the `demo` fixture.
 
+The Ollama watchdog never touches the real runtime in tests: it runs only in the production central or when a test passes `watchLocalAi`. `tests/ai-watchdog.test.cjs` drives it with a simulated runtime (down, restarted, failing to start, restarted externally, remote address ignored) and checks `/api/ai/health` over HTTP. `tests/e2e/ai-health.spec.cjs` fulfills that route in the browser to check the banner, the sidebar status and the recovery notice.
+
 Keep large local models unloaded while running the suites. With Ollama models resident in CPU memory, unrelated timing-sensitive tests (Windows credential protection, video limits) failed under load and passed again after `ollama stop`.
 
 ## Coverage map

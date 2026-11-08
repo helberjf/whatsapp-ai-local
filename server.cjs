@@ -19,6 +19,7 @@ const assistantCore=require('./lib/assistant-core.cjs');
 const {createHumanizer}=require('./lib/humanize.cjs');
 const {createTriggerService}=require('./lib/triggers.cjs');
 const {createLocalAi}=require('./lib/local-ai.cjs');
+const {createAiWatchdog}=require('./lib/ai-watchdog.cjs');
 const {createSpeechEngines}=require('./lib/speech.cjs');
 const {createVoiceFlow}=require('./lib/voice-flow.cjs');
 const {createMessagingRoutes,optionalSendFlag}=require('./lib/messaging-routes.cjs');
@@ -110,6 +111,9 @@ function createWhatsAppServer(options={}) {
   const accounts=createAccountRegistry(dataDir,options.config,now,{storeFactory,accounts:options.initialAccounts});
   // Base de conhecimento, produtos, provedor de IA e voz são compartilhados; as regras do robô vêm da conta do pedido.
   const extra=createKnowledgeRoutes(dataDir,options.aiFetch,{...(options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json')}),credentials,storeFactory,...(options.persistence?{blobFactory:options.persistence.blobs}:{})});
+  // Vigia do Ollama: religa o servidor local quando ele cai. Sempre na central real; nos testes só com options.watchLocalAi.
+  const aiWatchdog=createAiWatchdog({ai:extra.services.ai,localAi,onRecovered:()=>extra.services.embeddings.refresh({force:true}),now,...options.aiWatchdog});
+  const watchLocalAi=options.watchLocalAi ?? production;
   const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
   // Transcrição de todo áudio recebido (Whisper local): sempre na central real; nos testes só quando options.autoTranscription for informado.
   const autoTranscription=options.autoTranscription ?? !options.storeDir;
@@ -250,6 +254,7 @@ function createWhatsAppServer(options={}) {
       if(accountMatch && req.method==='PATCH' && !accountMatch[2]) {const renamed=await accounts.rename(accountMatch[1],(await readBody(req)).name);Object.assign(runtimes.get(renamed.id).account,renamed);return json(res,200,renamed);}
       if(accountMatch && req.method==='POST' && accountMatch[2]) {accounts.get(accountMatch[1]);await readBody(req);await runtimes.get(accountMatch[1]).client.disconnect();return json(res,200,{disconnected:true});}
       if(accountMatch && req.method==='DELETE' && !accountMatch[2]) {await removeAccount(accountMatch[1]);return json(res,200,{removed:true});}
+      if(route==='/api/ai/health' && req.method==='GET') return json(res,200,{...aiWatchdog.status(),search:await extra.services.embeddings.status()});
       if(route==='/api/ai/local' && req.method==='GET') return json(res,200,await localAi.status({...(url.searchParams.has('model')?{model:url.searchParams.get('model')}:{}),baseUrl:url.searchParams.get('baseUrl') || '',device:url.searchParams.get('device') || 'auto'}));
       if(route==='/api/ai/local/start' && req.method==='POST') {const input=await readBody(req),state=await localAi.start(input);const config=await extra.services.ai.save({provider:'ollama',model:state.model,baseUrl:'http://127.0.0.1:11434',ollamaNumGpu:input.device==='cpu'?0:null});return json(res,200,{...state,config});}
       if(route==='/api/triggers' && ['GET','PUT'].includes(req.method)) return json(res,200,req.method==='GET'?await triggers.settings():await triggers.saveSettings(await readBody(req)));
@@ -395,11 +400,12 @@ function createWhatsAppServer(options={}) {
     if(!options.disableWorkers) {
       replyTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.scheduledPoll();},5000);replyTimer.unref?.();
       cleanTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();
+      if(watchLocalAi) aiWatchdog.start();
     }
   };
   server.on('listening',startWorkers);if(server.listening) queueMicrotask(startWorkers);
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.ready(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);aiWatchdog.stop();for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.ready(),aiWatchdog.idle().then(()=>extra.services.embeddings.close()).then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

@@ -21,8 +21,25 @@
     $('metric-docs').textContent=docs.length;$('metric-products').textContent=products.length;
     $('status-kb').textContent=docs.length?docs.length+(docs.length===1?' documento':' documentos'):'Vazia';$('dot-kb').classList.toggle('on',docs.length>0);
     $('status-products').textContent=products.length?String(products.length):'Nenhum';$('dot-products').classList.toggle('on',products.length>0);
-    const on=Boolean(ai?.configured);
-    $('status-ai').textContent=on?'Configurada':'Não configurada';$('dot-ai').classList.toggle('on',on);
+    const on=Boolean(ai?.configured),down=aiDown();
+    $('status-ai').textContent=down?'Fora do ar':on?'Configurada':'Não configurada';$('dot-ai').classList.toggle('on',on && !down);$('dot-ai').classList.toggle('alert',down);
+  }
+
+  // ---------- Saúde da IA local ----------
+  // O servidor vigia o Ollama e tenta religá-lo; a tela só avisa, para a queda não passar despercebida.
+  let health=null,healthAt=0;
+  const aiDown=()=>Boolean(health?.watching && health.running===false);
+  const clock=value=>value?new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';
+  function renderHealth() {
+    const banner=$('ai-health-banner'),down=aiDown();
+    banner.hidden=!down;
+    if(down) banner.textContent=`A IA local (Ollama) está fora do ar desde ${clock(health.since)}. A central está tentando religá-la${health.nextAttemptAt?' (próxima tentativa às '+clock(health.nextAttemptAt)+')':''}.${health.lastError?' Último erro: '+health.lastError:''} Enquanto isso, a busca na base usa só palavras-chave e a IA não responde.`;
+    renderCounters();
+  }
+  async function refreshHealth() {
+    const wasDown=aiDown();health=await api('/ai/health');healthAt=Date.now();
+    if(wasDown && health.running) notice('IA local religada. A busca por significado voltou.',true);
+    renderHealth();
   }
   const reliabilityHints={
     strict:'Rigorosa: só usa trechos de confiança alta e passa para um atendente quando falta certeza. Menos respostas, menos risco.',
@@ -623,8 +640,9 @@
     if(name==='page-contacts') renderContacts();
   });
   C.hooks.sync.push(()=>{if(view==='page-contacts' && Date.now()-contactsFetchedAt>15_000) renderContacts();});
+  C.hooks.sync.push(()=>{if(Date.now()-healthAt>=30_000) refreshHealth().catch(()=>{});});
   C.hooks.select.push(renderPanelProducts);
 
   // Carga inicial silenciosa: alimenta contadores e a busca sem interromper o uso.
-  Promise.allSettled([api('/kb').then(result=>{docs=result.documents;}),api('/products').then(result=>{products=result.products;}),api('/ai').then(result=>{ai=result;})]).then(()=>{renderCounters();renderKb();renderProducts();renderPanelProducts();renderAi();});
+  Promise.allSettled([api('/kb').then(result=>{docs=result.documents;}),api('/products').then(result=>{products=result.products;}),api('/ai').then(result=>{ai=result;}),refreshHealth()]).then(()=>{renderCounters();renderKb();renderProducts();renderPanelProducts();renderAi();});
 })();
