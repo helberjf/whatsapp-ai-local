@@ -24,6 +24,7 @@
   const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
   let transcriptionSettings=null,transcriptionSettingsLoading=null;
   let historyQueue=Promise.resolve(),syncTask=Promise.resolve(),namesSyncing=false,forwardState=null,deleteState=null,attachmentKind=null,attachmentSelectionKind=null,activeMessageMenu=null;
+  let transcriptRequest=null;
   const statuses={open:'Em aberto',pending:'Pendente',closed:'Concluído'};
   const time=value=>value?new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';
   const dateTime=value=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
@@ -456,6 +457,7 @@
     for(const key of candidates) {if(mediaUrls.size<=MEDIA_CACHE_ENTRIES && bytes<=MEDIA_CACHE_BYTES) break;if(key===keepKey || protectedMedia(key)) continue;bytes-=mediaUrls.get(key).cacheBytes;discardMedia(key);}
   }
   function clearConversationMedia() {
+    cancelTranscriptRequest();if($('voice-text-dialog').open) $('voice-text-dialog').close();
     mediaGeneration++;focusedMediaKey=null;previewObserver?.disconnect();previewQueue=[];previewViews.clear();
     for(const controller of mediaControllers.values()) controller.abort();mediaControllers.clear();mediaRequests.clear();
     for(const view of audioViews.values()) releasePlayer(view);for(const view of videoViews.values()) releasePlayer(view,true);audioViews.clear();videoViews.clear();
@@ -660,7 +662,8 @@
     if(sending) return;
     editRevision++;pendingSend=null;
     if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
-    attachment=file || null;attachmentKind=kind;$('attachment-name').textContent=file?(kind==='sticker'?'Figurinha · ':'')+file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file;$('message-text').required=!attachment;if(file) $('message-text').focus();
+    cancelTranscriptRequest();
+    attachment=file || null;attachmentKind=kind;$('attachment-name').textContent=file?(kind==='sticker'?'Figurinha · ':'')+file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file || Boolean(file.type?.startsWith('audio/'));$('message-text').required=!attachment;if(file) $('message-text').focus();
     globalThis.WhatsAppMedia?.onAttachment?.(attachment,kind,viewOnce);extras()?.onAttachment?.(attachment,kind);
   }
   $('attachment').addEventListener('change',()=>{const kind=attachmentSelectionKind;attachmentSelectionKind=null;setAttachment($('attachment').files[0],kind);});
@@ -681,44 +684,77 @@
   }
   $('remove-attachment').addEventListener('click',()=>setAttachment(null));
   const fileBase64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));reader.readAsDataURL(file);});
-  $('composer').addEventListener('submit',async event=>{
+  function cancelTranscriptRequest() {
+    if(!transcriptRequest) return;
+    transcriptRequest.abort();transcriptRequest=null;
+    $('voice-send-text').disabled=false;$('send-status').textContent='';
+  }
+  $('voice-send-text').addEventListener('click',async()=>{
+    const file=attachment,jid=selected?.jid,button=$('voice-send-text');
+    if(!jid || !file || button.hidden || sending || transcriptRequest) return;
+    const controller=new AbortController();transcriptRequest=controller;
+    button.disabled=true;$('send-status').textContent='Preparando a prévia do texto…';
+    try {
+      const base64=await fileBase64(file);
+      if(controller.signal.aborted) return;
+      const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(22*60_000)]);
+      const {text}=await api('/voice/transcribe-draft','POST',{jid,base64,mimeType:file.type || 'audio/webm'},undefined,signal);
+      if(transcriptRequest!==controller || globalThis.WhatsAppMedia?.viewOnce?.()) return;
+      $('voice-text-preview').value=text;$('voice-text-status').textContent='';$('voice-text-dialog').showModal();
+    } catch(error) {if(transcriptRequest===controller) $('send-status').textContent=error.message;}
+    finally {
+      if(transcriptRequest===controller) {
+        transcriptRequest=null;button.disabled=false;
+        if($('send-status').textContent==='Preparando a prévia do texto…') $('send-status').textContent='';
+      }
+    }
+  });
+  $('voice-text-cancel').addEventListener('click',()=>$('voice-text-dialog').close());
+  $('voice-text-dialog').addEventListener('cancel',event=>{if(sending) event.preventDefault();});
+  async function sendMessage(event) {
     event.preventDefault();if(!selected || $('speak-send').disabled) return;
+    const asText=event.currentTarget===$('voice-text-form'),status=$(asText?'voice-text-status':'send-status');
     // Enter durante um envio não se perde: a próxima mensagem sai assim que a atual terminar.
-    if(sending) {submitQueued=true;return;}
-    if(connection?.state!=='connected') {$('send-status').textContent='WhatsApp desconectado: a mensagem não foi enviada e continua no editor.';return;}
+    if(sending) {if(!asText) submitQueued=true;return;}
+    if(connection?.state!=='connected') {status.textContent='WhatsApp desconectado. A mensagem continua disponível para envio.';return;}
     if(globalThis.WhatsAppMedia?.isRecording?.()) {notice('Pare a gravação para ouvir e enviar o áudio.');return;}
-    const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,kind=attachmentKind;let submittedRevision=editRevision,cleared=false,sent=false;if(!file && !text) return;
+    const jid=selected.jid,text=$(asText?'voice-text-preview':'message-text').value.trim(),file=attachment,kind=attachmentKind;
+    let submittedRevision=editRevision,cleared=false,sent=false;
+    if(asText && (!file || !text || !$('voice-text-dialog').open)) {status.textContent='Escreva o texto que deseja enviar.';return;}
+    if(!file && !text) return;
     const mediaType=!file || kind==='sticker' || kind==='document'?'document':file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':kind==='voice' || file.type.startsWith('audio/')?'audio':'document';
-    const viewOnce=Boolean(file && globalThis.WhatsAppMedia?.viewOnce?.()),asText=event.submitter?.id==='voice-send-text';
+    const viewOnce=Boolean(file && globalThis.WhatsAppMedia?.viewOnce?.());
     if(asText && (mediaType!=='audio' || viewOnce)) return;
-    const voice=kind==='voice' || (mediaType==='audio' && viewOnce);
-    const route=asText?'/send-voice-as-text':voice?'/send-voice':!file?'/send':kind==='sticker'?'/send-sticker':'/send-media';
+    const voice=!asText && (kind==='voice' || (mediaType==='audio' && viewOnce));
+    const route=asText || !file?'/send':voice?'/send-voice':kind==='sticker'?'/send-sticker':'/send-media';
     const preserveDraft=voice || asText;
-    const mediaControls=['voice-send','voice-send-text','voice-cancel','remove-attachment','attachment-toggle','voice-view-once','attachment-view-once'];
+    const mediaControls=['voice-send','voice-send-text','voice-cancel','remove-attachment','attachment-toggle','voice-view-once','attachment-view-once','voice-text-confirm','voice-text-cancel'];
+    cancelTranscriptRequest();
     sending=true;$('send').disabled=true;
     for(const id of mediaControls) $(id).disabled=true;
-    $('send-status').textContent=asText?'Transcrevendo o áudio para enviar como texto…':'Enviando…';
+    status.textContent='Enviando…';
     try {
-      let submitted=pendingSend?.route===route?pendingSend:null;
+      let submitted=pendingSend?.route===route && pendingSend.asText===asText && (!asText || pendingSend.input.text===text)?pendingSend:null;
       if(!submitted) {
         const requestId=crypto.randomUUID();
         if(file && kind==='sticker' && text) throw new Error('Figurinhas não têm legenda. Remova o texto ou envie-o separadamente.');
         const quotedId=extras()?.replyFor?.(jid) || undefined,quote=quotedId && kind!=='sticker'?{quotedId}:{};
         const options=viewOnce?{viewOnce:true}:{};
-        if(preserveDraft) submitted={route,input:{jid,base64:await fileBase64(file),mimeType:file.type || 'audio/webm',requestId,...quote,...options}};
-        else if(file) submitted={route,input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType,requestId,...quote,...options}};
-        else submitted={route,input:{jid,text,requestId,...quote}};
+        if(voice) submitted={route,asText,input:{jid,base64:await fileBase64(file),mimeType:file.type || 'audio/webm',requestId,...quote,...options}};
+        else if(file && !asText) submitted={route,asText,input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType,requestId,...quote,...options}};
+        else submitted={route,asText,input:{jid,text,requestId,...quote}};
         if(editRevision===submittedRevision) pendingSend=submitted;
       }
       // O editor esvazia já no envio: o que for digitado enquanto o conector responde é a próxima mensagem, não sobra da anterior.
       if(!preserveDraft && editRevision===submittedRevision) {$('message-text').value='';drafts.delete(jid);editRevision++;submittedRevision=editRevision;cleared=true;}
-      await api(route,'POST',submitted.input,asText?22*60_000:file?120000:30000);if(pendingSend===submitted) pendingSend=null;
+      await api(route,'POST',submitted.input,file && !asText?120000:30000);if(pendingSend===submitted) pendingSend=null;
       sent=true;
+      if(asText) $('voice-text-dialog').close();
       if(file && attachment===file) {attachment=null;attachmentKind=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;globalThis.WhatsAppMedia?.onAttachment?.(null);}
       extras()?.onSent?.(jid);
       $('send-status').textContent=asText?'Transcrição enviada como mensagem de texto.':voice?'Mensagem de voz aceita pelo conector.'+(text?' O texto continua no editor.':''):'Mensagem aceita pelo conector. O status será atualizado no histórico.';
     } catch(error) {
-      $('send-status').textContent=error.message+' Confira a conversa antes de tentar outro envio.';
+      status.textContent=error.message+' Confira a conversa antes de tentar outro envio.';
       // Falhou: o texto volta ao editor da conversa certa, sem apagar o que já foi digitado depois.
       if(cleared && !sent) {
         if(selected?.jid===jid) {const typed=$('message-text').value;$('message-text').value=typed?text+'\n'+typed:text;if(typed) {editRevision++;pendingSend=null;}}
@@ -731,7 +767,9 @@
     }
     if(sent) await loadMessages().catch(()=>{});
     if(submitQueued) {submitQueued=false;if(sent) $('composer').requestSubmit();}
-  });
+  }
+  $('composer').addEventListener('submit',sendMessage);
+  $('voice-text-form').addEventListener('submit',sendMessage);
   $('new-chat').addEventListener('click',()=>{$('new-error').textContent='';$('new-dialog').showModal();});
   $('new-form').addEventListener('submit',async event=>{
     event.preventDefault();const button=event.submitter;button.disabled=true;

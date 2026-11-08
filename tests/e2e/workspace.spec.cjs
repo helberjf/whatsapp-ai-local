@@ -21,10 +21,28 @@ test('composer sends dictated text or a view-once audio from the media preview',
   const input=page.locator('#attachment'),audio={name:'sample.wav',mimeType:'audio/wav',buffer:wave()};
   await expect(once).toBeHidden();await expect(sendAsText).toBeHidden();
   await input.setInputFiles(audio);
+  for(const width of [1440,390]) {
+    await page.setViewportSize({width,height:900});
+    const panel=await page.locator('#voice-recorder').boundingBox();
+    const cancel=await page.locator('#voice-cancel').boundingBox();
+    expect(panel.x+panel.width-cancel.x-cancel.width).toBeLessThanOrEqual(10);
+    await insideViewport(sendAsText);
+  }
+  await page.setViewportSize({width:1440,height:960});
   await page.locator('#message-text').fill('Rascunho separado');
   await sendAsText.click();
   const rows=page.locator('.message.mine');
-  await expect(rows.filter({hasText:'Transcrição automática de demonstração'})).toBeVisible();
+  const preview=page.getByRole('dialog',{name:'Prévia da transcrição'});
+  await expect(preview.getByRole('textbox')).toHaveValue('Transcrição automática de demonstração');
+  await expect(rows.filter({hasText:'Transcrição automática de demonstração'})).toHaveCount(0);
+  await preview.getByRole('button',{name:'Cancelar'}).click();
+  await expect(preview).toBeHidden();
+  await expect(page.locator('#voice-preview')).toBeVisible();
+  await sendAsText.click();
+  await expect(preview).toBeVisible();
+  await preview.getByRole('textbox').fill('Texto revisado antes de enviar');
+  await preview.getByRole('button',{name:'Enviar texto'}).click();
+  await expect(rows.filter({hasText:'Texto revisado antes de enviar'})).toBeVisible();
   await expect(page.locator('#message-text')).toHaveValue('Rascunho separado');
   await expect(once).toBeHidden();
   await input.setInputFiles(audio);

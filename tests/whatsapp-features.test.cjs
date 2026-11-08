@@ -165,24 +165,24 @@ test('envia voz de visualização única com o pedido deduplicado',async t=>{
   assert.equal((await call('/api/starred','PUT',{jid,messageId:'one-use',starred:true})).status,422);
 });
 
-test('transcreve o áudio localmente e envia somente o texto uma vez',async t=>{
-  let transcribed=0,transcript='  Mensagem ditada  ';
+test('transcreve o áudio localmente para prévia e aguarda o envio explícito',async t=>{
+  let transcript='  Mensagem ditada  ';
   const {call,calls}=await serverFixture(t,{'/sendText/':input=>original('dictated',{conversation:input.text})},{
     transcriptionEngines:{whisperEngine:async({bytes,mimeType})=>{
-      transcribed++;assert.equal(bytes.toString(),'OggS');assert.equal(mimeType,'audio/ogg');
+      assert.equal(bytes.toString(),'OggS');assert.equal(mimeType,'audio/ogg');
       return {text:transcript};
     }}
   });
-  const input={jid,base64:'T2dnUw==',mimeType:'audio/ogg',requestId:'dictated-voice'};
-  const [first,retry]=await Promise.all([call('/api/send-voice-as-text','POST',input),call('/api/send-voice-as-text','POST',input)]);
-  assert.equal(first.status,200);
-  assert.deepEqual(first,retry);
-  assert.equal(first.body.text,'Mensagem ditada');
-  assert.equal(transcribed,1);
-  assert.equal((await call('/api/send-voice-as-text','POST',{...input,viewOnce:true,requestId:'dictated-view-once'})).status,422);
-  assert.deepEqual(calls.filter(item=>item.route.startsWith('/message/')).map(item=>item.route.split('/')[2]),['sendText']);
+  const input={jid,base64:'T2dnUw==',mimeType:'audio/ogg'};
+  const preview=await call('/api/voice/transcribe-draft','POST',input);
+  assert.deepEqual(preview,{status:200,body:{text:'Mensagem ditada'}});
+  assert.equal((await call('/api/send-voice-as-text','POST',{...input,requestId:'old-audio-send'})).status,404);
+  assert.equal(calls.filter(item=>item.route.startsWith('/message/')).length,0);
+  const send={jid,text:'Mensagem revisada',requestId:'dictated-review'};
+  assert.equal((await call('/api/send','POST',send)).body.text,send.text);
+  assert.equal((await call('/api/send','POST',send)).body.text,send.text);
   transcript=' ';
-  assert.equal((await call('/api/send-voice-as-text','POST',{...input,requestId:'empty-dictation'})).status,422);
+  assert.equal((await call('/api/voice/transcribe-draft','POST',input)).status,422);
   assert.equal(calls.filter(item=>item.route.includes('/sendText/')).length,1);
 });
 
