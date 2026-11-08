@@ -6,6 +6,35 @@ const screenshotDir=path.join(__dirname,'..','..','docs','screenshots');
 const capturePath=name=>process.env.WHATSAPP_CAPTURE_DOCS==='1'?path.join(screenshotDir,name):test.info().outputPath(name);
 async function openChat(page) {await page.locator('.chat-item').filter({hasText:'Alex Morgan'}).click();await expect(page.locator('#conversation-content')).toBeVisible();}
 async function insideViewport(locator) {await locator.scrollIntoViewIfNeeded();const box=await locator.boundingBox();expect(box).not.toBeNull();const viewport=locator.page().viewportSize();expect(box.x).toBeGreaterThanOrEqual(-1);expect(box.y).toBeGreaterThanOrEqual(-1);expect(box.x+box.width).toBeLessThanOrEqual(viewport.width+1);expect(box.y+box.height).toBeLessThanOrEqual(viewport.height+1);}
+
+test('recording offers text preview before stopping manually',async({page})=>{
+  await openChat(page);
+  const sent=[];page.on('request',req=>{if(/\/api\/send(?:-voice|-media)?$/.test(req.url())) sent.push(req.url());});
+  await page.locator('#record-audio').click();
+  await expect(page.locator('#voice-status')).toContainText('Gravando');
+  await expect(page.locator('#voice-send-text')).toBeVisible();
+  await expect(page.locator('#voice-status')).toContainText('0:01');
+  await page.locator('#voice-send-text').click();
+  await expect(page.locator('#voice-text-dialog')).toBeVisible();
+  await expect(page.locator('#voice-text-preview')).not.toHaveValue('');expect(sent).toEqual([]);
+  await page.locator('#voice-text-cancel').click();await expect(page.locator('#voice-preview')).toBeVisible();
+});
+
+test('reopening a manually unread conversation clears the marker after polling',async({page})=>{
+  await openChat(page);await page.locator('#show-contact').click();await page.locator('#chat-unread').click();
+  await expect(page.locator('#notice')).toContainText('não lida');
+  await page.locator('#hide-contact').click();await page.locator('.chat-item').filter({hasText:'Sam Rivera'}).click();
+  await openChat(page);await page.locator('#refresh-top').click();
+  await expect(page.locator('.chat-item').filter({hasText:'Alex Morgan'}).locator('.unread-count')).toHaveCount(0);
+});
+
+test('Enter sends text and Shift Enter preserves a new line',async({page})=>{
+  await openChat(page);const editor=page.locator('#message-text');
+  await editor.fill('Primeira linha');await editor.press('Shift+Enter');await editor.pressSequentially('Segunda linha');
+  await expect(editor).toHaveValue('Primeira linha\nSegunda linha');
+  await editor.press('Enter');await expect(editor).toHaveValue('');
+  await expect(page.locator('.message.mine').filter({hasText:'Primeira linha'})).toHaveCount(1);
+});
 test('opening an unread conversation stays read after refresh',async({page})=>{
   await page.locator('.chat-item').filter({hasText:'Sam Rivera'}).click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);
   await page.locator('#refresh-top').click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);

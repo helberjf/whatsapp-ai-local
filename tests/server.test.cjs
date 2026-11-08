@@ -113,6 +113,15 @@ test('confirmed read state masks stale connector counts but not a new message',a
   const old=incoming.key.id;incoming.key.id='new-incoming';
   try {assert.equal((await api('/api/chats'))[0].unread,2);}finally {incoming.key.id=old;}
 });
+
+test('read cursor advances when incoming receipts were already sent',async()=>{
+  const old=incoming.key.id;incoming.key.id='already-seen-latest';
+  try {
+    await api('/api/read','POST',{jid,keys:[],lastSeenId:incoming.key.id});
+    assert.equal((await api('/api/chats'))[0].unread,0);
+    incoming.key.id='actually-new';assert.equal((await api('/api/chats'))[0].unread,2);
+  } finally {incoming.key.id=old;}
+});
 test('anexos são validados e enviados por base64, sem buscar URLs arbitrárias',async()=>{
   await api('/api/send-media','POST',{jid,mediaType:'document',mimeType:'text/plain',fileName:'teste.txt',base64:'aGVsbG8=',requestId:'req-media-001'});
   assert.equal(calls.findLast(c=>c.url==='/message/sendMedia/teste').input.media,'aGVsbG8=');

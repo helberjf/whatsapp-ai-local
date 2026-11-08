@@ -5,7 +5,7 @@
   function setViewOnce(active) {
     viewOnce=active;
     for(const id of ['voice-view-once','attachment-view-once']) $(id).setAttribute('aria-pressed',String(active));
-    $('voice-send-text').hidden=active || $('voice-view-once').hidden || $('voice-preview').hidden;
+    $('voice-send-text').hidden=active || $('voice-view-once').hidden;
   }
   // Botão de envio dentro do gravador: "Parar e enviar" enquanto grava, "Enviar áudio" na revisão.
   function showSend(label) {$('voice-send').hidden=false;$('voice-send').disabled=false;$('voice-send-label').textContent=label;$('voice-send').setAttribute('aria-label',label);}
@@ -28,7 +28,7 @@
   function refresh() {$('record-audio').disabled=busy || !context.canRecord();$('record-audio').setAttribute('aria-pressed',String(busy));}
   function reset() {
     if(busy && recordingJid) context.onRecording?.(recordingJid,false);
-    generation++;busy=false;if(recorder && recorder.state!=='inactive') recorder.stop();recorder=null;stopTracks();clearPreview();clearAttachmentPreview();recordingJid=null;
+    generation++;busy=false;if(recorder && recorder.state!=='inactive') recorder.stop();recorder=null;stopTracks();clearPreview();clearAttachmentPreview();recordingJid=null;$('voice-send-text').disabled=false;
     $('voice-view-once').hidden=true;$('attachment-view-once').hidden=true;setViewOnce(false);
     $('voice-recorder').hidden=true;$('voice-recorder').classList.remove('recording');$('voice-stop').hidden=true;$('voice-send').hidden=true;sendAfterStop=false;refresh();
   }
@@ -65,9 +65,9 @@
         const type=(current.mimeType || mime || 'audio/webm').split(';')[0],blob=new Blob(chunks,{type});
         if(!blob.size || blob.size>10*1024*1024) {reset();context.notice('Áudio vazio ou maior que 10 MB. Faça uma nova gravação.');return;}
         const extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';context.setAttachment(new File([blob],'audio-'+Date.now()+'.'+extension,{type}),'voice',viewOnce);
-        if(sendNow) context.send?.();else $('voice-send').focus?.();
+        if(sendNow==='text') $('voice-send-text').click();else if(sendNow) context.send?.();else $('voice-send').focus?.();
       });
-      const started=Date.now();$('voice-status').textContent='Gravando · 0:00';$('voice-recorder').classList.add('recording');$('voice-stop').hidden=false;$('voice-view-once').hidden=false;showSend('Parar e enviar');current.start(250);context.onRecording?.(jid,true);
+      const started=Date.now();$('voice-status').textContent='Gravando · 0:00';$('voice-recorder').classList.add('recording');$('voice-stop').hidden=false;$('voice-view-once').hidden=false;setViewOnce(false);showSend('Parar e enviar');current.start(250);context.onRecording?.(jid,true);
       timer=setInterval(()=>{const seconds=Math.floor((Date.now()-started)/1000);$('voice-status').textContent='Gravando · '+time(seconds);if(seconds>=300 && current.state==='recording') current.stop();},250);
     } catch(error) {
       if(version!==generation) return;reset();context.notice(['NotAllowedError','SecurityError'].includes(error.name)?'Permita o acesso ao microfone neste navegador para gravar áudio.':'Não foi possível acessar o microfone. Verifique se ele está conectado e tente novamente.');
@@ -99,5 +99,9 @@
     $('media-zoom').addEventListener('click',()=>{const zoomed=$('media-viewer').classList.toggle('zoomed');$('media-zoom').setAttribute('aria-pressed',String(zoomed));$('media-zoom').textContent=zoomed?'Ajustar':'Ampliar';});
     window.addEventListener('pagehide',reset);refresh();
   }
-  globalThis.WhatsAppMedia={init,onAttachment,open,previewMime,isRecording:()=>busy,viewOnce:()=>viewOnce};
+  function stopForText() {
+    if(recorder?.state!=='recording' || viewOnce) return;
+    sendAfterStop='text';$('voice-send-text').disabled=true;recorder.stop();
+  }
+  globalThis.WhatsAppMedia={init,onAttachment,open,previewMime,isRecording:()=>busy,viewOnce:()=>viewOnce,stopForText};
 })();

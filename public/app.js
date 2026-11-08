@@ -586,13 +586,15 @@
     // Áudio novo pode já estar na fila da transcrição automática: busca o estado para mostrar o texto quando ficar pronto.
     if(changed && historyLoaded && result.messages.some(message=>message.type==='audio' && !latestKnownTranscription(jid,message.id))) loadTranscriptions(jid,version).catch(()=>{});
     const unread=result.messages.filter(message=>!message.fromMe && message.key?.fromMe===false && message.key.remoteJid===jid && !readIds.has(jid+'|'+message.id));
-    const lastSeenId=selected?.jid===jid?selected.lastMessage?.id:undefined;
-    if(!unread.length && lastSeenId && document.visibilityState==='visible' && !readIds.has(jid+'|seen|'+lastSeenId)) {
+    // Só confirma até a última mensagem quando ela veio nesta página (não ao carregar páginas antigas).
+    const lastSeenId=!older && result.messages.some(message=>message.id===selected?.lastMessage?.id)?selected.lastMessage.id:undefined;
+    if(!unread.length && lastSeenId && !(selected.unread>0) && document.visibilityState==='visible' && !readIds.has(jid+'|seen|'+lastSeenId)) {
       // Conversa já lida no celular: avisa só que foi aberta (tira da fila "Aguardando"), sem confirmar leitura de novo.
       readIds.add(jid+'|seen|'+lastSeenId);api('/read','POST',{jid,keys:[],lastSeenId}).catch(()=>{});
     }
-    if(unread.length && document.visibilityState==='visible') {
-      await api('/read','POST',{jid,keys:unread.map(message=>({...message.key,remoteJid:jid})),lastSeenId});
+    // Também limpa a marcação manual de "não lida" quando a conversa é reaberta sem mensagens novas.
+    if((unread.length || (lastSeenId && selected.unread>0)) && document.visibilityState==='visible') {
+      await api('/read','POST',{jid,keys:unread.map(message=>({...message.key,remoteJid:jid})),...(lastSeenId?{lastSeenId}:{})});
       if(selected?.jid===jid) {unread.forEach(message=>readIds.add(jid+'|'+message.id));const chat=chats.find(item=>item.jid===jid);if(chat) chat.unread=0;renderChats();}
     }
   }
@@ -733,6 +735,7 @@
     $('voice-send-text').disabled=false;$('send-status').textContent='';
   }
   $('voice-send-text').addEventListener('click',async()=>{
+    if(globalThis.WhatsAppMedia?.isRecording?.()) {globalThis.WhatsAppMedia.stopForText();return;}
     const file=attachment,jid=selected?.jid,button=$('voice-send-text');
     if(!jid || !file || button.hidden || sending || transcriptRequest) return;
     const controller=new AbortController();transcriptRequest=controller;

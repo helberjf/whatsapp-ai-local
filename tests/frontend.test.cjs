@@ -272,6 +272,16 @@ test('Enter envia uma vez e Shift+Enter ou composição preservam o rascunho',as
   editor.value='Linha que continua';await editor.emit('input');for(const extra of [{shiftKey:true},{isComposing:true},{keyCode:229},{repeat:true}]) {let prevented=false;await editor.emit('keydown',{key:'Enter',...extra,preventDefault(){prevented=true;}});assert.equal(prevented,false);}
   assert.equal(b.requests.filter(r=>r.path==='/api/send').length,1);assert.equal(editor.value,'Linha que continua');
 });
+
+test('atualiza leitura quando a última mensagem muda sem novas mensagens recebidas',async()=>{
+  const incoming={...message(1),fromMe:false,key:{id:'1',remoteJid:jid,fromMe:false}};
+  const chat={jid,name:'Ana',unread:2,status:'open',labels:[],lastMessage:incoming};
+  const b=await createBrowser({chatRecords:[chat],historyRecords:[incoming]});
+  b.appendRecords([message(2)]);chat.lastMessage=message(2);chat.unread=2;
+  await b.poll();
+  const read=b.requests.filter(req=>req.path==='/api/read').at(-1);
+  assert.equal(read.input.lastSeenId,'2');assert.equal(chat.unread,0);
+});
 test('arquivo escolhido como Documento preserva essa categoria mesmo quando é imagem',async()=>{
   class Reader {readAsDataURL(){this.result='data:image/png;base64,aGVsbG8=';this.onload();}}
   const b=await createBrowser({FileReader:Reader});await b.get('attach-document').emit('click');b.get('attachment').files=[{name:'original.png',size:5,type:'image/png'}];await b.get('attachment').emit('change');await b.get('composer').emit('submit');
