@@ -68,3 +68,15 @@ test('sem dados do atendimento em nenhum dos dois, fica o @lid; com dados só no
   const [chat]=(await second.call('/api/chats')).body;
   assert.equal(chat.jid,phone);assert.deepEqual(chat.aliasJids,[lid]);assert.equal(chat.status,'closed');assert.equal(chat.lastMessage.id,'nova');
 });
+
+test('o estado de arquivamento mais recente vale para os dois identificadores da conversa',async t=>{
+  const {call}=await serverWith(t,{contacts:{
+    [lid]:{status:'pending',labels:['VIP'],archived:false,archivedAt:'2026-10-29T00:00:00Z'},
+    [phone]:{archived:true,archivedAt:'2026-10-30T00:00:00Z'}
+  }});
+  const {body:chats}=await call('/api/chats');
+  assert.equal(chats.length,1);
+  assert.equal(chats[0].jid,lid);
+  assert.equal(chats[0].archived,true);
+  assert.deepEqual(chats[0].labels,['VIP']);
+});

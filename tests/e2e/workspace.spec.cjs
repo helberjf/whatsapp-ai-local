@@ -15,6 +15,37 @@ test('reply menu quotes the selected message and sends its identifier',async({pa
   await expect(page.locator('#reply-bar')).toContainText('Maneiro');await page.screenshot({path:path.join(__dirname,'..','..','data','reply-preview.png')});await page.locator('#message-text').fill('Respondendo a esta mensagem');
   const request=page.waitForRequest(req=>req.url().endsWith('/api/send') && req.method()==='POST');await page.locator('#send').click();expect((await request).postDataJSON().quotedId).toBe('demo-short');await expect(page.locator('#reply-bar')).toBeHidden();await expect(page.locator('.message.mine .message-quote')).toContainText('Maneiro');
 });
+test('composer sends dictated text or a view-once audio from the media preview',async({page})=>{
+  await openChat(page);
+  const once=page.locator('#voice-view-once'),sendAsText=page.getByRole('button',{name:'Enviar como texto'});
+  const input=page.locator('#attachment'),audio={name:'sample.wav',mimeType:'audio/wav',buffer:wave()};
+  await expect(once).toBeHidden();await expect(sendAsText).toBeHidden();
+  await input.setInputFiles(audio);
+  await page.locator('#message-text').fill('Rascunho separado');
+  await sendAsText.click();
+  const rows=page.locator('.message.mine');
+  await expect(rows.filter({hasText:'Transcrição automática de demonstração'})).toBeVisible();
+  await expect(page.locator('#message-text')).toHaveValue('Rascunho separado');
+  await expect(once).toBeHidden();
+  await input.setInputFiles(audio);
+  await expect(once).toHaveAttribute('aria-pressed','false');
+  await once.click();
+  await expect(once).toHaveAttribute('aria-pressed','true');
+  await page.locator('#voice-send').click();
+  const media=rows.filter({hasText:'Áudio de visualização única'});
+  await expect(media).toBeVisible();
+  await expect(media.locator('.view-once-badge')).toHaveText('1');
+  await expect(media.locator('.audio-load')).toHaveCount(0);
+  await expect(once).toBeHidden();
+  await input.setInputFiles(audio);
+  await expect(once).toHaveAttribute('aria-pressed','false');
+  await input.setInputFiles({name:'photo.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK9sAAAAASUVORK5CYII=','base64')});
+  const photoOnce=page.locator('#attachment-view-once');
+  await expect(once).toBeHidden();await expect(photoOnce).toHaveAttribute('aria-pressed','false');
+  await photoOnce.click();await page.locator('#send').click();
+  await expect(rows.filter({hasText:'Foto de visualização única'})).toBeVisible();
+  await expect(photoOnce).toBeHidden();
+});
 test.beforeEach(async({page,demo})=>{const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item'),()=>JSON.stringify(errors)).toHaveCount(10);expect(errors).toEqual([]);});
 
 for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {
@@ -73,7 +104,8 @@ test('recorded audio is reviewed before explicit sending and cancel preserves th
     await page.locator('#voice-stop').click();await expect(page.locator('#voice-send')).toContainText('Enviar áudio');await expect(page.locator('#voice-send')).toBeFocused();await insideViewport(page.locator('#voice-send'));
     await page.locator('#voice-send').click();await expect.poll(()=>sent.length).toBe(2);await expect(page.locator('#voice-recorder')).not.toBeVisible();
     await page.locator('#record-audio').click();await expect.poll(()=>page.locator('#voice-status').textContent()).toMatch(/Gravando · (?!0:00)\d+:\d{2}/);
-    await page.locator('#voice-send').click();await expect.poll(()=>sent.length).toBe(3);expect(sent[2].base64.length).toBeGreaterThan(100);await expect(page.locator('#voice-recorder')).not.toBeVisible();await expect(page.locator('#message-text')).toHaveValue('Texto preservado');
+  await page.locator('#voice-view-once').click();
+  await page.locator('#voice-send').click();await expect.poll(()=>sent.length).toBe(3);expect(sent[2].base64.length).toBeGreaterThan(100);expect(sent[2].viewOnce).toBe(true);await expect(page.locator('#voice-recorder')).not.toBeVisible();await expect(page.locator('#message-text')).toHaveValue('Texto preservado');
 });
 test('microphone denial keeps the conversation usable and spoofed PDF stays out of the viewer',async({page})=>{
   await openChat(page);await page.evaluate(()=>{navigator.mediaDevices.getUserMedia=async()=>{throw new DOMException('Permission denied','NotAllowedError');};});await page.locator('#record-audio').click();await expect(page.locator('#notice')).toContainText('Permita o acesso ao microfone');await expect(page.locator('#record-audio')).toBeEnabled();await expect(page.locator('#voice-recorder')).not.toBeVisible();
@@ -195,6 +227,35 @@ test('chats archived on the phone before the extension are fetched from WhatsApp
   await page.locator('#archived-sync-button').click();await expect(page.locator('#notice')).toContainText('1 conversa arquivada no WhatsApp.');
   await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Avery Rocha');
   await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+});
+test('the inbox search and unanswered filter keep archived chats separate',async({page,demo})=>{
+  await page.evaluate(async()=>{
+    const central=window.WhatsAppCentral;
+    for(const name of ['Alex Morgan','Sam Rivera']) {
+      const chat=central.chats().find(item=>item.name===name);
+      await central.api('/contact?jid='+encodeURIComponent(chat.jid),'PATCH',{labels:['Sem resposta']});
+    }
+  });
+  demo.archiveOnPhone(0);await page.locator('#refresh-top').click();
+  await expect(page.locator('#archived-row-count')).toHaveText('1');
+  const search=page.locator('#search'),alex=page.locator('#chat-list .chat-item').filter({hasText:'Alex Morgan'});
+  await search.fill('Alex Morgan');await expect(alex).toHaveCount(0,{timeout:3000});
+  await page.locator('#archived-row').click();await expect(alex).toHaveCount(1);
+  await alex.click();await page.locator('#show-contact').click();
+  await page.locator('#chat-mute').click();await page.locator('[data-mute="-1"]').click();
+  await expect(page.locator('#chat-mute')).toContainText('Reativar');
+  await expect(alex).toHaveCount(1);
+  await search.fill('Sam Rivera');await expect(page.locator('#chat-list .chat-item')).toHaveCount(0);
+  await page.locator('#nav-pending').click();
+  await expect(page.locator('#archived-row')).toHaveAttribute('aria-pressed','false');
+  await expect(page.locator('#chat-list .chat-item').filter({hasText:'Sam Rivera'})).toHaveCount(1);
+  await page.locator('#filter-all').click();
+  await expect(page.locator('#filter-unanswered-count')).toHaveText('1');
+  await page.locator('#filter-unanswered').click();
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);
+  await expect(page.locator('#chat-list .chat-item')).toContainText('Sam Rivera');
+  await page.locator('#nav-overview').click();
+  await expect(page.locator('#dashboard-recent')).not.toContainText('Alex Morgan');
 });
 test('an outdated central shows a restart notice instead of failing silently',async({page})=>{
   await page.route('**/health',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({service:'whatsapp-local',version:1})}));

@@ -106,6 +106,11 @@ dialog{max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contai
 .video-metadata{margin:8px 0;color:#acc6b8;font-size:11px;overflow-wrap:anywhere}.video-card .video-load{min-height:40px;margin-top:8px}
 .attachment-info{flex-wrap:wrap}.attachment-info[hidden]{display:none}.attachment-local-preview{order:-1;flex-basis:100%;min-width:0;padding-top:6px}.attachment-local-preview[hidden]{display:none}
 .attachment-local-preview img,.attachment-local-preview video{display:block;max-width:100%;max-height:150px;border-radius:8px;background:#07130e;object-fit:contain}.attachment-local-preview video{width:260px;aspect-ratio:16/9}
+.message.sticker-message,.message.sticker-message.mine{min-width:0;background:transparent;border:0;box-shadow:none}
+.sticker-card{width:112px;max-width:100%}
+.sticker-card .attachment-preview-button{min-height:36px;padding:5px;font-size:11px}
+.sticker-card .attachment-preview-button[hidden]{display:none}
+.message img.sticker-preview,.attachment-local-preview img.sticker-preview{max-width:min(112px,100%);max-height:112px;background:transparent;border-radius:0;object-fit:contain}
 dialog.media-viewer{width:min(1200px,calc(100vw - 32px));height:calc(100dvh - 48px);max-height:calc(100dvh - 24px);padding:0;overflow:hidden;background:#0c1712}
 .media-viewer[open]{display:flex;flex-direction:column}.viewer-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 18px;border-bottom:1px solid #294537;flex-shrink:0}
 .viewer-heading h2{font-size:15px;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.viewer-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.viewer-actions .button{font-size:12px;min-height:34px;text-decoration:none}.viewer-actions form{display:flex}
@@ -124,3 +129,8 @@ dialog.media-viewer{width:min(1200px,calc(100vw - 32px));height:calc(100dvh - 48
 .voice-recorder .voice-send[hidden]{display:none}
 .voice-recorder #voice-preview{flex:1 1 220px;min-width:0;max-width:100%}
 @media(max-width:640px){.voice-recorder .voice-send{flex:1 1 100%;min-height:44px}}
+.view-once-toggle,.view-once-badge{display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:2px dotted currentColor;border-radius:50%;background:transparent;color:#a8babf;font-size:14px;font-weight:700;line-height:1;flex:none}
+.view-once-toggle[hidden]{display:none}
+.view-once-toggle[aria-pressed="true"]{border-style:solid;border-color:var(--green);background:var(--green);color:#033d2b}
+.view-once-badge{width:19px;height:19px;margin-right:6px;font-size:11px}
+#voice-send-text[hidden]{display:none}

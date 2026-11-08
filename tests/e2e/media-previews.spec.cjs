@@ -7,7 +7,7 @@ const videoFile=path.join(__dirname,'..','fixtures','demo.mp4');
 // Browser and public assets are real; API fixtures keep media UI checks independent
 // of connector/database state and Windows loopback connection failures.
 const test=base.extend({demo:async({page},use)=>{
-  const fixture={base:'http://127.0.0.1:8899',videoThumbnail:null,imageBase64:png,failImageOnce:false,imageAttempts:0};
+  const fixture={base:'http://127.0.0.1:8899',videoThumbnail:null,imageBase64:png,stickerBase64:null,failImageOnce:false,imageAttempts:0};
   const jids=['5511000000000@s.whatsapp.net','5511000000001@s.whatsapp.net'];
   const message=(id,jid,type,text)=>({id,jid,type,text,fromMe:false,timestamp:Date.now(),status:'READ',key:{id,remoteJid:jid,fromMe:false},canForward:true});
   const history=[message('demo-image',jids[0],'image','Imagem recebida'),{...message('demo-video',jids[0],'video','Vídeo recebido'),fileName:'product-demo.mp4'},message('hello',jids[1],'text','Outra conversa')];
@@ -24,9 +24,13 @@ const test=base.extend({demo:async({page},use)=>{
     else if(pathname==='/api/contact') result={status:'open',labels:[],notes:[]};
     else if(pathname==='/api/avatar') result={url:null};
     else if(pathname==='/api/transcriptions') result=[];
-    else if(pathname==='/api/messages') result={messages:history.filter(item=>item.jid===url.searchParams.get('jid')).map(item=>item.type==='video' && fixture.videoThumbnail?{...item,jpegThumbnail:fixture.videoThumbnail,durationSeconds:3}:item),page:1,pages:1};
+    else if(pathname==='/api/messages') {
+      const rows=fixture.stickerBase64?[...history,message('sticker-in',jids[0],'sticker',''),{...message('sticker-out',jids[0],'sticker',''),fromMe:true}]:history;
+      result={messages:rows.filter(item=>item.jid===url.searchParams.get('jid')).map(item=>item.type==='video' && fixture.videoThumbnail?{...item,jpegThumbnail:fixture.videoThumbnail,durationSeconds:3}:item),page:1,pages:1};
+    }
     else if(pathname==='/api/media') {
       if(url.searchParams.get('id')==='demo-image') {if(++fixture.imageAttempts===1 && fixture.failImageOnce) return route.fulfill({status:503,json:{error:'Mídia indisponível'}});result={base64:fixture.imageBase64,mimeType:fixture.imageBase64===png?'image/png':'image/jpeg',fileName:'foto'};}
+      else if(url.searchParams.get('id')?.startsWith('sticker-')) result={base64:fixture.stickerBase64,mimeType:'image/webp',fileName:'figurinha.webp'};
       else result={base64:(await fs.readFile(videoFile)).toString('base64'),mimeType:'video/mp4',fileName:'demo.mp4'};
     }
     else if(pathname==='/api/send-media') {const input=request.postDataJSON();result=message('sent-'+history.length,input.jid,input.mediaType,input.caption);history.push(result);}
@@ -54,6 +58,29 @@ async function watchUrls(page) {
     URL.revokeObjectURL=url=>{window.__revokedMediaUrls.push(url);revoke(url);};
   });
 }
+
+test('sent and received stickers appear inline at a compact size',async({page,demo})=>{
+  demo.stickerBase64=await page.evaluate(()=>{
+    const canvas=document.createElement('canvas');canvas.width=512;canvas.height=320;
+    const paint=canvas.getContext('2d');paint.fillStyle='#46bc88';paint.fillRect(80,40,350,240);
+    return canvas.toDataURL('image/webp').split(',')[1];
+  });
+  await ready(page,demo);
+  for(const id of ['sticker-in','sticker-out']) {
+    const sticker=page.locator(`[data-id="${id}"] img`);
+    await expect(sticker).toBeVisible({timeout:3000});
+    await expect.poll(()=>sticker.evaluate(image=>image.naturalWidth)).toBe(512);
+    const {width,height}=await sticker.boundingBox();
+    expect(width).toBeLessThanOrEqual(112);expect(height).toBeLessThanOrEqual(112);
+    expect(width/height).toBeCloseTo(512/320,1);
+  }
+  await page.locator('#sticker-file').setInputFiles({name:'figurinha.webp',mimeType:'image/webp',buffer:Buffer.from(demo.stickerBase64,'base64')});
+  const draft=page.locator('#attachment-preview img');
+  await expect(draft).toBeVisible();
+  await expect.poll(()=>draft.evaluate(image=>image.naturalWidth)).toBe(512);
+  const {width,height}=await draft.boundingBox();
+  expect(width).toBeLessThanOrEqual(112);expect(height).toBeLessThanOrEqual(112);
+});
 
 test('received image is visible immediately and video poster loads without downloading the video',async({page,demo})=>{
   const errors=[],mediaRequests=[];page.on('pageerror',error=>errors.push(error.message));

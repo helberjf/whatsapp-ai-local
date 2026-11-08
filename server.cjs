@@ -21,7 +21,7 @@ const {createTriggerService}=require('./lib/triggers.cjs');
 const {createLocalAi}=require('./lib/local-ai.cjs');
 const {createSpeechEngines}=require('./lib/speech.cjs');
 const {createVoiceFlow}=require('./lib/voice-flow.cjs');
-const {createMessagingRoutes}=require('./lib/messaging-routes.cjs');
+const {createMessagingRoutes,optionalSendFlag}=require('./lib/messaging-routes.cjs');
 const {pruneState}=require('./lib/housekeeping.cjs');
 const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
 const {createChatDelta}=require('./lib/chat-delta.cjs');
@@ -37,12 +37,15 @@ const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const normalizeText=text=>String(text).normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
 // Arquivada: vale o registro mais recente entre o WhatsApp (extensão local) e o que foi feito pela central.
 // Com "Manter conversas arquivadas" desligado no WhatsApp, uma mensagem depois de arquivar tira a conversa das arquivadas.
-function archivedOf(chat,contact,remote) {
-  const reported=[chat.jid,...(chat.aliasJids || [])].map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
-  const local=Date.parse(contact?.archivedAt || '') || 0;
-  const fromWhatsApp=Boolean(reported && reported.updatedAt>=local);
-  const archived=fromWhatsApp?reported.archived:contact?.archived===true;
-  const since=fromWhatsApp?reported.lastMessageAt || reported.updatedAt:local;
+function archivedOf(chat,contacts,remote) {
+  const ids=[chat.jid,...(chat.aliasJids || [])];
+  const reported=ids.map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  const local=ids.map(id=>contacts?.[id]).filter(contact=>typeof contact?.archived==='boolean')
+    .map(contact=>({archived:contact.archived,updatedAt:Date.parse(contact.archivedAt || '') || 0}))
+    .sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  const fromWhatsApp=Boolean(reported && reported.updatedAt>=(local?.updatedAt || 0));
+  const archived=fromWhatsApp?reported.archived:local?.archived===true;
+  const since=fromWhatsApp?reported.lastMessageAt || reported.updatedAt:local?.updatedAt;
   if(archived && remote?.meta?.unarchiveChats===true && since>0 && Number(chat.lastMessage?.timestamp || 0)>since+1000) return false;
   return archived;
 }
@@ -129,7 +132,7 @@ function createWhatsAppServer(options={}) {
       requests.set(id,{hash,promise});if(requests.size>1000) requests.delete(requests.keys().next().value);
       return promise;
     }
-    const messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,now});
+    const messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,transcriptions,now});
     const housekeeping=()=>store.update(data=>pruneState(data,now()));
     let replyTick=null,lastPoll=0,pollAgain=false,eventTimer=null,stopped=false;
     const audioCursors=new Map(),audioStartedAt=Date.now();
@@ -264,7 +267,7 @@ function createWhatsAppServer(options={}) {
         const result=await client.archiveSnapshot();client.invalidateChats();
         // Quantas aparecem de fato na lista: ajuda a explicar quando o WhatsApp tem mais arquivadas do que a central consegue casar.
         const [data,remote,list]=await Promise.all([store.read(),client.archivedState({maxAge:0}).catch(()=>null),client.chats()]);
-        const shown=list.filter(chat=>archivedOf(chat,data.contacts?.[chat.jid],remote)).length;
+        const shown=mergeAliasChats(list,data.contacts).filter(chat=>archivedOf(chat,data.contacts,remote)).length;
         return json(res,200,{...result,shown,unarchiveChats:remote?.meta?.unarchiveChats ?? null});
       }
       if(req.method==='GET' && route==='/api/chats') {
@@ -274,7 +277,7 @@ function createWhatsAppServer(options={}) {
         // readState: a última mensagem já lida pela central zera o contador, mesmo antes de o WhatsApp confirmar a leitura.
         const chats=mergeAliasChats(await client.chats(),data.contacts,waiting).map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage,since=chat.waitingSince ?? waiting[chat.jid]?.since;
           const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
-          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,contact,archived),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
+          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,data.contacts,archived),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
@@ -339,8 +342,9 @@ function createWhatsAppServer(options={}) {
         const input=await readBody(req),jid=assertJid(input.jid);
         if(!['image','video','audio','document'].includes(input.mediaType) || typeof input.base64!=='string' || (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64) || input.base64.length%4!==0) || !input.base64 || Buffer.byteLength(input.base64,'base64')>10*1024*1024) throw new ApiError('Anexo inválido. Envie um arquivo de até 10 MB.',422);
         textField(input.fileName,200,'Nome do arquivo');if(typeof input.mimeType!=='string' || !/^[\w.+-]+\/[\w.+-]+$/.test(input.mimeType) || (input.caption!==undefined && (typeof input.caption!=='string' || input.caption.length>4000))) throw new ApiError('Tipo ou legenda do arquivo inválido.',422);
-        const quotedId=quoteId(input.quotedId);
-        return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,{...input,quotedId})));
+        const quotedId=quoteId(input.quotedId),viewOnce=optionalSendFlag(input.viewOnce);
+        if(viewOnce && !['image','video','audio'].includes(input.mediaType)) throw new ApiError('A visualização única é uma opção para áudio, foto ou vídeo.',422);
+        return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,{...input,quotedId,viewOnce})));
       }
       if(req.method==='GET' && route==='/api/media') {
         const jid=assertJid(url.searchParams.get('jid')),id=textField(url.searchParams.get('id'),200,'Mensagem');
@@ -392,6 +396,6 @@ if(require.main===module) {
       console.log(`Whats AI · ${url}\nSessão preservada no Docker. Não remova os volumes.`);
       if(!process.argv.includes('--no-open')) execFile('powershell.exe',['-NoProfile','-Command',`Start-Process '${url}'`],{windowsHide:true},()=>{});
     }catch(error) {await reserved.close();if(persistence) await persistence.close();throw error;}
-  })().catch(error=>{console.error(error.code==='ENOENT'?'Abra Iniciar WhatsApp.cmd para configurar o conector.':error.code==='EADDRINUSE'?'A central já está aberta na porta 8766. Feche a versão anterior antes de migrar; nenhum dado foi importado.':error.message);process.exitCode=1;});
+  })().catch(error=>{console.error(error.code==='ENOENT'?'Abra Iniciar WhatsApp Local.cmd para configurar o conector.':error.code==='EADDRINUSE'?'A central já está aberta na porta 8766. Feche a versão anterior antes de migrar; nenhum dado foi importado.':error.message);process.exitCode=1;});
 }
 module.exports={createWhatsAppServer};

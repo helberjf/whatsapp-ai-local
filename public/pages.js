@@ -579,7 +579,7 @@
   }));
 
   // Classificação na página Contatos: um contato por vez ou todos os listados.
-  async function setMode(chat,mode) {const detail=await api('/contact?jid='+encodeURIComponent(chat.jid),'PATCH',{aiMode:mode});Object.assign(chat,detail);}
+  async function setMode(chat,mode) {const detail=await api('/contact?jid='+encodeURIComponent(chat.jid),'PATCH',{aiMode:mode});Object.assign(chat,detail,{archived:chat.archived});}
   $('contacts-bulk-apply').addEventListener('click',guard(async()=>{
     const mode=$('contacts-bulk').value,list=listedContacts();
     if(!mode) {notice('Escolha o modo de IA para aplicar.');return;}
