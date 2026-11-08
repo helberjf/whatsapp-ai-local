@@ -10,6 +10,11 @@ test('opening an unread conversation stays read after refresh',async({page})=>{
   await page.locator('.chat-item').filter({hasText:'Sam Rivera'}).click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);
   await page.locator('#refresh-top').click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);
 });
+test('reply menu quotes the selected message and sends its identifier',async({page})=>{
+  await openChat(page);const message=page.locator('.message').filter({hasText:'Maneiro'});await message.locator('.message-menu-toggle').click();await message.getByRole('button',{name:'Responder',exact:true}).click();
+  await expect(page.locator('#reply-bar')).toContainText('Maneiro');await page.screenshot({path:path.join(__dirname,'..','..','data','reply-preview.png')});await page.locator('#message-text').fill('Respondendo a esta mensagem');
+  const request=page.waitForRequest(req=>req.url().endsWith('/api/send') && req.method()==='POST');await page.locator('#send').click();expect((await request).postDataJSON().quotedId).toBe('demo-short');await expect(page.locator('#reply-bar')).toBeHidden();await expect(page.locator('.message.mine .message-quote')).toContainText('Maneiro');
+});
 test.beforeEach(async({page,demo})=>{const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item'),()=>JSON.stringify(errors)).toHaveCount(10);expect(errors).toEqual([]);});
 
 for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {
@@ -104,6 +109,13 @@ test('one attachment button handles files and Enter sends while Shift+Enter adds
 });
 test('video action starts playback after an explicit click',async({page})=>{
   await openChat(page);await page.getByRole('button',{name:'Reproduzir vídeo',exact:true}).click();await expect.poll(()=>page.locator('video').evaluate(node=>node.currentTime)).toBeGreaterThan(.1);await expect.poll(()=>page.locator('video').evaluate(node=>node.error?.code || null)).toBe(null);
+});
+test('automatic Whisper transcript appears under audio and survives page reload without duplication',async({page})=>{
+  const auto=await createDemo({port:0,autoTranscription:true});
+  try {await page.goto(auto.base);await openChat(page);await expect(page.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração',{timeout:10000});
+    await page.reload();await openChat(page);await expect(page.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração');
+    expect((await auto.server.transcriptions.list('5511000000000@s.whatsapp.net')).length).toBe(1);
+  } finally {await auto.close();}
 });
 test('manual AI suggestion uses both sides even after the operator sends the latest message',async({page,demo})=>{
   await openChat(page);await page.locator('#message-text').fill('Qual data você prefere?');await page.locator('#message-text').press('Enter');await expect(page.locator('#message-text')).toHaveValue('');await expect(page.locator('#send')).toBeEnabled();await page.locator('#ai-suggest').click();await expect(page.locator('#message-text')).toHaveValue(/Studio Headphones/);

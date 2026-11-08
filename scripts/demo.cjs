@@ -5,7 +5,7 @@ const os=require('node:os');
 const {createWhatsAppServer}=require('../server.cjs');
 const {createStore}=require('../lib/store.cjs');
 
-async function createDemo({port=8876}={}) {
+async function createDemo({port=8876,autoTranscription=false}={}) {
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-central-demo-'));
   const names=['Alex Morgan','Sam Rivera','Taylor Chen','Jordan Lee','Casey Silva','Robin Santos','Jamie Costa','Drew Lima','Avery Rocha','Riley Alves'];
   const jids=names.map((_,i)=>`55110000000${String(i).padStart(2,'0')}@s.whatsapp.net`);
@@ -88,7 +88,7 @@ async function createDemo({port=8876}={}) {
   const aiCalls=[];
   // Voz fictícia: um tom curto no lugar da fala, sem Windows nem OpenAI.
   const speech={windowsAvailable:true,voices:async()=>[{name:'Demo Voice',culture:'pt-BR',gender:'Female'}],synthesize:async()=>({base64:wave().toString('base64'),mimeType:'audio/wav',bytes:96044,provider:'windows'})};
-  const server=createWhatsAppServer({demo:true,storeDir:directory,credentials,localAi,speech,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{
+  const server=createWhatsAppServer({demo:true,autoTranscription,transcriptionEngines:{whisperEngine:async()=>({text:"Transcrição automática de demonstração"})},storeDir:directory,credentials,localAi,speech,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{
     const body=JSON.parse(options.body);
     if(url.endsWith('/api/embed')) return new Response(JSON.stringify({embeddings:body.input.map(demoVector)}));
     aiCalls.push(body);

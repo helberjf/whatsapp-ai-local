@@ -4,7 +4,7 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const readline=require('node:readline/promises');
 const {spawn}=require('node:child_process');
-const {PROVIDERS}=require('../lib/ai.cjs');
+const {EMBEDDINGS}=require('../lib/ai.cjs');
 const rag=require('./rag-lib.cjs');
 
 const OLLAMA='http://127.0.0.1:11434';
@@ -27,13 +27,13 @@ async function confirm(prompts,question,fallback) {
   if(!prompts) return fallback;
   return /^s(im)?$/i.test((await prompts.question(question+' [s/N] ')).trim());
 }
-// Descobre qual modelo de embeddings a central vai usar e, se for o Ollama local, confere se ele está instalado.
-async function checkModel(options,prompts) {
-  const config=JSON.parse(await fs.readFile(path.join(options.dados,'ai.json'),'utf8').catch(()=>'{}'));
-  if(!config.provider) {console.log('\nIA ainda não configurada. Abra a central em Assistente de IA e escolha Ollama (local) para buscar por significado sem enviar dados para fora. Até lá, a busca usa palavras-chave.');return;}
-  const model=config.embeddingModel || PROVIDERS[config.provider]?.embedding;
-  if(!model || model==='off') {console.log('\nModelo de embeddings desligado: a busca usa só palavras-chave.');return;}
-  if(!['ollama','anthropic'].includes(config.provider)) {console.log(`\nEmbeddings: ${model} pelo provedor ${PROVIDERS[config.provider]?.label || config.provider}. Os textos da base serão enviados a ele na indexação.`);return;}
+// Descobre, pela própria central, qual modelo de embeddings ela vai usar e, se for o Ollama local, confere se ele está instalado.
+async function checkModel(connection,options,prompts) {
+  const config=await connection.aiConfig();
+  if(!config.configured) {console.log('\nIA ainda não configurada. Abra a central em Assistente de IA e escolha Ollama (local) para buscar por significado sem enviar dados para fora. Até lá, a busca usa palavras-chave.');return;}
+  const model=config.embeddingModel || EMBEDDINGS[config.provider];
+  if(!model || model==='off') {console.log('\nSem modelo de embeddings para este provedor: a busca usa só palavras-chave. Informe um em Assistente de IA → Modelo de embeddings.');return;}
+  if(!['ollama','anthropic'].includes(config.provider)) {console.log(`\nEmbeddings: ${model} pelo provedor ${config.providers?.[config.provider]?.label || config.provider}. Os textos da base serão enviados a ele na indexação.`);return;}
   let tags;try {tags=await (await fetch(OLLAMA+'/api/tags',{signal:AbortSignal.timeout(3000)})).json();} catch {console.log('\nO Ollama não respondeu em '+OLLAMA+'. Abra o Ollama e rode este assistente de novo para ativar a busca por significado.');return;}
   if((tags.models || []).some(item=>item.name===model || item.name===model+':latest')) {console.log(`\nModelo de embeddings ${model} instalado no Ollama.`);return;}
   if(options['sem-modelo'] || !(options['baixar-modelo'] || await confirm(prompts,`\nO modelo ${model} não está no Ollama. Baixar agora (cerca de 1,2 GB para o bge-m3)?`,false))) {console.log(`Sem o modelo, a busca usa só palavras-chave. Para instalar depois: ollama pull ${model}`);return;}
@@ -55,9 +55,9 @@ async function main() {
     if(!await exists(questions)) {await fs.writeFile(questions,'# Uma pergunta por linha, do jeito que o cliente escreveria.\n'+rag.TEMPLATES[answers.tipo].questions.join('\n')+'\n');console.log(`Perguntas de teste salvas em ${questions}`);}
     const others=(await fs.readdir(options.pasta)).filter(name=>/\.(md|txt|csv|json|docx|pdf)$/i.test(name) && name!==rag.PROFILE_FILE);
     if(others.length) console.log(`A pasta também tem ${others.length} outro(s) arquivo(s), que continuam na base: ${others.join(', ')}`);
-    await checkModel(options,prompts);
     const connection=await rag.connect(options);
     try {
+      await checkModel(connection,options,prompts);
       console.log(connection.mode==='app'?'\nCentral aberta: sincronizando pela central…':'\nCentral fechada: preparando a base direto na pasta de dados…');
       const synced=await connection.sync();
       console.log('Pasta sincronizada.'+(synced.failed?.length?' Falhas: '+synced.failed.join(' · '):''));

@@ -67,6 +67,8 @@ function createWhatsAppServer(options={}) {
   // Base de conhecimento, produtos, provedor de IA e voz são compartilhados; as regras do robô vêm da conta do pedido.
   const extra=createKnowledgeRoutes(dataDir,options.aiFetch,{...(options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json')}),credentials,storeFactory,...(options.persistence?{blobFactory:options.persistence.blobs}:{})});
   const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
+  // Transcrição de todo áudio recebido (Whisper local): sempre na central real; nos testes só quando options.autoTranscription for informado.
+  const autoTranscription=options.autoTranscription ?? !options.storeDir;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   // Cada conta tem conector, dados de atendimento, robôs, fila de equipe e eventos próprios: conversas, regras e envios nunca se misturam.
   function createAccountRuntime(account) {
@@ -110,11 +112,23 @@ function createWhatsAppServer(options={}) {
     const messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,now});
     const housekeeping=()=>store.update(data=>pruneState(data,now()));
     let replyTick=null,lastPoll=0,pollAgain=false,eventTimer=null,stopped=false;
+    const audioCursors=new Map(),audioStartedAt=Date.now();
+    async function pollAudio() {
+      for(const chat of await client.chats()) {
+        const last=chat.lastMessage;if(!last) continue;
+        const cursor=last.id || String(last.timestamp),known=audioCursors.has(chat.jid);
+        if(audioCursors.get(chat.jid)===cursor) continue;
+        // Read the recent page when a chat changes: a later text must not hide a preceding voice message.
+        if(known || last.timestamp>=audioStartedAt) await transcriptions.discover(chat.jid,(await client.messages(chat.jid,1)).messages);
+        else if(last.type==='audio') await transcriptions.discover(chat.jid,[last]);
+        audioCursors.set(chat.jid,cursor);
+      }
+    }
     const pollReplies=()=>{
       if(stopped) return Promise.resolve();
       if(replyTick) {pollAgain=true;return replyTick;}
       lastPoll=Date.now();
-      replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
+      replyTick=(async()=>{if(autoTranscription) await pollAudio().catch(()=>{});await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
       return replyTick;
     };
     // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
@@ -131,7 +145,8 @@ function createWhatsAppServer(options={}) {
       }
     };
     const stop=()=>{stopped=true;clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();};
-    const idle=()=>Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle()]);
+    // Ao fechar, espera o ciclo em andamento e as transcrições: nada grava depois que o PostgreSQL fecha.
+    const idle=async()=>{if(replyTick) await replyTick;await Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),transcriptions.idle()]);};
     return {account,client,store,rules,transcriptions,voice,assistant,avatars,crm,automation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
   }
   const runtimes=new Map(accounts.list().map(account=>[account.id,createAccountRuntime(account)]));
@@ -230,9 +245,10 @@ function createWhatsAppServer(options={}) {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
         if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
-        // O conector não zera o contador ao ler pela central: o que já foi lido aqui continua lido.
-        const readHere=(contact,last)=>Boolean(last && contact?.readState && (contact.readState.lastSeenId===last.id || contact.readState.messageIds?.includes(last.id)));
-        const chats=(await client.chats()).map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],...(readHere(data.contacts[chat.jid],chat.lastMessage)?{unread:0}:{}),archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
+        // readState: a última mensagem já lida pela central zera o contador, mesmo antes de o WhatsApp confirmar a leitura.
+        const chats=(await client.chats()).map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage;
+          const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
+          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,contact,archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{}),...(read?{unread:0}:{})};});
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
@@ -253,7 +269,9 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/messages') {
         const jid=assertJid(url.searchParams.get('jid')),page=Number(url.searchParams.get('page') || 1);
         if(!Number.isSafeInteger(page) || page<1 || page>100000) throw new ApiError('Página inválida.',422);
-        return json(res,200,await client.messages(jid,page));
+        const result=await client.messages(jid,page);
+        if(autoTranscription) await transcriptions.discover(jid,result.messages).catch(()=>{});
+        return json(res,200,result);
       }
       if(route==='/api/contact' && ['GET','PATCH'].includes(req.method)) {
         const jid=assertJid(url.searchParams.get('jid'));
@@ -326,7 +344,7 @@ function createWhatsAppServer(options={}) {
   };
   server.on('listening',startWorkers);if(server.listening) queueMicrotask(startWorkers);
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.ready(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {

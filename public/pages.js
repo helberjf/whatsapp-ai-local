@@ -42,7 +42,9 @@
   }
   async function refreshKb() {const result=await api('/kb');docs=result.documents;renderKb();renderCounters();renderSearchMode(result.search);renderReliability(result.reliability);}
   async function refreshProducts() {products=(await api('/products')).products;renderProducts();renderPanelProducts();renderCounters();}
-  async function refreshAi() {ai=await api('/ai');renderAi();renderCounters();}
+  // Uma atualização que chega depois de o usuário mexer no formulário não desfaz a escolha dele.
+  let aiEdits=0;
+  async function refreshAi() {const edits=aiEdits,result=await api('/ai');ai=result;if(edits===aiEdits) renderAi();else syncProviderHints();renderCounters();}
 
   // ---------- Base de conhecimento ----------
   function renderKb() {
@@ -412,6 +414,7 @@
     renderModelOptions(modelCatalogs.get(modelCatalogKey()) || item.models,$('ai-provider').value===ai.provider?ai.model || item.model:item.model);syncProviderHints();showModelHint();
   });
   const aiPayload=()=>({provider:$('ai-provider').value,model:$('ai-model').value,embeddingModel:$('ai-embedding').value,baseUrl:$('ai-base').value,...($('ai-key').value.trim()?{apiKey:$('ai-key').value.trim()}:{})});
+  for(const type of ['input','change']) $('ai-form').addEventListener(type,()=>{aiEdits++;});
   $('ai-form').addEventListener('submit',async event=>{
     event.preventDefault();$('ai-status').textContent='';
     try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();$('ai-status').textContent=ai.hasKey?'Configuração salva. Chave criptografada no banco local.':'Configuração salva.';}

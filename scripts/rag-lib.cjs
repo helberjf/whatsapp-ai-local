@@ -58,16 +58,20 @@ async function connect({dados=DEFAULTS.dados,pasta=DEFAULTS.pasta,catalogo=DEFAU
     };
     return {
       mode:'app',
+      aiConfig:()=>call('/api/ai'),
       sync:()=>call('/api/kb/sync','POST',{}),
       async status() {for(let attempt=0;attempt<600;attempt++) {const {search}=await call('/api/kb');if(!search.indexing) return search;await new Promise(resolve=>setTimeout(resolve,1000));}return (await call('/api/kb')).search;},
       search:async(query,reliability)=>(await call('/api/kb/search','POST',{query,...(reliability?{reliability}:{})})).results,
       close:async()=>{}
     };
   }
+  // Com PostgreSQL (data/database.json), os arquivos da pasta de dados são só a origem da migração: gravar neles enganaria a central.
+  if(await fs.access(path.join(dados,'database.json')).then(()=>true,()=>false)) throw new Error('Esta central guarda os dados no PostgreSQL. Abra a central (Iniciar WhatsApp) e rode o comando de novo: ele usa a API local dela.');
   const knowledge=createKnowledgeRoutes(dados,globalThis.fetch,{knowledgeDir:pasta,catalogFile:catalogo}),{services}=knowledge;
   await services.ready();
   return {
     mode:'offline',
+    aiConfig:()=>services.ai.config(),
     async sync() {return (await knowledge({method:'POST'},'/api/kb/sync',new URL('http://local/api/kb/sync'),async()=>({}))).body;},
     async status() {services.embeddings.refresh();await services.embeddings.idle();return services.embeddings.status();},
     search:(query,reliability)=>services.embeddings.search(query,{reliability}),

@@ -190,7 +190,7 @@
   }
   async function pollTranscriptions() {
     const jid=selected?.jid,version=selection;
-    if(!jid || document.visibilityState==='hidden' || ![...(transcriptionJobs.get(jid)?.values() || [])].some(pendingTranscription)) return;
+    if(!jid || document.visibilityState==='hidden' || !messages.some(message=>message.type==='audio' && !message.deleted)) return;
     try {await loadTranscriptions(jid,version);}catch(error) {if(selected?.jid===jid && selection===version) notice('Não foi possível atualizar as transcrições: '+error.message);}
   }
   const audioTime=value=>Number.isFinite(value) && value>=0?Math.floor(value/60)+':'+String(Math.floor(value%60)).padStart(2,'0'):'--:--';
