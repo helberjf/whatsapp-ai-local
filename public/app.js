@@ -7,27 +7,32 @@
       const health=await fetch('/health',{cache:'no-store'}).then(response=>response.json());
       if(health?.service!=='whatsapp-local' || (health.build && !health.stale) || $('update-banner')) return;
       const banner=document.createElement('div');banner.id='update-banner';banner.className='update-banner';banner.setAttribute('role','alert');
-      banner.textContent='A central aberta é de uma versão anterior à atualização baixada, por isso partes da tela podem falhar. Feche esta aba e abra “Abrir WhatsApp” de novo: ele reinicia a central com a versão nova.';
+      banner.textContent='A central aberta é de uma versão anterior à atualização baixada, por isso partes da tela podem falhar. Abra “Iniciar WhatsApp Local.cmd” para reiniciar com a versão nova.';
       document.body.prepend(banner);
     } catch {}
   }
   checkCentralVersion();document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible') checkCentralVersion();});
-  let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
+  let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,submitQueued=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
   const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
   let virtualRows=null,rowHeight=0,chatsVersion=null;
-  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
+  const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),mediaRequests=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
+  const mediaControllers=new Map(),previewViews=new Map(),previewTargets=new WeakMap(),mediaLocks=new Set();
+  const MEDIA_CACHE_ENTRIES=24,MEDIA_CACHE_BYTES=32*1024*1024;
+  let mediaGeneration=0,previewActive=0,previewQueue=[],viewerMediaKey=null,focusedMediaKey=null;
+  const previewObserver=globalThis.IntersectionObserver?new IntersectionObserver(entries=>{for(const entry of entries) {const view=previewTargets.get(entry.target);if(!view) continue;const entered=!view.visible;view.visible=entry.isIntersecting;if(entered && view.visible && !view.hasImage) queuePreview(view);}},{root:$('messages'),rootMargin:'160px'}):null;
   const runHooks=(name,...args)=>{for(const hook of hooks[name]) try {hook(...args);}catch {}};
   const transcriptionJobs=new Map(),transcriptionChoices=new Map(),transcriptionViews=new Map(),transcriptionErrors=new Map(),transcriptionRequests=new Set(),transcriptionLoads=new Set();
   let transcriptionSettings=null,transcriptionSettingsLoading=null;
   let historyQueue=Promise.resolve(),syncTask=Promise.resolve(),namesSyncing=false,forwardState=null,deleteState=null,attachmentKind=null,attachmentSelectionKind=null,activeMessageMenu=null;
+  let transcriptRequest=null;
   const statuses={open:'Em aberto',pending:'Pendente',closed:'Concluído'};
   const time=value=>value?new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';
   const dateTime=value=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
   const initials=name=>String(name || '?').split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase();
   const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
   function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
-  async function api(route,method='GET',input,timeout=30000) {
-    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:AbortSignal.timeout(timeout)});
+  async function api(route,method='GET',input,timeout=30000,signal) {
+    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:signal || AbortSignal.timeout(timeout)});
     const result=await response.json();if(!response.ok) throw new Error(result.error || 'Não foi possível completar a operação.');return result;
   }
   function notice(message,success=false) {$('notice').textContent=message;$('notice').classList.toggle('success',success);$('notice').hidden=!message;}
@@ -40,7 +45,7 @@
     $('connection-badge').textContent=online?'Conectado':value.state==='connecting'?'Aguardando leitura':value.reachable?'Pronto para conectar':'Conector indisponível';
     $('connection-badge').classList.toggle('connected',online);
     $('connection-title').textContent=online?'Seu WhatsApp está conectado':value.reachable?'Conecte sua conta':'Inicie o conector local';
-    $('connection-description').textContent=online?`Conta ${value.phone?'+'+value.phone:'conectada'} · sessão salva neste computador.`:value.reachable?'Abra o QR Code aqui e faça a leitura pelo celular.':'Abra Iniciar WhatsApp.cmd e aguarde o Docker ficar pronto.';
+    $('connection-description').textContent=online?`Conta ${value.phone?'+'+value.phone:'conectada'} · sessão salva neste computador.`:value.reachable?'Abra o QR Code aqui e faça a leitura pelo celular.':'Abra Iniciar WhatsApp Local.cmd e aguarde o Docker ficar pronto.';
     $('connect').hidden=online;$('connect').disabled=!value.reachable || qrBusy;$('disconnect').hidden=!online;
     $('new-chat').disabled=!online;$('send').disabled=!online || sending;
     for(const id of ['sync-contact-names','panel-sync-contact-names']) $(id).disabled=!online || namesSyncing;
@@ -51,9 +56,9 @@
     const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
     const matching=chats.filter(chat=>(!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
     const filtered=extras()?.arrangeChats?.(matching) || matching;
-    const unreadCount=chats.filter(unreadChat).length,pendingCount=chats.filter(chat=>chat.status==='pending').length;
-    $('metric-total').textContent=chats.length;$('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=chats.filter(chat=>chat.status==='closed').length;$('chat-count').textContent=filtered.length;
-    $('filter-total-count').textContent=chats.length;$('nav-chat-count').textContent=chats.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
+    const active=chats.filter(chat=>chat.archived!==true),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
+    $('metric-total').textContent=active.length;$('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=active.filter(chat=>chat.status==='closed').length;$('chat-count').textContent=filtered.length;
+    $('filter-total-count').textContent=active.length;$('nav-chat-count').textContent=active.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
     $('filter-all').classList.toggle('active',!status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
     $('filter-all').setAttribute('aria-pressed',String(!status && !$('unread-only').checked));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
     // Listas grandes: só as linhas visíveis vão para a página (o restante vira espaço reservado).
@@ -186,7 +191,7 @@
   }
   async function pollTranscriptions() {
     const jid=selected?.jid,version=selection;
-    if(!jid || document.visibilityState==='hidden' || ![...(transcriptionJobs.get(jid)?.values() || [])].some(pendingTranscription)) return;
+    if(!jid || document.visibilityState==='hidden' || !messages.some(message=>message.type==='audio' && !message.deleted)) return;
     try {await loadTranscriptions(jid,version);}catch(error) {if(selected?.jid===jid && selection===version) notice('Não foi possível atualizar as transcrições: '+error.message);}
   }
   const audioTime=value=>Number.isFinite(value) && value>=0?Math.floor(value/60)+':'+String(Math.floor(value%60)).padStart(2,'0'):'--:--';
@@ -204,10 +209,10 @@
     speed.addEventListener('change',()=>{player.playbackRate=Number(speed.value);});
     player.addEventListener('error',()=>{status.textContent='Não foi possível reproduzir este formato de áudio. Tente carregar novamente.';status.hidden=false;load.hidden=false;load.disabled=false;load.textContent='↻ Carregar novamente';});
     load.addEventListener('click',async()=>{
-      if(view.loading) return;view.loading=true;load.disabled=true;load.textContent='Carregando áudio…';status.hidden=true;
+      if(view.loading) return;focusedMediaKey=key;view.loading=true;load.disabled=true;load.textContent='Carregando áudio…';status.hidden=true;
       try {const media=await fetchMedia(message,jid);player.src=media.url;player.hidden=false;speed.disabled=false;load.hidden=true;load.textContent='▶ Carregar áudio';}
       catch(error) {status.textContent=error.message;status.hidden=false;load.textContent='↻ Tentar carregar áudio';}
-      finally {view.loading=false;load.disabled=false;}
+      finally {view.loading=false;load.disabled=false;trimMediaCache();}
     });
     const label=el('div','media-card-label','Mensagem de voz'),wave=el('div','audio-wave');wave.setAttribute('aria-hidden','true');
     for(let index=0;index<32;index++) wave.append(el('i'));
@@ -216,20 +221,22 @@
   function videoCard(message,jid) {
     const key=jid+'|'+message.id;if(videoViews.has(key)) return videoViews.get(key).card;
     const card=el('section','video-card'),label=el('div','media-card-label','Vídeo'),load=el('button','video-load','▶ Reproduzir vídeo'),player=el('video','video-player'),status=el('p','media-status');
-    card.setAttribute('aria-label','Mensagem de vídeo');load.type='button';load.setAttribute('aria-label','Reproduzir vídeo');player.controls=true;player.preload='metadata';player.playsInline=true;player.hidden=true;player.setAttribute('aria-label','Player de vídeo');status.hidden=true;status.setAttribute('role','status');
-    const view={card,player,loading:false};videoViews.set(key,view);
-    load.addEventListener('click',async()=>{if(view.loading) return;const version=selection;view.loading=true;load.disabled=true;load.textContent='Carregando vídeo…';status.hidden=true;
-      try {const media=await fetchMedia(message,jid);player.src=media.url;player.hidden=false;load.hidden=true;player.load?.();
+    card.setAttribute('aria-label','Mensagem de vídeo');load.type='button';load.setAttribute('aria-label','Reproduzir vídeo');player.controls=true;player.preload='none';player.playsInline=true;player.hidden=false;player.setAttribute('aria-label','Player de vídeo');status.hidden=true;status.setAttribute('role','status');
+    const thumbnail=thumbnailUrl(message);if(thumbnail) player.poster=thumbnail;
+    const metadata=el('p','video-metadata',[message.fileName,Number.isFinite(message.durationSeconds)?audioTime(message.durationSeconds):null].filter(Boolean).join(' · ') || 'Carregue o vídeo para reproduzir');
+    const view={card,player,load,status,loading:false};videoViews.set(key,view);
+    load.addEventListener('click',async()=>{if(view.loading) return;focusedMediaKey=key;const version=selection;view.loading=true;load.disabled=true;load.textContent='Carregando vídeo…';status.hidden=true;
+      try {const media=await fetchMedia(message,jid);player.preload='metadata';player.src=media.url;player.hidden=false;load.hidden=true;player.load?.();
         if(selected?.jid===jid && selection===version) {for(const other of document.querySelectorAll('audio,video')) if(other!==player && !other.paused) other.pause?.();
           try {await player.play?.();}catch(error) {status.textContent=error.name==='NotAllowedError'?'Vídeo carregado. Toque no ▶ do player para iniciar.':'Toque no ▶ do player para reproduzir. Se o formato não abrir, use Baixar vídeo.';status.hidden=false;}
         }
       }
       catch(error) {status.textContent=error.message;status.hidden=false;load.hidden=false;load.textContent='↻ Tentar carregar vídeo';}
-      finally {view.loading=false;load.disabled=false;}
+      finally {view.loading=false;load.disabled=false;trimMediaCache();}
     });
     player.addEventListener('error',()=>{status.textContent='Este formato não pode ser reproduzido no navegador. Baixe o arquivo para abrir no seu computador.';status.hidden=false;load.hidden=false;load.textContent='↻ Carregar novamente';});
     const download=el('button','text-button media-download','↓ Baixar vídeo');download.type='button';download.addEventListener('click',()=>downloadMedia(message,jid,download));
-    card.append(label,load,player,download,status);return card;
+    card.append(label,player,metadata,load,download,status);return card;
   }
   function linkedText(text) {
     const paragraph=el('p','message-text'),pattern=/(?:https?:\/\/|www\.)[^\s<>"']+/gi;let position=0;
@@ -244,6 +251,7 @@
     if(position<text.length) paragraph.append(el('span','',text.slice(position)));return paragraph;
   }
   function messageCopyText(message,jid) {
+    if(message.viewOnce) return '';
     if(message.text || message.caption) return message.text || message.caption;
     if(message.type!=='audio') return '';
     const provider=transcriptionChoices.get(transcriptionKey(jid,message.id)) || 'whisper';
@@ -342,18 +350,24 @@
   });
   function renderMessages(keepScroll=false,forceBottom=false) {
     const container=$('messages'),nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<90,oldHeight=container.scrollHeight,oldTop=container.scrollTop;
-    const fragment=document.createDocumentFragment();transcriptionViews.clear();messageCopyViews.clear();messageRows.clear();
+    const fragment=document.createDocumentFragment();transcriptionViews.clear();messageCopyViews.clear();messageRows.clear();previewObserver?.disconnect();previewViews.clear();previewQueue=[];
     const reactions=reactionsByMessage(selected.jid);
     for(const message of messages) {
       if(message.type==='reaction') continue;
       const row=el('article','message'+(message.fromMe?' mine':''));row.dataset.id=message.id;messageRows.set(message.id,row);
       const removed=message.deleted || deletedMessages.has(selected.jid+'|'+message.id);
+      if(message.type==='sticker' && !removed) row.classList.add('sticker-message');
       if(message.quoted && !removed) row.append(quoteBlock(message.quoted));
       if(removed) {row.className+=' message-deleted';row.append(el('p','','⊘ Mensagem apagada'));}
+      else if(message.viewOnce) {
+        const label=el('p'),badge=el('span','view-once-badge','1');
+        badge.setAttribute('aria-hidden','true');label.append(badge,message.text);row.append(label);
+        if(!message.fromMe) row.append(el('small','muted','Abra no WhatsApp para acessar a mídia.'));
+      }
       else if(message.type==='audio') row.append(audioCard(message,selected.jid));
       else if(message.type==='video') row.append(videoCard(message,selected.jid));
       else if(message.type==='poll') {const poll=el('section','poll-card');poll.append(el('strong','',message.poll?.name || message.text || 'Enquete'));for(const choice of message.poll?.options || []) poll.append(el('div','poll-option','◯ '+choice));poll.append(el('small','muted','Para votar, abra esta conversa no WhatsApp.'));row.append(poll);}
-      else if(message.type==='image' || (message.type==='document' && (message.mimeType==='application/pdf' || /\.pdf$/i.test(message.fileName || '')))) row.append(previewCard(message,selected.jid));
+      else if(['image','sticker'].includes(message.type) || (message.type==='document' && (message.mimeType==='application/pdf' || /\.pdf$/i.test(message.fileName || '')))) row.append(previewCard(message,selected.jid));
       else if(message.type==='location') row.append(locationCard(message));
       else if(message.type==='contact') row.append(contactCard(message));
       else if(message.type!=='text') {
@@ -366,7 +380,7 @@
           const messageJid=selected.jid;button.addEventListener('click',()=>loadMedia(message,messageJid,button));row.append(button);
         }
       }
-      if(message.text && !removed && !['poll','location','contact'].includes(message.type)) row.append(linkedText(message.text));
+      if(message.text && !removed && !message.viewOnce && !['poll','location','contact','sticker'].includes(message.type)) row.append(linkedText(message.text));
       if(message.type==='audio' && !removed) row.append(audioTranscription(message,selected.jid));
       const chips=removed?[]:[...(reactions.get(message.id)?.values() || [])].filter(item=>item.emoji);
       if(chips.length) {const box=el('div','message-reactions');box.setAttribute('aria-label','Reações');for(const item of chips) {const chip=el('span','reaction-chip'+(item.fromMe?' mine':''),item.emoji);chip.title=item.fromMe?'Sua reação':'Reação do contato';box.append(chip);}row.append(box);}
@@ -426,22 +440,84 @@
     }
     return card;
   }
+  function cachedMedia(key) {const media=mediaUrls.get(key);if(media) {mediaUrls.delete(key);mediaUrls.set(key,media);}return media;}
+  function releasePlayer(view,video=false) {
+    view.player.pause?.();view.player.removeAttribute('src');view.player.load?.();view.player.hidden=!video;view.load.hidden=false;view.load.disabled=false;
+    if(view.speed) view.speed.disabled=true;
+  }
+  function protectedMedia(key) {return key===viewerMediaKey || key===focusedMediaKey || mediaLocks.has(key) || [audioViews.get(key),videoViews.get(key)].some(view=>view?.player.src && view.player.paused===false);}
+  function discardMedia(key) {
+    const media=mediaUrls.get(key);if(!media) return;
+    previewViews.get(key)?.reset();if(audioViews.has(key)) releasePlayer(audioViews.get(key));if(videoViews.has(key)) releasePlayer(videoViews.get(key),true);
+    mediaUrls.delete(key);URL.revokeObjectURL(media.url);
+  }
+  function trimMediaCache(keepKey) {
+    let bytes=[...mediaUrls.values()].reduce((sum,media)=>sum+media.cacheBytes,0);
+    const candidates=[...mediaUrls.keys()].sort((a,b)=>Number(Boolean(previewViews.get(a)?.visible))-Number(Boolean(previewViews.get(b)?.visible)));
+    for(const key of candidates) {if(mediaUrls.size<=MEDIA_CACHE_ENTRIES && bytes<=MEDIA_CACHE_BYTES) break;if(key===keepKey || protectedMedia(key)) continue;bytes-=mediaUrls.get(key).cacheBytes;discardMedia(key);}
+  }
+  function clearConversationMedia() {
+    cancelTranscriptRequest();if($('voice-text-dialog').open) $('voice-text-dialog').close();
+    mediaGeneration++;focusedMediaKey=null;previewObserver?.disconnect();previewQueue=[];previewViews.clear();
+    for(const controller of mediaControllers.values()) controller.abort();mediaControllers.clear();mediaRequests.clear();
+    for(const view of audioViews.values()) releasePlayer(view);for(const view of videoViews.values()) releasePlayer(view,true);audioViews.clear();videoViews.clear();
+    for(const key of mediaUrls.keys()) if(key!==viewerMediaKey && !mediaLocks.has(key)) discardMedia(key);
+  }
+  function currentPreview(view) {return selected?.jid===view.jid && selection===view.version && previewViews.get(view.key)===view;}
+  function queuePreview(view) {if(!currentPreview(view) || view.queued || view.loading || view.hasImage) return;view.queued=true;previewQueue.push(view);pumpPreviews();}
+  function pumpPreviews() {
+    while(previewActive<2 && previewQueue.length) {
+      const view=previewQueue.shift();view.queued=false;if(!currentPreview(view) || !view.visible || view.hasImage) continue;
+      previewActive++;view.load().finally(()=>{previewActive--;pumpPreviews();});
+    }
+  }
   async function fetchMedia(message,jid) {
-      const key=jid+'|'+message.id;if(mediaUrls.has(key)) return mediaUrls.get(key);
-      const result=await api(`/media?jid=${encodeURIComponent(jid)}&id=${encodeURIComponent(message.id)}`,'GET',undefined,100000);
+      const key=jid+'|'+message.id,cached=cachedMedia(key);if(cached) return cached;
+      if(mediaRequests.has(key)) return mediaRequests.get(key);
+      const generation=mediaGeneration,controller=new AbortController();mediaControllers.set(key,controller);
+      const request=(async()=>{
+      const result=await api(`/media?jid=${encodeURIComponent(jid)}&id=${encodeURIComponent(message.id)}`,'GET',undefined,100000,AbortSignal.any([controller.signal,AbortSignal.timeout(100000)]));
+      if(generation!==mediaGeneration) throw new Error('A conversa foi alterada. Abra o anexo novamente.');
       const raw=result.base64.replace(/^data:[^,]*,/,'');if(!/^[A-Za-z0-9+/=\r\n]+$/.test(raw)) throw new Error('Mídia retornada em formato inválido.');
       const bytes=Uint8Array.from(atob(raw),char=>char.charCodeAt(0));
       const previewMime=globalThis.WhatsAppMedia?.previewMime?.(bytes) || null,mimeType=previewMime || result.mimeType,url=URL.createObjectURL(new Blob([bytes],{type:mimeType}));
-      const media={url,mimeType,previewMime,bytes,fileName:result.fileName || message.fileName || 'anexo'};mediaUrls.set(key,media);return media;
+      const media={url,mimeType,previewMime,bytes,cacheBytes:bytes.byteLength*2,fileName:result.fileName || message.fileName || 'anexo'};mediaUrls.set(key,media);trimMediaCache(key);return media;
+      })();mediaRequests.set(key,request);
+      try {return await request;}finally {if(mediaRequests.get(key)===request) {mediaRequests.delete(key);mediaControllers.delete(key);}}
+  }
+  function thumbnailUrl(message) {
+    const thumbnail=message.jpegThumbnail;
+    if(typeof thumbnail!=='string' || thumbnail.length>350000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(thumbnail)) return null;
+    try {const header=atob(thumbnail.slice(0,4));if(header.charCodeAt(0)===255 && header.charCodeAt(1)===216 && header.charCodeAt(2)===255) return 'data:image/jpeg;base64,'+thumbnail;}catch {}
+    return null;
   }
   function previewCard(message,jid) {
-    const card=el('section','attachment-card'),pdf=message.type==='document',button=el('button','attachment-preview-button',pdf?'Abrir PDF':'Abrir imagem'),label=el('span','attachment-caption',message.fileName || (pdf?'Documento PDF':'Imagem da conversa'));
-    button.type='button';button.setAttribute('aria-label',pdf?'Abrir PDF':'Abrir imagem');
-    const cached=mediaUrls.get(jid+'|'+message.id);if(cached && !pdf && /^image\/(png|jpeg|gif|webp|avif)$/.test(cached.mimeType)) {button.textContent='';const image=el('img');image.src=cached.url;image.alt=message.text || 'Imagem da conversa';button.append(image);}
-    button.addEventListener('click',async()=>{button.disabled=true;const version=selection;
-      try {const media=await fetchMedia(message,jid);if(selected?.jid!==jid || selection!==version) return;await globalThis.WhatsAppMedia?.open?.(media,pdf?'pdf':'image');}
-      catch(error) {notice(error.message);}finally {button.disabled=false;}
-    });card.append(button,label);const download=el('button','text-button attachment-download','Baixar');download.type='button';download.addEventListener('click',()=>downloadMedia(message,jid,download));card.append(download);return card;
+    const key=jid+'|'+message.id,pdf=message.type==='document',sticker=message.type==='sticker';
+    const openLabel=pdf?'Abrir PDF':sticker?'Abrir figurinha':'Abrir imagem';
+    const card=el('section',sticker?'sticker-card':'attachment-card'),button=el('button','attachment-preview-button',openLabel);
+    button.type='button';button.setAttribute('aria-label',openLabel);
+    const status=el('p','attachment-preview-status');status.hidden=true;status.setAttribute('role','status');
+    const view={key,jid,version:selection,card,visible:!previewObserver,hasImage:false,queued:false,loading:false,load:()=>loadPreview(),reset:()=>{
+      view.image?.removeAttribute('src');
+      if(sticker) {view.image?.remove();button.hidden=false;}
+      view.image=null;view.hasImage=false;button.textContent=openLabel;
+    }};
+    previewViews.set(key,view);card.dataset.mediaId=message.id;previewTargets.set(card,view);
+    const unavailable=()=>{status.textContent=sticker?'Figurinha indisponível. Tente novamente.':'Prévia indisponível. Tente abrir ou baixar a imagem.';status.hidden=false;};
+    const showImage=source=>{const image=el('img',sticker?'sticker-preview':'conversation-image-preview');image.src=source;image.alt=sticker?'Figurinha':message.text || 'Imagem da conversa';image.decoding='async';
+      image.addEventListener('error',()=>{view.reset();if(source.startsWith('data:')) queuePreview(view);else unavailable();});
+      view.image=image;view.hasImage=true;
+      if(sticker) {button.hidden=true;card.prepend(image);}else button.replaceChildren(image);
+      status.hidden=true;};
+    const loadPreview=async()=>{view.loading=true;button.textContent=sticker?'Carregando figurinha…':'Carregando imagem…';try {const media=await fetchMedia(message,jid);if(!currentPreview(view)) return;if(!/^image\/(png|jpeg|gif|webp|avif)$/.test(media.previewMime || '')) throw Error('Formato sem prévia');showImage(media.url);}
+      catch {if(currentPreview(view)) {view.reset();unavailable();}}finally {view.loading=false;trimMediaCache();}};
+    if(!pdf) {const cached=cachedMedia(key),thumbnail=sticker?null:thumbnailUrl(message);if(cached && /^image\/(png|jpeg|gif|webp|avif)$/.test(cached.previewMime || '')) showImage(cached.url);else if(thumbnail) showImage(thumbnail);if(previewObserver) previewObserver.observe(card);else if(!view.hasImage) queuePreview(view);}
+    if(sticker) {button.addEventListener('click',()=>{if(!view.loading) loadPreview();});card.append(button,status);return card;}
+    const label=el('span','attachment-caption',message.fileName || (pdf?'Documento PDF':'Imagem da conversa'));
+    button.addEventListener('click',async()=>{button.disabled=true;mediaLocks.add(key);const version=selection;
+      try {const media=await fetchMedia(message,jid);if(selected?.jid!==jid || selection!==version) return;viewerMediaKey=key;await globalThis.WhatsAppMedia?.open?.(media,pdf?'pdf':'image');if(!$('media-viewer').open) viewerMediaKey=null;}
+      catch(error) {if(viewerMediaKey===key && !$('media-viewer').open) viewerMediaKey=null;notice(error.message);}finally {mediaLocks.delete(key);button.disabled=false;trimMediaCache();}
+    });card.append(button,label);const download=el('button','text-button attachment-download','Baixar');download.type='button';download.addEventListener('click',()=>downloadMedia(message,jid,download));card.append(download,status);return card;
   }
   async function loadMedia(message,jid,button) {
     button.disabled=true;button.textContent='Carregando…';
@@ -473,7 +549,7 @@
     if(changed && historyLoaded && result.messages.some(message=>message.type==='audio' && !latestKnownTranscription(jid,message.id))) loadTranscriptions(jid,version).catch(()=>{});
     const unread=result.messages.filter(message=>!message.fromMe && message.key?.fromMe===false && message.key.remoteJid===jid && !readIds.has(jid+'|'+message.id));
     if(unread.length && document.visibilityState==='visible') {
-      await api('/read','POST',{jid,keys:unread.map(message=>message.key)});
+      await api('/read','POST',{jid,keys:unread.map(message=>({...message.key,remoteJid:jid})),lastSeenId:selected?.lastMessage?.id});
       if(selected?.jid===jid) {unread.forEach(message=>readIds.add(jid+'|'+message.id));const chat=chats.find(item=>item.jid===jid);if(chat) chat.unread=0;renderChats();}
     }
   }
@@ -491,6 +567,7 @@
   async function selectChat(chat) {
     if(sending) return;
     if(selected) drafts.set(selected.jid,$('message-text').value);
+    clearConversationMedia();
     selected=chat;selection++;editRevision++;historyQueue=Promise.resolve();historyLoaded=false;messages=[];page=1;pages=1;attachment=null;attachmentKind=null;pendingSend=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;$('send-status').textContent='';
     globalThis.WhatsAppMedia?.onAttachment?.(null);
     $('conversation-empty').hidden=true;$('conversation-content').hidden=false;$('contact-empty').hidden=true;$('contact-details').hidden=false;
@@ -581,11 +658,13 @@
   $('quick-template').addEventListener('change',()=>{if($('quick-template').value==='') return;insertTemplate(templates[Number($('quick-template').value)]);$('quick-template').value='';});
   $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;if(selected) extras()?.onTyping?.(selected.jid);});
   $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && !event.shiftKey && !event.altKey && !event.isComposing && event.keyCode!==229 && !event.repeat) {event.preventDefault();$('composer').requestSubmit();}});
-  function setAttachment(file,kind=null) {
+  function setAttachment(file,kind=null,viewOnce=false) {
+    if(sending) return;
     editRevision++;pendingSend=null;
     if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
-    attachment=file || null;attachmentKind=kind;$('attachment-name').textContent=file?(kind==='sticker'?'Figurinha · ':'')+file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file;$('message-text').required=!attachment;if(file) $('message-text').focus();
-    globalThis.WhatsAppMedia?.onAttachment?.(attachment);extras()?.onAttachment?.(attachment,kind);
+    cancelTranscriptRequest();
+    attachment=file || null;attachmentKind=kind;$('attachment-name').textContent=file?(kind==='sticker'?'Figurinha · ':'')+file.name+' · '+(file.size/1024).toFixed(0)+' KB':'';$('attachment-info').hidden=!file || Boolean(file.type?.startsWith('audio/'));$('message-text').required=!attachment;if(file) $('message-text').focus();
+    globalThis.WhatsAppMedia?.onAttachment?.(attachment,kind,viewOnce);extras()?.onAttachment?.(attachment,kind);
   }
   $('attachment').addEventListener('change',()=>{const kind=attachmentSelectionKind;attachmentSelectionKind=null;setAttachment($('attachment').files[0],kind);});
   $('attachment').addEventListener('cancel',()=>{attachmentSelectionKind=null;});
@@ -605,29 +684,92 @@
   }
   $('remove-attachment').addEventListener('click',()=>setAttachment(null));
   const fileBase64=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('Não foi possível ler o arquivo.'));reader.readAsDataURL(file);});
-  $('composer').addEventListener('submit',async event=>{
-    event.preventDefault();if(!selected || sending || connection?.state!=='connected') return;
-    if(globalThis.WhatsAppMedia?.isRecording?.()) {notice('Pare a gravação para ouvir e enviar o áudio.');return;}
-    const jid=selected.jid,text=$('message-text').value.trim(),file=attachment,kind=attachmentKind,submittedRevision=editRevision;if(!file && !text) return;
-    sending=true;$('send').disabled=true;$('voice-send').disabled=true;$('send-status').textContent='Enviando…';
+  function cancelTranscriptRequest() {
+    if(!transcriptRequest) return;
+    transcriptRequest.abort();transcriptRequest=null;
+    $('voice-send-text').disabled=false;$('send-status').textContent='';
+  }
+  $('voice-send-text').addEventListener('click',async()=>{
+    const file=attachment,jid=selected?.jid,button=$('voice-send-text');
+    if(!jid || !file || button.hidden || sending || transcriptRequest) return;
+    const controller=new AbortController();transcriptRequest=controller;
+    button.disabled=true;$('send-status').textContent='Preparando a prévia do texto…';
     try {
-      let submitted=pendingSend;
+      const base64=await fileBase64(file);
+      if(controller.signal.aborted) return;
+      const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(22*60_000)]);
+      const {text}=await api('/voice/transcribe-draft','POST',{jid,base64,mimeType:file.type || 'audio/webm'},undefined,signal);
+      if(transcriptRequest!==controller || globalThis.WhatsAppMedia?.viewOnce?.()) return;
+      $('voice-text-preview').value=text;$('voice-text-status').textContent='';$('voice-text-dialog').showModal();
+    } catch(error) {if(transcriptRequest===controller) $('send-status').textContent=error.message;}
+    finally {
+      if(transcriptRequest===controller) {
+        transcriptRequest=null;button.disabled=false;
+        if($('send-status').textContent==='Preparando a prévia do texto…') $('send-status').textContent='';
+      }
+    }
+  });
+  $('voice-text-cancel').addEventListener('click',()=>$('voice-text-dialog').close());
+  $('voice-text-dialog').addEventListener('cancel',event=>{if(sending) event.preventDefault();});
+  async function sendMessage(event) {
+    event.preventDefault();if(!selected || $('speak-send').disabled) return;
+    const asText=event.currentTarget===$('voice-text-form'),status=$(asText?'voice-text-status':'send-status');
+    // Enter durante um envio não se perde: a próxima mensagem sai assim que a atual terminar.
+    if(sending) {if(!asText) submitQueued=true;return;}
+    if(connection?.state!=='connected') {status.textContent='WhatsApp desconectado. A mensagem continua disponível para envio.';return;}
+    if(globalThis.WhatsAppMedia?.isRecording?.()) {notice('Pare a gravação para ouvir e enviar o áudio.');return;}
+    const jid=selected.jid,text=$(asText?'voice-text-preview':'message-text').value.trim(),file=attachment,kind=attachmentKind;
+    let submittedRevision=editRevision,cleared=false,sent=false;
+    if(asText && (!file || !text || !$('voice-text-dialog').open)) {status.textContent='Escreva o texto que deseja enviar.';return;}
+    if(!file && !text) return;
+    const mediaType=!file || kind==='sticker' || kind==='document'?'document':file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':kind==='voice' || file.type.startsWith('audio/')?'audio':'document';
+    const viewOnce=Boolean(file && globalThis.WhatsAppMedia?.viewOnce?.());
+    if(asText && (mediaType!=='audio' || viewOnce)) return;
+    const voice=!asText && (kind==='voice' || (mediaType==='audio' && viewOnce));
+    const route=asText || !file?'/send':voice?'/send-voice':kind==='sticker'?'/send-sticker':'/send-media';
+    const preserveDraft=voice || asText;
+    const mediaControls=['voice-send','voice-send-text','voice-cancel','remove-attachment','attachment-toggle','voice-view-once','attachment-view-once','voice-text-confirm','voice-text-cancel'];
+    cancelTranscriptRequest();
+    sending=true;$('send').disabled=true;
+    for(const id of mediaControls) $(id).disabled=true;
+    status.textContent='Enviando…';
+    try {
+      let submitted=pendingSend?.route===route && pendingSend.asText===asText && (!asText || pendingSend.input.text===text)?pendingSend:null;
       if(!submitted) {
         const requestId=crypto.randomUUID();
         if(file && kind==='sticker' && text) throw new Error('Figurinhas não têm legenda. Remova o texto ou envie-o separadamente.');
         const quotedId=extras()?.replyFor?.(jid) || undefined,quote=quotedId && kind!=='sticker'?{quotedId}:{};
-        // Áudio gravado sai como mensagem de voz do WhatsApp; o texto do editor fica guardado, pois voz não tem legenda.
-        submitted=file && kind==='voice'?{route:'/send-voice',voice:true,input:{jid,base64:await fileBase64(file),mimeType:file.type || 'audio/webm',requestId,...quote}}:file?{route:kind==='sticker'?'/send-sticker':'/send-media',input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType:kind==='document'?'document':file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':'document',requestId,...quote}}:{route:'/send',input:{jid,text,requestId,...quote}};
+        const options=viewOnce?{viewOnce:true}:{};
+        if(voice) submitted={route,asText,input:{jid,base64:await fileBase64(file),mimeType:file.type || 'audio/webm',requestId,...quote,...options}};
+        else if(file && !asText) submitted={route,asText,input:{jid,caption:text,base64:await fileBase64(file),fileName:file.name,mimeType:file.type || 'application/octet-stream',mediaType,requestId,...quote,...options}};
+        else submitted={route,asText,input:{jid,text,requestId,...quote}};
         if(editRevision===submittedRevision) pendingSend=submitted;
       }
-      await api(submitted.route,'POST',submitted.input);if(pendingSend===submitted) pendingSend=null;
-      if(editRevision===submittedRevision) {if(!submitted.voice) {$('message-text').value='';drafts.delete(jid);}attachment=null;attachmentKind=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;globalThis.WhatsAppMedia?.onAttachment?.(null);}
+      // O editor esvazia já no envio: o que for digitado enquanto o conector responde é a próxima mensagem, não sobra da anterior.
+      if(!preserveDraft && editRevision===submittedRevision) {$('message-text').value='';drafts.delete(jid);editRevision++;submittedRevision=editRevision;cleared=true;}
+      await api(route,'POST',submitted.input,file && !asText?120000:30000);if(pendingSend===submitted) pendingSend=null;
+      sent=true;
+      if(asText) $('voice-text-dialog').close();
+      if(file && attachment===file) {attachment=null;attachmentKind=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;globalThis.WhatsAppMedia?.onAttachment?.(null);}
       extras()?.onSent?.(jid);
-      $('send-status').textContent=submitted.voice?'Mensagem de voz aceita pelo conector.'+(text?' O texto continua no editor.':''):'Mensagem aceita pelo conector. O status será atualizado no histórico.';
-      await loadMessages();
-    } catch(error) {$('send-status').textContent=error.message+' Confira a conversa antes de tentar outro envio.';}
-    finally {sending=false;$('send').disabled=connection?.state!=='connected';$('voice-send').disabled=false;}
-  });
+      $('send-status').textContent=asText?'Transcrição enviada como mensagem de texto.':voice?'Mensagem de voz aceita pelo conector.'+(text?' O texto continua no editor.':''):'Mensagem aceita pelo conector. O status será atualizado no histórico.';
+    } catch(error) {
+      status.textContent=error.message+' Confira a conversa antes de tentar outro envio.';
+      // Falhou: o texto volta ao editor da conversa certa, sem apagar o que já foi digitado depois.
+      if(cleared && !sent) {
+        if(selected?.jid===jid) {const typed=$('message-text').value;$('message-text').value=typed?text+'\n'+typed:text;if(typed) {editRevision++;pendingSend=null;}}
+        else if(!drafts.get(jid)) drafts.set(jid,text);
+      }
+    }
+    finally {
+      sending=false;$('send').disabled=connection?.state!=='connected';
+      for(const id of mediaControls) $(id).disabled=false;
+    }
+    if(sent) await loadMessages().catch(()=>{});
+    if(submitQueued) {submitQueued=false;if(sent) $('composer').requestSubmit();}
+  }
+  $('composer').addEventListener('submit',sendMessage);
+  $('voice-text-form').addEventListener('submit',sendMessage);
   $('new-chat').addEventListener('click',()=>{$('new-error').textContent='';$('new-dialog').showModal();});
   $('new-form').addEventListener('submit',async event=>{
     event.preventDefault();const button=event.submitter;button.disabled=true;
@@ -638,7 +780,58 @@
     for(const name of ['attendance','products','assistant','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
   }
   const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-team','nav-voice','nav-profile','settings','nav-connection','nav-settings'];
-  const pageIds=['page-contacts','page-knowledge','page-products','page-ai','page-team','page-voice','page-profile'];
+  const pageIds=['page-dashboard','page-contacts','page-knowledge','page-products','page-ai','page-team','page-voice','page-profile'];
+  function renderDashboard() {
+    const cards=document.createDocumentFragment(),activeChats=chats.filter(chat=>chat.archived!==true);
+    for(const [label,count,status,unread] of [
+      ['Conversas',activeChats.length,'',false],['Não lidas',activeChats.filter(c=>c.unread>0 || c.markedUnread===true).length,'',true],
+      ['Pendentes',activeChats.filter(c=>c.status==='pending').length,'pending',false],
+      ['Concluídas',activeChats.filter(c=>c.status==='closed').length,'closed',false]]) {
+      const card=el('button','panel dashboard-stat');card.type='button';
+      card.append(el('span','muted',label),el('strong','',String(count)));
+      card.addEventListener('click',()=>applyFilter(status,unread));cards.append(card);
+    }
+    $('dashboard-stats').replaceChildren(cards);
+    $('dashboard-connection').textContent=connection?.state==='connected'?'WhatsApp conectado':'WhatsApp desconectado';
+    const recent=document.createDocumentFragment();
+    for(const chat of activeChats.sort((a,b)=>(b.lastMessage?.timestamp||0)-(a.lastMessage?.timestamp||0)).slice(0,8)) {
+      const row=el('button','dashboard-row');row.type='button';
+      const copy=el('span');copy.append(el('strong','',chat.name),el('small','muted',chat.lastMessage?.text || 'Sem mensagem recente'));
+      row.append(copy,el('span','muted',statuses[chat.status] || 'Em aberto'));
+      row.addEventListener('click',()=>openChat(chat));recent.append(row);
+    }
+    if(!activeChats.length) recent.append(el('p','muted',chats.length?'Nenhuma conversa ativa.':'Nenhuma conversa sincronizada. Conecte seu WhatsApp para começar.'));
+    $('dashboard-recent').replaceChildren(recent);
+    const attention=activeChats.filter(chat=>chat.status!=='closed' && (chat.unread>0 || chat.status==='pending'));
+    $('dashboard-summary').textContent=attention.length?`${attention.length} conversa(s) precisam da sua atenção. Vamos organizar o dia?`:'Sua fila está em dia. Acompanhe a atividade da sua central.';
+    $('dashboard-updated').textContent='Atualizado às '+time(Date.now());
+    $('dashboard-attention-count').textContent=String(attention.length);
+    const queue=document.createDocumentFragment();
+    for(const chat of [...attention].sort((a,b)=>(b.unread||0)-(a.unread||0)).slice(0,5)) {
+      const row=el('button','dashboard-row');row.type='button';
+      const copy=el('span');copy.append(el('strong','',chat.name),el('small','muted',chat.unread>0?`${chat.unread} mensagem(ns) não lida(s)`:'Aguardando continuidade'));
+      row.append(copy,el('span','dashboard-chip attention',chat.unread>0?'Responder ↗':'Retomar ↗'));
+      row.addEventListener('click',()=>openChat(chat));queue.append(row);
+    }
+    if(!attention.length) queue.append(el('p','dashboard-empty',chats.length?'Tudo em dia por aqui. Nenhuma conversa nesta fila.':'Conecte sua conta e sincronize as conversas para acompanhar sua fila.'));
+    $('dashboard-attention').replaceChildren(queue);
+    const distribution=document.createDocumentFragment();
+    for(const [status,label] of Object.entries(statuses)) {
+      const count=chats.filter(chat=>chat.status===status).length;
+      const item=el('div','dashboard-distribution-item'),head=el('div','dashboard-distribution-label');head.append(el('span','',label),el('strong','',String(count)));
+      const meter=el('progress','dashboard-progress '+status);meter.max=chats.length || 1;meter.value=count;meter.setAttribute('aria-label',label+': '+count);
+      item.append(head,meter);distribution.append(item);
+    }
+    $('dashboard-distribution').replaceChildren(distribution);
+    const modes=document.createDocumentFragment();
+    for(const [mode,label] of [['auto','Modo automático'],['draft','Rascunhos assistidos'],['off','Atendimento manual']]) {
+      const item=el('div','dashboard-distribution-label');item.append(el('span','muted',label),el('strong','',String(chats.filter(chat=>mode==='off'?!['auto','draft'].includes(chat.aiMode):chat.aiMode===mode).length)));modes.append(item);
+    }
+    $('dashboard-ai-summary').replaceChildren(modes);
+
+  }
+  $('dashboard-ai-open').addEventListener('click',()=>showView('page-ai','nav-ai'));
+  hooks.sync.push(renderDashboard);
   function showView(view='workspace',nav) {
     const workspace=view==='workspace';$('metrics').hidden=!workspace;$('workspace').hidden=!workspace;
     for(const id of pageIds) $(id).hidden=id!==view;
@@ -647,12 +840,16 @@
   }
   function openChat(chat) {showView('workspace','nav-conversations');return selectChat(chat);}
   function setNavigation(id) {for(const name of navIds) {$(name).classList.toggle('active',name===id);if(name===id) $(name).setAttribute('aria-current','page');else $(name).removeAttribute('aria-current');}}
-  function applyFilter(status='',unread=false,nav='nav-conversations') {showView('workspace');$('search').value='';$('status-filter').value=status;$('unread-only').checked=unread;setNavigation(nav);renderChats();}
-  $('nav-overview').addEventListener('click',()=>applyFilter('',false,'nav-overview'));
+  function resetInboxFilters() {
+    extras()?.resetFilters?.();globalThis.WhatsAppTeam?.resetFilter?.();
+    const title=$('inbox-title').firstChild;if(title) title.textContent='Conversas ';
+  }
+  function applyFilter(status='',unread=false,nav='nav-conversations') {resetInboxFilters();showView('workspace');$('search').value='';$('status-filter').value=status;$('unread-only').checked=unread;setNavigation(nav);renderChats();}
+  $('nav-overview').addEventListener('click',()=>{resetInboxFilters();renderDashboard();showView('page-dashboard','nav-overview');});
   $('nav-conversations').addEventListener('click',()=>{applyFilter();$('search').focus();});
   $('nav-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('nav-closed').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
-  $('metric-total-button').addEventListener('click',()=>applyFilter('',false,'nav-overview'));
+  $('metric-total-button').addEventListener('click',()=>applyFilter('',false,'nav-conversations'));
   $('metric-unread-button').addEventListener('click',()=>applyFilter('',true));
   $('metric-pending-button').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
@@ -664,10 +861,10 @@
   $('nav-settings').addEventListener('click',()=>{showView('workspace','nav-settings');showPanel('connection');toggleContact(true);});
   $('refresh-top').addEventListener('click',()=>{notice('');sync();});
   $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
-  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);extras()?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
+  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);clearConversationMedia();selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);extras()?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
-    try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail);renderChats();notice(detail.surveyError?'Atendimento salvo. '+detail.surveyError:detail.surveySent?'Atendimento salvo e pesquisa de satisfação enviada.':'Atendimento salvo.',!detail.surveyError);}catch(error) {notice(error.message);}finally {button.disabled=false;}
+    try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail,{archived:chat.archived});renderChats();notice(detail.surveyError?'Atendimento salvo. '+detail.surveyError:detail.surveySent?'Atendimento salvo e pesquisa de satisfação enviada.':'Atendimento salvo.',!detail.surveyError);}catch(error) {notice(error.message);}finally {button.disabled=false;}
   });
   $('note-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
@@ -730,7 +927,9 @@
   globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});
-  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),send:()=>$('composer').requestSubmit(),isSending:()=>sending,hooks});
+  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),send:()=>$('composer').requestSubmit(),isSending:()=>sending,touchDraft:()=>{editRevision++;pendingSend=null;},hooks});
+  $('media-viewer').addEventListener('close',()=>{const key=viewerMediaKey;viewerMediaKey=null;if(key && !key.startsWith((selected?.jid || '')+'|')) discardMedia(key);trimMediaCache();});
+  window.addEventListener('pagehide',()=>{viewerMediaKey=null;mediaLocks.clear();clearConversationMedia();});
   const mainNav=document.querySelector('.main-nav');
   if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-team','nav-products','nav-knowledge','nav-ai','nav-voice','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
   hooks.sync.push(()=>globalThis.WhatsAppTriggers?.onChats?.(chats));hooks.select.push(()=>globalThis.WhatsAppTriggers?.onSelectChat?.(selected));

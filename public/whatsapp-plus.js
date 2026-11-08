@@ -18,6 +18,10 @@
   const normalize=text=>String(text || '').normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
   const selected=()=>C.selected();
   const chatOf=jid=>C.chats().find(chat=>chat.jid===jid);
+  // Respostas locais de outras ações não carregam o estado de arquivo sincronizado com o WhatsApp.
+  function applyChatState(chat,state,archiveChanged=false) {
+    if(chat) Object.assign(chat,state,{archived:archiveChanged?state.archived:chat.archived});
+  }
   const muted=chat=>chat?.mutedUntil==='always' || (Number.isFinite(Date.parse(chat?.mutedUntil || '')) && Date.parse(chat.mutedUntil)>Date.now());
   function icon(name) {
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),use=document.createElementNS('http://www.w3.org/2000/svg','use');
@@ -28,7 +32,8 @@
   // ---------- Lista de conversas: fixadas no topo, arquivadas à parte, ícones de estado ----------
   function arrangeChats(list) {
     const searching=Boolean($('search')?.value.trim()),waiting=chat=>Array.isArray(chat.labels) && chat.labels.includes(NO_REPLY);
-    const archivedCount=C.chats().filter(chat=>chat.archived===true).length,unansweredCount=C.chats().filter(waiting).length;
+    const archivedCount=C.chats().filter(chat=>chat.archived===true).length;
+    const unansweredCount=C.chats().filter(chat=>chat.archived!==true && waiting(chat)).length;
     $('filter-archived').hidden=true;$('filter-archived-count').textContent=archivedCount;
     // A linha fica sempre à mão (como no WhatsApp com arquivadas): por ela também se busca as arquivadas antigas do celular.
     $('archived-row').hidden=!archivedCount && !showArchived && !C.chats().length;
@@ -36,12 +41,13 @@
     if(showArchived && !archiveSyncing) $('archived-sync-text').textContent=archivedCount?'Arquivou no celular e não aparece? Busque de novo.':'Nenhuma arquivada por aqui. Busque as que estão arquivadas no celular.';$('archived-row').setAttribute('aria-pressed',String(showArchived));$('archived-row').classList.toggle('back',showArchived);
     $('archived-row-label').textContent=showArchived?'← Voltar às conversas':'Arquivadas';$('archived-row-count').textContent=showArchived?'':String(archivedCount);
     $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
-    // Filtros da equipe (Aguardando, Minhas) têm precedência quando ativos.
-    const teamView=globalThis.WhatsAppTeam?.filter?.(list.filter(chat=>chat.archived!==true));if(teamView) return teamView;
+    // A busca e as filas operam dentro da lista atual.
+    const visible=list.filter(chat=>(chat.archived===true)===showArchived);
+    if(showArchived) return visible;
+    const teamView=globalThis.WhatsAppTeam?.filter?.(visible);if(teamView) return teamView;
     // "Sem resposta" é a fila do atendente: quem espera há mais tempo aparece primeiro.
-    if(showUnanswered) return list.filter(waiting).sort((a,b)=>Number(a.lastMessage?.timestamp || 0)-Number(b.lastMessage?.timestamp || 0));
-    const visible=searching?list:list.filter(chat=>showArchived?chat.archived===true:chat.archived!==true);
-    if(showArchived || searching) return visible;
+    if(showUnanswered) return visible.filter(waiting).sort((a,b)=>Number(a.lastMessage?.timestamp || 0)-Number(b.lastMessage?.timestamp || 0));
+    if(searching) return visible;
     const pinned=visible.filter(chat=>chat.pinned===true).sort((a,b)=>String(b.pinnedAt || '').localeCompare(String(a.pinnedAt || '')));
     return [...pinned,...visible.filter(chat=>chat.pinned!==true)];
   }
@@ -85,7 +91,6 @@
     showArchived=!showArchived;$('filter-archived').classList.toggle('active',showArchived);$('filter-archived').setAttribute('aria-pressed',String(showArchived));
     $('inbox-title').firstChild.textContent=showArchived?'Arquivadas ':'Conversas ';C.renderChats();
   });
-  for(const id of ['filter-all','filter-pending','nav-conversations','nav-overview']) $(id)?.addEventListener('click',()=>{globalThis.WhatsAppTeam?.resetFilter?.();if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();}if(!showArchived) return;showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');$('inbox-title').firstChild.textContent='Conversas ';C.renderChats();});
 
   // ---------- Ações em cada mensagem ----------
   function pendingReactions(jid) {
@@ -123,10 +128,10 @@
     const mine=myReaction(jid,message.id);
     for(const emoji of QUICK_REACTIONS) {const node=button(emoji,'reaction-choice'+(mine===emoji?' active':''),()=>react(jid,message,emoji));node.setAttribute('aria-label',(mine===emoji?'Remover reação ':'Reagir com ')+emoji);node.setAttribute('aria-pressed',String(mine===emoji));bar.append(node);}
     options.insertBefore(bar,options.firstChild);
-    const items=[button('Responder','message-reply',()=>setReply(jid,message))];
+    const items=message.viewOnce?[]:[button('Responder','message-reply',()=>setReply(jid,message))];
     if(message.canEdit && message.fromMe && (!message.timestamp || Date.now()-message.timestamp<15*60_000)) items.push(button('Editar','message-edit',()=>openEdit(jid,message)));
     const isStar=starred.has(jid+'|'+message.id);
-    items.push(button(isStar?'Remover das favoritas':'Favoritar','message-star',()=>toggleStar(jid,message,!isStar)));
+    if(!message.viewOnce) items.push(button(isStar?'Remover das favoritas':'Favoritar','message-star',()=>toggleStar(jid,message,!isStar)));
     const text=message.text || '';if(text && ['text','image','video','document'].includes(message.type)) items.push(button('Ouvir em voz alta','message-speak',()=>speakAloud(text)));
     const anchor=bar.nextSibling;for(const item of items) options.insertBefore(item,anchor);
   }
@@ -215,7 +220,7 @@
     $('chat-actions-status').textContent='Aplicando…';
     try {
       const state=await api('/chat-state?jid='+encodeURIComponent(jid),'PATCH',input);
-      for(const target of [chatOf(jid),selected()?.jid===jid?selected():null]) if(target) Object.assign(target,state);
+      for(const target of [chatOf(jid),selected()?.jid===jid?selected():null]) applyChatState(target,state,input.archived!==undefined);
       C.renderChats();if(selected()?.jid===jid) renderChatActions();$('chat-actions-status').textContent='';notice(success,true);
     } catch(error) {$('chat-actions-status').textContent=error.message;}
   }
@@ -323,7 +328,7 @@
     try {
       const rows=await api('/blocked');
       for(const row of rows) {const chat=chatOf(row.jid),item=el('li','blocked-item'),button=el('button','text-button','Desbloquear');button.type='button';
-        button.addEventListener('click',async()=>{button.disabled=true;try {const state=await api('/chat-state?jid='+encodeURIComponent(row.jid),'PATCH',{blocked:false});if(chat) Object.assign(chat,state);C.renderChats();notice('Contato desbloqueado.',true);await renderBlocked();}catch(error) {notice(error.message);button.disabled=false;}});
+        button.addEventListener('click',async()=>{button.disabled=true;try {const state=await api('/chat-state?jid='+encodeURIComponent(row.jid),'PATCH',{blocked:false});applyChatState(chat,state);C.renderChats();notice('Contato desbloqueado.',true);await renderBlocked();}catch(error) {notice(error.message);button.disabled=false;}});
         item.append(el('span','',chat?.name || row.jid.split('@')[0]),button);fragment.append(item);}
       if(!rows.length) fragment.append(el('li','muted','Nenhum contato bloqueado pela central.'));
     } catch(error) {fragment.append(el('li','muted',error.message));}
@@ -376,7 +381,7 @@
     if(reply && reply.jid!==chat?.jid) {reply=null;$('reply-bar').hidden=true;}
     if(!$('chat-search-bar').hidden) toggleSearch(false);
     if(!chat) return;renderChatActions();
-    if(chat.markedUnread) api('/chat-state?jid='+encodeURIComponent(chat.jid),'PATCH',{markedUnread:false}).then(state=>{for(const target of [chatOf(chat.jid),chat]) if(target) Object.assign(target,state);C.renderChats();renderChatActions();}).catch(()=>{});
+    if(chat.markedUnread) api('/chat-state?jid='+encodeURIComponent(chat.jid),'PATCH',{markedUnread:false}).then(state=>{for(const target of [chatOf(chat.jid),chat]) applyChatState(target,state);C.renderChats();renderChatActions();}).catch(()=>{});
   }
   C.hooks.sync.push(()=>{if(selected()) renderChatActions();if(searchState.query) runSearch();});
   globalThis.WhatsAppExtras={

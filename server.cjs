@@ -21,7 +21,7 @@ const {createTriggerService}=require('./lib/triggers.cjs');
 const {createLocalAi}=require('./lib/local-ai.cjs');
 const {createSpeechEngines}=require('./lib/speech.cjs');
 const {createVoiceFlow}=require('./lib/voice-flow.cjs');
-const {createMessagingRoutes}=require('./lib/messaging-routes.cjs');
+const {createMessagingRoutes,optionalSendFlag}=require('./lib/messaging-routes.cjs');
 const {pruneState}=require('./lib/housekeeping.cjs');
 const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
 const {createChatDelta}=require('./lib/chat-delta.cjs');
@@ -37,12 +37,15 @@ const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const normalizeText=text=>String(text).normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
 // Arquivada: vale o registro mais recente entre o WhatsApp (extensão local) e o que foi feito pela central.
 // Com "Manter conversas arquivadas" desligado no WhatsApp, uma mensagem depois de arquivar tira a conversa das arquivadas.
-function archivedOf(chat,contact,remote) {
-  const reported=[chat.jid,...(chat.aliasJids || [])].map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
-  const local=Date.parse(contact?.archivedAt || '') || 0;
-  const fromWhatsApp=Boolean(reported && reported.updatedAt>=local);
-  const archived=fromWhatsApp?reported.archived:contact?.archived===true;
-  const since=fromWhatsApp?reported.lastMessageAt || reported.updatedAt:local;
+function archivedOf(chat,contacts,remote) {
+  const ids=[chat.jid,...(chat.aliasJids || [])];
+  const reported=ids.map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  const local=ids.map(id=>contacts?.[id]).filter(contact=>typeof contact?.archived==='boolean')
+    .map(contact=>({archived:contact.archived,updatedAt:Date.parse(contact.archivedAt || '') || 0}))
+    .sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  const fromWhatsApp=Boolean(reported && reported.updatedAt>=(local?.updatedAt || 0));
+  const archived=fromWhatsApp?reported.archived:local?.archived===true;
+  const since=fromWhatsApp?reported.lastMessageAt || reported.updatedAt:local?.updatedAt;
   if(archived && remote?.meta?.unarchiveChats===true && since>0 && Number(chat.lastMessage?.timestamp || 0)>since+1000) return false;
   return archived;
 }
@@ -63,7 +66,27 @@ async function archivedOnlyChats(list,remote,contacts,client) {
     const entry=byJid.get(jid) || byJid.get(item.alias),phoneJid=[jid,item.alias].find(id=>id?.endsWith('@s.whatsapp.net'));
     const id=entry?.jid || phoneJid || jid,phone=entry?.phone || phoneJid?.split('@')[0] || null;
     const chat={jid:id,aliasJids:[jid,item.alias].filter(value=>value && value!==id),name:entry?.name || (phone?'+'+phone:'Conversa arquivada'),nameSource:entry?.nameSource || 'number',...(phone?{phone}:{}),unread:0,lastMessage:null,archivedOnly:true};
-    if(archivedOf(chat,contacts?.[id],remote)) result.push(chat);
+    if(archivedOf(chat,contacts,remote)) result.push(chat);
+  }
+  return result;
+}
+// A mesma pessoa pode aparecer com o identificador privado (@lid) e com o número (ex.: depois de parear de novo,
+// o histórico chega pelo número). A tela mostra uma conversa só, com a mensagem mais recente das duas.
+// Fica o identificador que já tem dados do atendimento; com os dois ou nenhum, o @lid (o de antes).
+function mergeAliasChats(chats,contacts={},waiting={}) {
+  const byJid=new Map(chats.map(chat=>[chat.jid,chat])),merged=new Set(),result=[];
+  for(const chat of chats) {
+    if(merged.has(chat.jid)) continue;
+    const other=(chat.aliasJids || []).map(jid=>byJid.get(jid)).find(item=>item && item.jid!==chat.jid && !merged.has(item.jid) && (item.aliasJids || []).includes(chat.jid));
+    if(!other) {result.push(chat);continue;}
+    merged.add(chat.jid);merged.add(other.jid);
+    const known=item=>Boolean(contacts[item.jid]);
+    const main=known(chat)!==known(other)?(known(chat)?chat:other):(chat.jid.endsWith('@lid')?chat:other),second=main===chat?other:chat;
+    const newer=(second.lastMessage?.timestamp || 0)>(main.lastMessage?.timestamp || 0)?second:main;
+    const named=main.nameSource==='number' && second.nameSource!=='number'?second:main;
+    const since=[waiting[main.jid]?.since,waiting[second.jid]?.since].filter(Number.isFinite);
+    result.push({...main,aliasJids:[...new Set([...(main.aliasJids || []),second.jid])].filter(jid=>jid!==main.jid),name:named.name,nameSource:named.nameSource,phone:main.phone || second.phone,
+      unread:(Number(main.unread) || 0)+(Number(second.unread) || 0),lastMessage:newer.lastMessage,...(since.length?{waitingSince:Math.min(...since)}:{})});
   }
   return result;
 }
@@ -78,20 +101,23 @@ async function readBody(req) {
 function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
   const dataDir=options.storeDir || path.join(root,'data');
-  const credentials=options.credentials || createCredentialStore(dataDir);
+  const storeFactory=options.persistence?options.persistence.store:createStore;
+  const credentials=options.credentials || createCredentialStore(dataDir,{repository:options.persistence?.credentials});
   const localAi=options.localAi || createLocalAi();
   // Na central real, a lista de conversas é compartilhada (2 s) e completa a cada 30 s; nos testes, cada consulta é direta.
   const production=!options.storeDir;
   const now=options.now || Date.now;
-  const accounts=createAccountRegistry(dataDir,options.config,now);
+  const accounts=createAccountRegistry(dataDir,options.config,now,{storeFactory,accounts:options.initialAccounts});
   // Base de conhecimento, produtos, provedor de IA e voz são compartilhados; as regras do robô vêm da conta do pedido.
-  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),credentials});
+  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,{...(options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json')}),credentials,storeFactory,...(options.persistence?{blobFactory:options.persistence.blobs}:{})});
   const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
+  // Transcrição de todo áudio recebido (Whisper local): sempre na central real; nos testes só quando options.autoTranscription for informado.
+  const autoTranscription=options.autoTranscription ?? !options.storeDir;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   // Cada conta tem conector, dados de atendimento, robôs, fila de equipe e eventos próprios: conversas, regras e envios nunca se misturam.
   function createAccountRuntime(account) {
     const config={...options.config,instanceName:account.instanceName};
-    const client=createEvolutionClient({chatsCacheMs:options.chatsCacheMs ?? (production?2000:0),chatsFullRefreshMs:options.chatsFullRefreshMs ?? (production?30_000:0),...config},options.fetchImpl),store=createStore(accountDir(dataDir,account.id)),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
+    const client=createEvolutionClient({chatsCacheMs:options.chatsCacheMs ?? (production?2000:0),chatsFullRefreshMs:options.chatsFullRefreshMs ?? (production?30_000:0),...config},options.fetchImpl),store=storeFactory(accountDir(dataDir,account.id)),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
     // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
     const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
     const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
@@ -127,14 +153,26 @@ function createWhatsAppServer(options={}) {
       requests.set(id,{hash,promise});if(requests.size>1000) requests.delete(requests.keys().next().value);
       return promise;
     }
-    const messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,now});
+    const messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,transcriptions,now});
     const housekeeping=()=>store.update(data=>pruneState(data,now()));
     let replyTick=null,lastPoll=0,pollAgain=false,eventTimer=null,stopped=false;
+    const audioCursors=new Map(),audioStartedAt=Date.now();
+    async function pollAudio() {
+      for(const chat of await client.chats()) {
+        const last=chat.lastMessage;if(!last) continue;
+        const cursor=last.id || String(last.timestamp),known=audioCursors.has(chat.jid);
+        if(audioCursors.get(chat.jid)===cursor) continue;
+        // Read the recent page when a chat changes: a later text must not hide a preceding voice message.
+        if(known || last.timestamp>=audioStartedAt) await transcriptions.discover(chat.jid,(await client.messages(chat.jid,1)).messages);
+        else if(last.type==='audio') await transcriptions.discover(chat.jid,[last]);
+        audioCursors.set(chat.jid,cursor);
+      }
+    }
     const pollReplies=()=>{
       if(stopped) return Promise.resolve();
       if(replyTick) {pollAgain=true;return replyTick;}
       lastPoll=Date.now();
-      replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
+      replyTick=(async()=>{if(autoTranscription) await pollAudio().catch(()=>{});await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
       return replyTick;
     };
     // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
@@ -151,7 +189,8 @@ function createWhatsAppServer(options={}) {
       }
     };
     const stop=()=>{stopped=true;clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();};
-    const idle=()=>Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle()]);
+    // Ao fechar, espera o ciclo em andamento e as transcrições: nada grava depois que o PostgreSQL fecha.
+    const idle=async()=>{if(replyTick) await replyTick;await Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),transcriptions.idle()]);};
     return {account,client,store,rules,transcriptions,voice,assistant,avatars,crm,automation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
   }
   const runtimes=new Map(accounts.list().map(account=>[account.id,createAccountRuntime(account)]));
@@ -164,16 +203,17 @@ function createWhatsAppServer(options={}) {
     const runtime=runtimes.get(id);runtimes.delete(id);runtime.stop();
     // Uma espera humanizada não pode segurar a resposta; ao terminar, o robô já encontra a parada.
     await Promise.race([runtime.idle(),new Promise(resolve=>{const timer=setTimeout(resolve,3000);timer.unref?.();})]);
-    await archiveAccount(dataDir,id,runtime.store,now);
+    if(options.persistence) await options.persistence.archiveAccount(id,now);else await archiveAccount(dataDir,id,runtime.store,now);
   }
-  const server=http.createServer(async(req,res)=>{
+  const server=options.server || http.createServer();
+  server.on('request',async(req,res)=>{
     for(const [name,value] of Object.entries({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' data: blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})) res.setHeader(name,value);
     const hosts=[`127.0.0.1:${req.socket.localPort}`,`localhost:${req.socket.localPort}`];
     if(!hosts.includes(req.headers.host)) return json(res,403,{error:'Endereço local inválido.'});
     if(req.headers.origin && req.headers.origin!==`http://${req.headers.host}`) return json(res,403,{error:'Abra a central no endereço local.'});
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
-      if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid});}
+      if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid,storage:options.persistence?'postgresql':'local-test'});}
       if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js','/assets/accounts.js','/assets/accounts.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n<meta name="whatsapp-accounts" content="${accounts.list().map(item=>item.id).join(',')}">\n</head>`);
@@ -248,15 +288,19 @@ function createWhatsAppServer(options={}) {
         const result=await client.archiveSnapshot();client.invalidateChats();
         // Quantas aparecem de fato na lista: ajuda a explicar quando o WhatsApp tem mais arquivadas do que a central consegue casar.
         const [data,remote,list]=await Promise.all([store.read(),client.archivedState({maxAge:0}).catch(()=>null),client.chats()]);
-        const shown=list.filter(chat=>archivedOf(chat,data.contacts?.[chat.jid],remote)).length+(await archivedOnlyChats(list,remote,data.contacts,client)).length;
+        const merged=mergeAliasChats(list,data.contacts);
+        const shown=merged.filter(chat=>archivedOf(chat,data.contacts,remote)).length+(await archivedOnlyChats(merged,remote,data.contacts,client)).length;
         return json(res,200,{...result,shown,unarchiveChats:remote?.meta?.unarchiveChats ?? null});
       }
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
         if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
-        const listed=await client.chats(),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
-        const chats=[...listed,...extra].map(chat=>({...chat,...contactDefault(),...data.contacts[chat.jid],archived:archivedOf(chat,data.contacts[chat.jid],archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{})}));
+        // readState: a última mensagem já lida pela central zera o contador, mesmo antes de o WhatsApp confirmar a leitura.
+        const listed=mergeAliasChats(await client.chats(),data.contacts,waiting),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
+        const chats=[...listed,...extra].map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage,since=chat.waitingSince ?? waiting[chat.jid]?.since;
+          const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
+          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,data.contacts,archived),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
@@ -277,7 +321,9 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/messages') {
         const jid=assertJid(url.searchParams.get('jid')),page=Number(url.searchParams.get('page') || 1);
         if(!Number.isSafeInteger(page) || page<1 || page>100000) throw new ApiError('Página inválida.',422);
-        return json(res,200,await client.messages(jid,page));
+        const result=await client.messages(jid,page);
+        if(autoTranscription) await transcriptions.discover(jid,result.messages).catch(()=>{});
+        return json(res,200,result);
       }
       if(route==='/api/contact' && ['GET','PATCH'].includes(req.method)) {
         const jid=assertJid(url.searchParams.get('jid'));
@@ -307,7 +353,9 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/read') {
         const input=await readBody(req),jid=assertJid(input.jid);
         if(!Array.isArray(input.keys) || input.keys.length>100 || input.keys.some(key=>!key || typeof key.id!=='string' || key.id.length>200 || key.fromMe!==false || key.remoteJid!==jid)) throw new ApiError('Mensagens de leitura inválidas.',422);
-        if(input.keys.length) await client.read(jid,input.keys);return json(res,200,{read:true});
+        if(input.lastSeenId!==undefined && (typeof input.lastSeenId!=='string' || input.lastSeenId.length>200)) throw new ApiError('Mensagem de leitura inválida.',422);
+        if(input.keys.length) {await client.read(jid,input.keys);await store.update(data=>{const contact=data.contacts[jid] ||= contactDefault();contact.readState={messageIds:input.keys.map(key=>key.id),lastSeenId:input.lastSeenId || input.keys.at(-1).id};});}
+        return json(res,200,{read:true});
       }
       if(req.method==='POST' && route==='/api/send') {
         const input=await readBody(req),jid=assertJid(input.jid),text=textField(input.text,10000,'Mensagem'),quotedId=quoteId(input.quotedId);
@@ -317,8 +365,9 @@ function createWhatsAppServer(options={}) {
         const input=await readBody(req),jid=assertJid(input.jid);
         if(!['image','video','audio','document'].includes(input.mediaType) || typeof input.base64!=='string' || (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64) || input.base64.length%4!==0) || !input.base64 || Buffer.byteLength(input.base64,'base64')>10*1024*1024) throw new ApiError('Anexo inválido. Envie um arquivo de até 10 MB.',422);
         textField(input.fileName,200,'Nome do arquivo');if(typeof input.mimeType!=='string' || !/^[\w.+-]+\/[\w.+-]+$/.test(input.mimeType) || (input.caption!==undefined && (typeof input.caption!=='string' || input.caption.length>4000))) throw new ApiError('Tipo ou legenda do arquivo inválido.',422);
-        const quotedId=quoteId(input.quotedId);
-        return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,{...input,quotedId})));
+        const quotedId=quoteId(input.quotedId),viewOnce=optionalSendFlag(input.viewOnce);
+        if(viewOnce && !['image','video','audio'].includes(input.mediaType)) throw new ApiError('A visualização única é uma opção para áudio, foto ou vídeo.',422);
+        return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,{...input,quotedId,viewOnce})));
       }
       if(req.method==='GET' && route==='/api/media') {
         const jid=assertJid(url.searchParams.get('jid')),id=textField(url.searchParams.get('id'),200,'Mensagem');
@@ -339,25 +388,37 @@ function createWhatsAppServer(options={}) {
   server.invalidateChats=()=>main.client.invalidateChats();
   server.team=main.team;server.accounts=runtimes;
   let replyTimer=null,cleanTimer=null;
-  server.on('listening',()=>{
+  const startWorkers=()=>{
     for(const runtime of runtimes.values()) runtime.start();
     if(!options.disableWorkers) {
       replyTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.scheduledPoll();},5000);replyTimer.unref?.();
       cleanTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();
     }
-  });
+  };
+  server.on('listening',startWorkers);if(server.listening) queueMicrotask(startWorkers);
   server.cleanup=Promise.resolve();
-  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
+  server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.ready(),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {
   (async()=>{
-    const config=JSON.parse(await fs.readFile(path.join(root,'data','config.json'),'utf8')),server=createWhatsAppServer({config}),url='http://127.0.0.1:8766/';
-    server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`A central já pode estar aberta (talvez uma versão anterior): ${url}\nUse Parar WhatsApp.cmd e depois Abrir WhatsApp.cmd.`:error.message);process.exitCode=1;});
-    server.listen(8766,'127.0.0.1',()=>{
+    // Reserva a porta antes de ler/migrar dados: uma central legada ainda aberta não pode continuar gravando JSON após a importação.
+    const {reserveApplicationPort}=require('./lib/bootstrap.cjs'),reserved=await reserveApplicationPort(8766);
+    let persistence;
+    try {
+    const dataDir=path.join(root,'data'),databaseConfig=JSON.parse(await fs.readFile(path.join(dataDir,'database.json'),'utf8'));
+    const {createPostgresPersistence}=require('./lib/postgres.cjs');persistence=createPostgresPersistence(databaseConfig,dataDir);
+      await persistence.initialize();const migrated=await persistence.migrate();if(migrated.imported) console.log(`Dados importados para PostgreSQL: ${migrated.documents} conjuntos e ${migrated.credentials} credenciais protegidas. Arquivos de origem preservados.`);
+      const config=await persistence.store(dataDir,{file:'config.json',initial:{}}).read(),credentials=createCredentialStore(dataDir,{repository:persistence.credentials});
+      config.apiKey=await credentials.get('evolution');if(await credentials.has('integration')) config.integrationToken=await credentials.get('integration');
+      if(!config.apiKey || !config.apiUrl || !config.instanceName) throw new Error('Configuração do conector ausente no PostgreSQL.');
+      const registry=await persistence.store(dataDir,{file:'contas.json',initial:{accounts:[{id:'principal',name:'Conta principal',instanceName:config.instanceName,createdAt:null}]}}).read();
+      reserved.activate();const server=createWhatsAppServer({config,persistence,credentials,initialAccounts:registry.accounts,server:reserved.server}),url='http://127.0.0.1:8766/';
+      server.on('close',()=>{server.cleanup=server.cleanup.finally(()=>persistence.close());});
+      const shutdown=()=>server.close(()=>{});process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
       console.log(`Whats AI · ${url}\nSessão preservada no Docker. Não remova os volumes.`);
       if(!process.argv.includes('--no-open')) execFile('powershell.exe',['-NoProfile','-Command',`Start-Process '${url}'`],{windowsHide:true},()=>{});
-    });
-  })().catch(error=>{console.error(error.code==='ENOENT'?'Abra Iniciar WhatsApp.cmd para configurar o conector.':error.message);process.exitCode=1;});
+    }catch(error) {await reserved.close();if(persistence) await persistence.close();throw error;}
+  })().catch(error=>{console.error(error.code==='ENOENT'?'Abra Iniciar WhatsApp Local.cmd para configurar o conector.':error.code==='EADDRINUSE'?'A central já está aberta na porta 8766. Feche a versão anterior antes de migrar; nenhum dado foi importado.':error.message);process.exitCode=1;});
 }
 module.exports={createWhatsAppServer};

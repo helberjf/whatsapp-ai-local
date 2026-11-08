@@ -22,7 +22,7 @@
   function mergeContact(detail) {
     const index=contacts.findIndex(contact=>contact.jid===detail.jid);
     if(index>=0) contacts[index]={...contacts[index],...detail};
-    const chat=hooks.getChats().find(chat=>chat.jid===detail.jid);if(chat) Object.assign(chat,detail);
+    const chat=hooks.getChats().find(chat=>chat.jid===detail.jid);if(chat) Object.assign(chat,detail,{archived:chat.archived});
     if(selected?.jid===detail.jid) {selected={...selected,...detail};renderContactTools();}
   }
   async function loadCrm() {

@@ -38,7 +38,8 @@ Open [the local demo](http://127.0.0.1:8876/). Stop it with **Ctrl+C**. Normal s
 - **Conversations:** an expanded conversation column with contact/CRM tools available in a closable details panel. Search and filter by name, phone, labels, unread state, and attendance status; preserve drafts and scroll position during refreshes. Open global search from the sidebar or with **Ctrl+K**.
 - **Messaging:** one attachment button for photos, videos, audio, documents and stickers; **Enter** sends and **Shift+Enter** inserts a line break. Insert quick replies, copy message text, forward supported content, use emoji, create polls, and delete your own messages for everyone when the connector accepts the request.
 - **WhatsApp features:** reply to a specific message (quoted), react with emoji, edit your own texts within WhatsApp's 15-minute window, share a location (typed coordinates or the browser's location) or a contact card, and open received locations and contact cards. Pin up to three conversations, mute (8 hours, 1 week, always), archive, mark as unread, block/unblock, star messages, search inside the loaded conversation, and get optional desktop notifications and sound. The contact sees "typing…" and "recording audio…" while you write or record (can be turned off). Edit your own WhatsApp name, about text, photo and privacy settings in **Meu perfil e privacidade**.
-- **Media:** record voice messages from the composer, review playback, then explicitly send or discard. Recordings are sent as native WhatsApp voice notes (PTT); any text in the editor stays as a draft because voice notes have no caption. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, start video with one play action, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **Media:** record voice messages from the composer, review playback, then explicitly send or discard. Recordings are sent as native WhatsApp voice notes (PTT). Choose **Enviar como texto** to preview and edit the local Whisper transcription, then select **Enviar texto** to send it. Tap **1** while recording or previewing audio, photos or videos to enable WhatsApp view once for that item. Recordings require browser microphone permission and stop at five minutes or the attachment size limit. Load received audio with seek/speed controls, start video with one play action, enlarge supported images, and read PDFs in the app with page/zoom controls. PDF rendering uses locally served [Mozilla PDF.js](https://mozilla.github.io/pdf.js/); documents are not uploaded to another viewer. Transcribe audio with local Whisper or an explicitly selected OpenAI transcription service.
+- **Media previews:** received images show an inline preview automatically. Videos display their cover, name and duration when the connector provides those fields; the full video loads only after an explicit play action. Selected photos and videos show a local preview before sending, and removing or replacing the attachment releases its temporary URL.
 - **Contacts and CRM:** **Contatos** lists the WhatsApp address book together with conversations (a phone number and a private `@lid` identifier of the same person count once, with the known phone shown), 200 at a time with search and status filters; contacts without a conversation open a new one. Maintain status, labels, private notes, pipeline stage, follow-up information, and per-contact automation preferences. Display profile and business details when WhatsApp makes them available.
 - **Scheduled messages:** persist a text message for a future instant, edit or cancel eligible jobs, and show an explicit uncertain state when delivery cannot be confirmed.
 - **Automatic triggers:** configure first-contact, keyword, and outside-business-hours replies with optional inactivity filters, delays, and ordered response sequences. Responses can include text, audio, images, video, documents, or polls. Test saved rules without sending a message.
@@ -72,7 +73,7 @@ In **Conexão WhatsApp**, choose **Conectar WhatsApp**. On the phone, open **Lin
 
 ### Several WhatsApp accounts
 
-Use the account button at the top of the sidebar to see the status of every account, add another one, or switch between them. Each account is its own Evolution instance, paired with its own QR code. The account that existed before this feature keeps its instance, session, and data in `data/central.sqlite`: updating requires no new pairing.
+Use the account button at the top of the sidebar to see the status of every account, add another one, or switch between them. Each account is its own Evolution instance, paired with its own QR code. The original account keeps its instance and session; its former `data/atendimento.json` state is migrated to PostgreSQL. Updating requires no new pairing.
 
 | Per account | Shared by all accounts |
 | --- | --- |
@@ -89,7 +90,7 @@ Other entry points:
 | `npm run configure` | Generate missing initial configuration without replacing existing secrets. |
 | `npm run serve` | Run only the Node server when configuration and the connector are already available. |
 | `npm run shortcut` | Create the **Whats AI** desktop shortcut and migrate the previous app shortcut when owned by this project. |
-| `Abrir WhatsApp.cmd` / `Iniciar WhatsApp.cmd` | Start the local stack and open the application. A central left running from before an update is restarted with the new code; the page also warns when the running central is older than its files. |
+| `Iniciar WhatsApp Local.cmd` / `npm start` | Start the local stack and open the application. Existing `Abrir WhatsApp.cmd` and `Iniciar WhatsApp.cmd` launchers remain compatible. The launcher restarts an older running build after an update. |
 | `Parar WhatsApp.cmd` | Stop the application and containers while preserving data. |
 | `Ativar inicio com Windows.cmd` | Opt into starting the services at Windows sign-in. |
 | `Desativar inicio com Windows.cmd` | Remove that sign-in shortcut. |
@@ -242,7 +243,9 @@ npm run rag:testar -- --pergunta "Vocês entregam no meu bairro?" --confiabilida
 
 `rag:testar` prints, for each question, the confidence, the document and the start of the passage found, plus a summary. Questions with no passage identify topics or wording to investigate. This checks retrieval, not the factual accuracy of generated answers. Both commands can refresh the embedding index and use the configured provider even while the app is closed; see [`scripts/rag-lib.cjs`](scripts/rag-lib.cjs).
 
-Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatible endpoints. Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. With a cloud embedding model, **every passage of every knowledge document** is also sent to that provider during indexing, and each question when searching; use a local Ollama model or `off` to avoid this. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
+The **Assistente de IA** page offers OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, Groq, Mistral AI, xAI (Grok), OpenRouter, Together AI, Perplexity, Ollama, and custom OpenAI-compatible endpoints. Choose a provider, paste its key, and click **Carregar modelos do provedor** to retrieve the conversation models available to that account (or installed in Ollama). This explicit catalog query uses the pasted or saved key without saving a new key or changing the active assistant. Initial suggestions are not a guarantee of account access. Providers without a model-list endpoint can use the suggestions or **Informar outro modelo…** for an exact model identifier, including private models. Click **Salvar** to persist the configuration and encrypt the key; a blank key preserves the key already saved for that provider. Changing providers clears pasted credentials and the previous API address from the form.
+
+Model availability and credentials depend on the chosen provider. Questions, selected document passages, catalog context, and relevant conversation content may be sent to that configured endpoint when an AI feature runs. Transcription sends audio only when its cloud option is explicitly selected. With a local Ollama endpoint and local Whisper, those AI processing steps can remain on the machine; the WhatsApp connection still uses the network.
 
 ## Architecture
 
@@ -250,8 +253,9 @@ Provider adapters support OpenAI, Anthropic, Google Gemini, Ollama, and compatib
 flowchart LR
     Browser[Vanilla JS browser UI] -->|Loopback HTTP + session token| Node[Node.js HTTP server]
     Node --> Services[CRM · scheduling · triggers · assistant · knowledge]
-    Services --> Files[data/central.sqlite: attendance, knowledge, catalog, images, vectors]
-    Services --> Vault[SQLite + Windows DPAPI AI credentials]
+    Services --> CentralDB[(PostgreSQL · whatsapp_central: attendance, knowledge, catalog, images, vectors)]
+    Services --> Files[Local media files]
+    CentralDB --> Vault[Encrypted credentials · Windows DPAPI]
     Node --> Evolution[Evolution API + local extension]
     Evolution --> PostgreSQL[(PostgreSQL)]
     Evolution --> Redis[(Redis)]
@@ -268,11 +272,11 @@ flowchart LR
 | Team | [`lib/team.cjs`](lib/team.cjs): waiting queue, daily metrics, triage, queue notices, satisfaction polls and bulk actions; [`public/team.js`](public/team.js) holds the queue filters, `/` replies, assignment and dashboard. |
 | Synchronization | [`lib/evolution.cjs`](lib/evolution.cjs) shares an incremental conversation list and single-conversation lookups; [`lib/evolution-events.cjs`](lib/evolution-events.cjs) is a minimal Socket.IO client for connector events (Node's built-in WebSocket); [`lib/chat-delta.cjs`](lib/chat-delta.cjs) sends the browser only changed conversations. |
 | WhatsApp operations | [`lib/messaging-routes.cjs`](lib/messaging-routes.cjs): replies, reactions, edits, location, contact, voice notes, presence, chat organization, starred messages, profile and privacy. |
-| Persistence | [`lib/store.cjs`](lib/store.cjs) and [`lib/database.cjs`](lib/database.cjs): one `data/central.sqlite` for attendance, knowledge, catalog, photos and vectors, with serialized updates (only changed items are written, reads copy only what is accessed); the database is opened only during each operation. `ai.json` stays JSON, and credentials use a separate SQLite database. [`lib/housekeeping.cjs`](lib/housekeeping.cjs) prunes old duplicate-reply reservations. |
+| Persistence | [`lib/postgres.cjs`](lib/postgres.cjs): the running central keeps attendance, accounts, knowledge, catalog, images, vectors and DPAPI-encrypted credentials in a dedicated PostgreSQL database. [`lib/store.cjs`](lib/store.cjs) and [`lib/database.cjs`](lib/database.cjs) keep the same interface on `data/central.sqlite` for tests and the demo. |
 | Infrastructure | [`infra/compose.yaml`](infra/compose.yaml): Evolution API 2.3.7, PostgreSQL 16, Redis 7, and persistent volumes. |
 | Windows lifecycle | [`scripts/`](scripts/): configuration, start/stop, shortcuts, optional sign-in startup, and secret protection. |
 
-The runtime has no npm framework dependencies. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
+The runtime uses `pg` for PostgreSQL and `pdfjs-dist` for PDF rendering; it has no frontend framework. Playwright is a development dependency for browser tests. Background workers use local polling; no public webhook endpoint is required. The connector extension adds the supported native disappearing-message operation and capability metadata; stock connector deployments can report that feature as unavailable.
 
 ## Design trade-offs
 
@@ -295,27 +299,28 @@ For a technical walkthrough, follow [message routing](lib/messaging-routes.cjs),
 
 This is a local application without per-person authentication. The HTTP server binds to loopback, validates the host and origin, requires a per-process token for API access, and sets browser security headers. Exposing it through a reverse proxy or changing the bind address requires a separate authentication and deployment design.
 
-AI credentials are encrypted in `data/credentials.sqlite` with **Windows DPAPI for the current Windows user**. The active assistant provider key and the OpenAI transcription key are stored separately; the interface receives only configured/not-configured information. Copying the database to another computer or user does not make those keys decryptable there. On unsupported platforms, credential protection fails explicitly; there is no plaintext fallback.
+Production stores the central's account registry, contact/CRM metadata, scheduling, automation, send reservations, transcription results, AI configuration, products and knowledge text in the dedicated **`whatsapp_central` PostgreSQL database**, using its own non-superuser login. The Evolution connector retains its separate `whatsapp` database and existing paired instances. The application pool connects only through `127.0.0.1:8768`; the port is not published on other host interfaces. State documents use JSONB with row locks for updates, while knowledge text and credentials have separate tables. This preserves the service contracts; it is not a claim that the existing single-process reply workers support running multiple application servers.
 
-For older installations, the application migrates a plaintext assistant key from `data/ai.json` when it is accessed: it saves the protected value, verifies it can be read back, then removes the JSON field atomically. If protection or verification fails, the original file is preserved and the operation returns an error for a later retry. Existing backups are not rewritten by this migration.
+AI, transcription, connector and integration credentials are encrypted **before database writes**, using Windows DPAPI for the current Windows user, and stored as BYTEA. Each assistant provider has its own credential, separate from the OpenAI transcription key. Switching providers never reuses another provider's key; removing a key affects only the selected provider. The interface receives only configured/not-configured information, never saved secrets. Copying the database to another computer or user does not make those keys decryptable there. On unsupported platforms, credential protection fails explicitly; there is no plaintext fallback.
 
-Connector and container secrets remain local files (`data/config.json` and `infra/.env`). Those files are excluded from Git, but that exclusion is not encryption. Protect the Windows account and backups; do not share the data directory.
+At first production start, the application reserves its HTTP port **before migration**, reads the former JSON state and SQLite ciphertext, and imports them in one PostgreSQL transaction. Legacy plaintext AI/connector/integration keys are encrypted and verified before insertion; they never enter the JSONB documents. Knowledge text is imported from the extracted `.txt` files. The transaction verifies imported contents and records a migration marker only after success. A failed import rolls back and stops startup; a later start can retry. Once marked, startup never re-imports stale local files. All original files remain preserved as migration sources; subsequent writes go to PostgreSQL. PostgreSQL failure does not silently switch production back to JSON or SQLite.
 
-The main local files are:
+The former shared assistant credential is migrated to the configured cloud provider after a verified encrypted write. If the old configuration uses Ollama, its former cloud key has no reliable provider attribution: it is retained in an encrypted, unassigned entry and never sent to another provider. Re-enter the appropriate key when selecting a cloud provider in that case. Model-list requests do not follow redirects or send saved keys to a different API address; paste a key explicitly when querying another address.
+
+The PostgreSQL bootstrap connection is in `data/database.json`. Docker initialization secrets remain in `infra/.env`; the original `data/config.json` is retained as a migration source. These files are excluded from Git, but that exclusion is not encryption. Protect the Windows account and backups; do not share the data directory. The configurator preserves existing connector/container passwords, creates a separate central database password, and the launcher provisions the dedicated login/database before starting the server.
+
+Current persistence locations are:
 
 | Location | Contents |
 | --- | --- |
-| `data/central.sqlite` | One SQLite database with all central data, each set in its own store: attendance (contacts, CRM, quick replies, scheduling, automation rules, send reservations, transcriptions, voice flow, chat organization, starred messages), knowledge documents and their extracted text, the product catalog and its photos, and embedding vectors. |
-| `data/contas.json` | Account list. Created when a second account is added; until then the instance in `data/config.json` is the only account, and its data stays in `data/central.sqlite`. |
-| `data/contas/<id>/central.sqlite` | Attendance data of each additional account (same tables, its own file). |
-| `data/contas-arquivadas/` | JSON export of the attendance data of removed accounts. |
-| `*.migrado` | Copies of the previous files after the one-time import into `central.sqlite` (`atendimento.sqlite`/`atendimento.json`, `knowledge.json`, `produtos.json` and the `knowledge/`, `product-images/` and `embeddings/` folders). They are no longer read and can be deleted after you check the central. |
-| `data/ai.json` | Provider, model, and endpoint metadata; no API key after successful save or migration. |
-| `data/credentials.sqlite` | Separate DPAPI-protected assistant and transcription credentials. |
-| `data/config.json`, `infra/.env` | Generated connector and container configuration. |
+| PostgreSQL `whatsapp_central`, schema `central` | State of the running central: attendance of each account (contacts, CRM, quick replies, scheduling, automations, transcriptions), account registry, archived accounts, knowledge base, catalog, product images, search vectors, provider/model metadata, encrypted credentials and migration markers. |
+| `data/trigger-media/` | Immutable media files used by trigger rules, referenced by content hash. |
+| `data/database.json`, `infra/.env` | Database connection and Docker initialization secrets. |
+| Former JSON files, `data/knowledge/`, `data/product-images/`, `data/embeddings/`, `data/credentials.sqlite` | Preserved sources of the one-time imports; not read again after a successful migration. |
+| `data/central.sqlite` | Used only by tests and the demo, with the same stores as PostgreSQL. |
 | `data/*.log` | Local diagnostics. |
 
-The connector session and synchronized messages reside in Docker volumes named under `whatsapp-local`. **Do not remove those volumes or use `docker compose down -v` for an ordinary stop.** Backing up the project directory alone does not back up the Docker database and pairing session. The internal Compose name stays stable to retain those volumes.
+The central database, connector database and pairing session reside in Docker volumes named under `whatsapp-local`. **Do not remove those volumes or use `docker compose down -v` for an ordinary stop.** Back up `whatsapp_central` with PostgreSQL tools, the connector database/session, referenced media directories, and bootstrap secrets. Backing up former JSON/SQLite files alone does not capture new production writes. A restore must include both database records and their referenced files, and DPAPI ciphertext still requires the original Windows user/machine. The internal Compose name stays stable to retain existing volumes.
 
 `data/`, connector environment files, logs, generated credentials, and dependencies are excluded from version control. The committed demo and test fixtures use fictional contacts. On Windows installations with HTTPS inspection, the optional trust helper exports a public certificate from an already trusted Windows root; it keeps TLS verification enabled and does not export a private key.
 
@@ -325,9 +330,12 @@ The connector session and synchronized messages reside in Docker volumes named u
 npm test
 npx playwright install chromium
 npm run test:e2e
+# With the local PostgreSQL prepared, run integration tests in isolated qa_* schemas:
+$env:WHATSAPP_PG_TEST='1'
+node --test --test-concurrency=1 tests/postgres.test.cjs
 ```
 
-The Node suite covers domain behavior, HTTP contracts, persistence, retries and uncertain delivery, frontend state, and credential handling. The browser suite uses an isolated fixture server and fake connectors. Neither suite needs a paired WhatsApp session or sends messages to real contacts. The Windows DPAPI test is skipped on non-Windows platforms.
+The Node suite covers domain behavior, HTTP contracts, persistence, retries and uncertain delivery, frontend state, and credential handling. PostgreSQL integration tests are opt-in and create/drop only randomly named `qa_*` schemas; production tables are never used. The browser suite uses isolated fixtures and fake connectors. The media preview spec serves real assets with simulated API replies and exercises actual browser image/video elements. Neither suite needs a paired WhatsApp session or sends messages to real contacts. The Windows DPAPI test is skipped on non-Windows platforms.
 
 Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing.md`](docs/testing.md) for the validation scope, fixture boundaries, test recording with `npm run codegen`, and manual checks. A passing fake-connector test verifies the application contract; it does not prove that an upstream WhatsApp session will accept every operation.
 
@@ -343,9 +351,9 @@ Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing
 - Media and forwarding are limited to supported types and 10 MB. Forwarding recreates content as a new message; Evolution 2.3.7 does not provide the native forwarded badge through this workflow.
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
 - Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
-- The local SQLite store is designed for one application process; it is not a shared database for several central instances. Duplicate-reply reservations are kept for 3 days and send idempotency records for 7 days (a message can only be answered automatically in its first 15 minutes; trigger delays reach 24 hours). Transcription results are not pruned.
+- PostgreSQL holds durable central state; reply workers still assume a single application server process. Duplicate-reply protection relies on that.
 - Cloud AI answers and imported catalog suggestions require review appropriate to the task. Hybrid retrieval can still miss relevant information; when embeddings are unavailable or disabled, keyword-only fallback is more sensitive to wording.
-- AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a copied SQLite database alone cannot restore access.
+- AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a database copy alone cannot restore access.
 
 For local diagnostics:
 

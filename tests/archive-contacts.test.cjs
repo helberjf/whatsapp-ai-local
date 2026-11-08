@@ -120,7 +120,7 @@ test('central busca as arquivadas antigas, avisa extensão desatualizada e aplic
   assert.deepEqual(await state(),{[jidOf(1)]:true,[jidOf(2)]:true},'"Manter arquivadas" ligado: ficam arquivadas');
   unarchiveChats=true;server.invalidateChats();
   assert.deepEqual(await state(),{[jidOf(1)]:true,[jidOf(2)]:false},'com mensagem depois de arquivar, sai das arquivadas como no celular');
-  delete routes['/localArchivedSnapshot/'];const old=await call('/api/archived/sync','POST',{});assert.equal(old.status,409);assert.match(old.body.error,/Abrir WhatsApp/);
+  delete routes['/localArchivedSnapshot/'];const old=await call('/api/archived/sync','POST',{});assert.equal(old.status,409);assert.match(old.body.error,/Iniciar WhatsApp Local/);
 });
 
 test('central sobe a leitura automática uma vez quando a extensão ainda não leu as arquivadas',async t=>{

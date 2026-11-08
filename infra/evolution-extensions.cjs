@@ -16,6 +16,16 @@ const expirationValid=value=>[0,86400,604800,7776000].includes(value);
 const ARCHIVE_META='$meta';
 const SNAPSHOT_COLLECTION='regular_low';
 const numberOf=value=>typeof value==='object' && value?(typeof value.toNumber==='function'?value.toNumber():Number(value.low)):Number(value || 0);
+function isViewOnce(raw) {
+  let content=raw?.message;
+  if(raw?.key?.isViewOnce===true) return true;
+  for(let i=0;i<5 && content;i++) {
+    if(content.viewOnceMessage || content.viewOnceMessageV2 || content.viewOnceMessageV2Extension ||
+      ['audioMessage','imageMessage','videoMessage'].some(key=>content[key]?.viewOnce===true)) return true;
+    content=content.ephemeralMessage?.message || content.documentWithCaptionMessage?.message;
+  }
+  return false;
+}
 function createExtension(storage={},archiveStorage={},runtime={}) {
   const loadBaileys=runtime.loadBaileys || (()=>import('baileys'));
   const loadArchive=archiveStorage.load || (()=>{try {const stat=fs.statSync(ARCHIVE_STORE);if(stat.size>4_000_000) return {};return JSON.parse(fs.readFileSync(ARCHIVE_STORE,'utf8'));}catch {return {};}});
@@ -109,6 +119,36 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
   function expirationFor(service,jid) {observe(service);return individual(jid)?timer(service,jid)?.expiration:undefined;}
   function serviceFor(controller,request) {return controller?.waMonitor?.waInstances?.[request.params?.instanceName];}
   const fail=(response,status,message)=>response.status(status).json({error:message});
+  function viewOnceHandler(controller) {return async(request,response)=>{
+    const {number,mediatype,media,mimetype,fileName,caption,quoted}=request.body || {};
+    if(!individual(number) ||
+      !['audio','image','video'].includes(mediatype) || typeof media!=='string' || !media ||
+      media.length%4!==0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(media) || Buffer.byteLength(media,'base64')>10*1024*1024) {
+      return fail(response,422,'Mídia de visualização única inválida.');
+    }
+    if(mediatype!=='audio' && (typeof mimetype!=='string' || !mimetype.startsWith(mediatype+'/') ||
+      typeof fileName!=='string' || !fileName || fileName.length>200 ||
+      (caption!==undefined && (typeof caption!=='string' || caption.length>4000)))) {
+      return fail(response,422,'Arquivo ou legenda inválida.');
+    }
+    const service=serviceFor(controller,request);
+    if(typeof service?.sendMessageWithTyping!=='function') return fail(response,503,'O WhatsApp precisa estar conectado.');
+    try {
+      let message;
+      if(mediatype==='audio') {
+        const audio=await service.processAudio(media);
+        if(!Buffer.isBuffer(audio) || !audio.length) return fail(response,422,'Não foi possível converter o áudio.');
+        message={audio,ptt:true,mimetype:'audio/ogg; codecs=opus',viewOnce:true};
+      } else {
+        const prepared=await service.prepareMediaMessage({mediatype,media,mimetype,fileName,caption});
+        prepared.message[mediatype+'Message'].viewOnce=true;
+        message={viewOnceMessage:{message:prepared.message}};
+      }
+      const result=await service.sendMessageWithTyping(number,message,{quoted});
+      if(result?.key?.id && isViewOnce(result)) return response.status(200).json(result);
+    } catch { /* O cliente precisa confirmar o resultado na conversa antes de repetir. */ }
+    return fail(response,502,'O WhatsApp não confirmou o envio de visualização única.');
+  };}
   function capabilityHandler(controller) {return async(request,response)=>{
     const service=serviceFor(controller,request),supported=typeof service?.client?.sendMessage==='function' && Boolean(instanceKey(service));
     const jid=request.query?.number;
@@ -197,7 +237,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
       return fail(response,missingKey?409:502,missingKey?'O WhatsApp ainda não enviou as chaves para ler as arquivadas deste aparelho. Aguarde alguns minutos conectado e tente de novo.':'O WhatsApp não respondeu à leitura das arquivadas. Tente novamente em instantes.');
     }
   };}
-  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,observe,rememberArchive};
+  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,observe,rememberArchive,viewOnceHandler};
 }
 function patchBundle(source,version) {
   if(version!=='2.3.7') throw new Error('Unsupported Evolution version; expected 2.3.7.');
@@ -205,9 +245,10 @@ function patchBundle(source,version) {
   const route='.delete(this.routerPath("deleteMessageForEveryone"),...e,async(t,o)=>';
   const send='l=await this.sendMessage(r,t,u,a,c,null,void 0,m)';
   const events='eventHandler(){this.client.ev.process(';
-  if([route,send,events].some(anchor=>source.split(anchor).length!==2)) throw new Error('Evolution extension patch anchors must each occur exactly once.');
+  const media='if(!n)throw"Message not found";for(let d of Xr)';
+  if([route,send,events,media].some(anchor=>source.split(anchor).length!==2)) throw new Error('Evolution extension patch anchors must each occur exactly once.');
   const extension='require("/evolution/local/evolution-extensions.cjs")';
-  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).post(this.routerPath("localArchivedSnapshot"),...e,${extension}.archiveSnapshotHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`);
+  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).post(this.routerPath("localArchivedSnapshot"),...e,${extension}.archiveSnapshotHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y)).post(this.routerPath("sendViewOnce"),...e,${extension}.viewOnceHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`).replace(media,`if(${extension}.isViewOnce(n))throw"Mídia de visualização única";`+media);
   new vm.Script(patched,{filename:'evolution-patched-main.js'});
   return patched;
 }
@@ -247,7 +288,7 @@ function patchBaileysSocket(source,version) {
   return patched;
 }
 const extension=createExtension();
-module.exports={...extension,createExtension,patchBundle,patchBaileysSocket};
+module.exports={...extension,createExtension,patchBundle,patchBaileysSocket,isViewOnce};
 if(require.main===module) {
   if(process.argv[2]!=='--patch') throw new Error('Use --patch during the image build.');
   const version=JSON.parse(fs.readFileSync('/evolution/package.json','utf8')).version;
@@ -256,5 +297,5 @@ if(require.main===module) {
   const baileysRoot='/evolution/node_modules/baileys',baileysVersion=JSON.parse(fs.readFileSync(baileysRoot+'/package.json','utf8')).version;
   const socketPath=baileysRoot+'/lib/Socket/socket.js';
   fs.writeFileSync(socketPath,patchBaileysSocket(fs.readFileSync(socketPath,'utf8'),baileysVersion));
-  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers, send inheritance, offline batch catch-up, archive state and archive snapshot installed.\n');
+  process.stdout.write('Verified Evolution 2.3.7 extension: authenticated timers, send inheritance, offline batch catch-up, archive sync and view-once media installed.\n');
 }

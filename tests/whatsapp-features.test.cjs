@@ -144,3 +144,64 @@ test('rotas: voz gravada vira PTT e perfil/privacidade validam antes de chamar o
   assert.equal((await call('/api/profile/picture','PUT',{mimeType:'image/png',base64:png})).body.updated,true);
   assert.ok(calls.some(item=>item.route.includes('/updateProfilePicture/')));
 });
+
+test('envia voz de visualização única com o pedido deduplicado',async t=>{
+  const once=original('one-use',{viewOnceMessageV2Extension:{message:{audioMessage:{ptt:true,viewOnce:true}}}});
+  const {call,calls}=await serverFixture(t,{
+    '/sendText/':input=>original('first',{conversation:input.text}),
+    '/sendViewOnce/':once,
+    '/findMessages/':findMessages([once])
+  });
+  const input={jid,base64:'T2dnUw==',mimeType:'audio/ogg',viewOnce:true,requestId:'voice-view-once'};
+  const [first,retry]=await Promise.all([call('/api/send-voice','POST',input),call('/api/send-voice','POST',input)]);
+  assert.equal(first.status,200);
+  assert.deepEqual(first,retry);
+  assert.equal(first.body.viewOnce,true);
+  assert.equal(first.body.canForward,false);
+  const sends=calls.filter(item=>/\/send(Text|ViewOnce|WhatsAppAudio)\//.test(item.route));
+  assert.deepEqual(sends.map(item=>item.route.split('/')[2]),['sendViewOnce']);
+  assert.equal(sends[0].input.mediatype,'audio');
+  assert.equal((await call('/api/send-voice','POST',{...input,viewOnce:'true',requestId:'invalid-voice-once'})).status,422);
+  assert.equal((await call('/api/starred','PUT',{jid,messageId:'one-use',starred:true})).status,422);
+});
+
+test('transcreve o áudio localmente para prévia e aguarda o envio explícito',async t=>{
+  let transcript='  Mensagem ditada  ';
+  const {call,calls}=await serverFixture(t,{'/sendText/':input=>original('dictated',{conversation:input.text})},{
+    transcriptionEngines:{whisperEngine:async({bytes,mimeType})=>{
+      assert.equal(bytes.toString(),'OggS');assert.equal(mimeType,'audio/ogg');
+      return {text:transcript};
+    }}
+  });
+  const input={jid,base64:'T2dnUw==',mimeType:'audio/ogg'};
+  const preview=await call('/api/voice/transcribe-draft','POST',input);
+  assert.deepEqual(preview,{status:200,body:{text:'Mensagem ditada'}});
+  assert.equal((await call('/api/send-voice-as-text','POST',{...input,requestId:'old-audio-send'})).status,404);
+  assert.equal(calls.filter(item=>item.route.startsWith('/message/')).length,0);
+  const send={jid,text:'Mensagem revisada',requestId:'dictated-review'};
+  assert.equal((await call('/api/send','POST',send)).body.text,send.text);
+  assert.equal((await call('/api/send','POST',send)).body.text,send.text);
+  transcript=' ';
+  assert.equal((await call('/api/voice/transcribe-draft','POST',input)).status,422);
+  assert.equal(calls.filter(item=>item.route.includes('/sendText/')).length,1);
+});
+
+test('extensão usa o modo nativo de visualização única para voz, foto e vídeo',async()=>{
+  const {createExtension}=require('../infra/evolution-extensions.cjs');
+  const service={
+    processAudio:async()=>Buffer.from('OggS'),
+    prepareMediaMessage:async({mediatype})=>({message:{[mediatype+'Message']:{url:'https://example.test/media'}}}),
+    sendMessageWithTyping:async(number,message)=>{
+      if(message.audio) assert.equal(message.viewOnce,true);
+      return original('native',message.audio?{viewOnceMessage:{message:{audioMessage:{ptt:message.ptt}}}}:message);
+    }
+  };
+  const controller={waMonitor:{waInstances:{test:service}}};
+  for(const mediatype of ['audio','image','video']) {
+    const response={status(code){this.code=code;return this;},json(body){this.body=body;}};
+    await createExtension().viewOnceHandler(controller)({params:{instanceName:'test'},body:{number:jid,mediatype,media:'T2dnUw==',mimetype:mediatype+'/mp4',fileName:'arquivo.mp4'}},response);
+    assert.equal(response.code,200);
+    assert.equal(normalizeMessage(response.body).viewOnce,true);
+    if(mediatype!=='audio') assert.equal(response.body.message.viewOnceMessage.message[mediatype+'Message'].viewOnce,true);
+  }
+});

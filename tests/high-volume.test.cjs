@@ -44,6 +44,8 @@ test('várias conversas são geradas ao mesmo tempo, respeitando o limite de IA'
   const env=await setup(t,{customers:6,concurrency:3,reply:async()=>{await release.promise;return 'Resposta pronta.';}});
   for(let i=0;i<6;i++) env.receive(i);
   const tick=env.service.tick();
+  // Cada reserva grava o estado antes de chamar a IA; o armazenamento é assíncrono (arquivo nos testes, PostgreSQL na central).
+  for(let waited=0;(env.active<3 || env.service.load().ai.waiting<3) && waited<2000;waited+=10) await new Promise(resolve=>setTimeout(resolve,10));
   await new Promise(resolve=>setTimeout(resolve,30));
   assert.equal(env.active,3,'três gerações em paralelo');assert.equal(env.service.load().ai.waiting,3);
   release.resolve();await tick;

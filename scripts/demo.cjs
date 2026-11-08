@@ -5,7 +5,7 @@ const os=require('node:os');
 const {createWhatsAppServer}=require('../server.cjs');
 const {createStore}=require('../lib/store.cjs');
 
-async function createDemo({port=8876}={}) {
+async function createDemo({port=8876,autoTranscription=false}={}) {
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-central-demo-'));
   const names=['Alex Morgan','Sam Rivera','Taylor Chen','Jordan Lee','Casey Silva','Robin Santos','Jamie Costa','Drew Lima','Avery Rocha','Riley Alves'];
   const jids=names.map((_,i)=>`55110000000${String(i).padStart(2,'0')}@s.whatsapp.net`);
@@ -70,6 +70,12 @@ async function createDemo({port=8876}={}) {
     else if(route.includes('/updateBlockStatus/')) output={block:'success'};
     else if(route.includes('/updateMessage/')) {const original=histories.flat().find(m=>m.key.id===input.key?.id);if(original) {if(original.message?.extendedTextMessage) original.message.extendedTextMessage.text=input.text;else original.message={conversation:input.text};original.status='EDITED';}output={key:{id:'edit-'+Date.now(),remoteJid:input.number,fromMe:true},message:{protocolMessage:{type:14,key:input.key}}};}
     else if(route.includes('/sendReaction/')) {const i=jids.indexOf(input.key?.remoteJid),sent={key:{id:'demo-react-'+Date.now(),remoteJid:input.key?.remoteJid,fromMe:true},messageType:'reactionMessage',message:{reactionMessage:{key:input.key,text:input.reaction}},messageTimestamp:Math.floor(Date.now()/1000),status:'SERVER_ACK'};if(i>=0) histories[i].push(sent);output=sent;}
+    else if(route.includes('/sendViewOnce/')) {
+      const i=jids.indexOf(input.number),type=input.mediatype;
+      const message={viewOnceMessage:{message:{[type+'Message']:{mimetype:input.mimetype,ptt:type==='audio'}}}};
+      output={...raw(Math.max(i,0),'demo-once-'+Date.now(),'',true),message};
+      if(i>=0) histories[i].push(output);
+    }
     else if(['/sendWhatsAppAudio/','/sendLocation/','/sendContact/'].some(part=>route.includes(part))) {
       const i=jids.indexOf(input.number),content=route.includes('Audio')?{audioMessage:{mimetype:'audio/ogg; codecs=opus',seconds:3,ptt:true}}:route.includes('Location')?{locationMessage:{degreesLatitude:input.latitude,degreesLongitude:input.longitude,name:input.name,address:input.address}}:{contactMessage:{displayName:input.contact?.[0]?.fullName,vcard:`BEGIN:VCARD\nFN:${input.contact?.[0]?.fullName}\nitem1.TEL;waid=${input.contact?.[0]?.wuid}:${input.contact?.[0]?.phoneNumber}\nEND:VCARD`}};
       const sent={...raw(Math.max(i,0),'demo-sent-'+Date.now(),'',true),message:content};if(i>=0) histories[i].push(sent);output=sent;
@@ -88,7 +94,7 @@ async function createDemo({port=8876}={}) {
   const aiCalls=[];
   // Voz fictícia: um tom curto no lugar da fala, sem Windows nem OpenAI.
   const speech={windowsAvailable:true,voices:async()=>[{name:'Demo Voice',culture:'pt-BR',gender:'Female'}],synthesize:async()=>({base64:wave().toString('base64'),mimeType:'audio/wav',bytes:96044,provider:'windows'})};
-  const server=createWhatsAppServer({demo:true,storeDir:directory,credentials,localAi,speech,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{
+  const server=createWhatsAppServer({demo:true,autoTranscription,transcriptionEngines:{whisperEngine:async()=>({text:"Transcrição automática de demonstração"})},storeDir:directory,credentials,localAi,speech,disableWorkers:true,config:{apiUrl:'http://127.0.0.1:9999',apiKey:'demo-only',instanceName:'demo'},fetchImpl:fetchConnector,aiFetch:async(url,options)=>{
     const body=JSON.parse(options.body);
     if(url.endsWith('/api/embed')) return new Response(JSON.stringify({embeddings:body.input.map(demoVector)}));
     aiCalls.push(body);
