@@ -57,20 +57,21 @@ async function readBody(req) {
 function createWhatsAppServer(options={}) {
   const token=randomBytes(32).toString('hex');
   const dataDir=options.storeDir || path.join(root,'data');
-  const credentials=options.credentials || createCredentialStore(dataDir);
+  const storeFactory=options.persistence?options.persistence.store:createStore;
+  const credentials=options.credentials || createCredentialStore(dataDir,{repository:options.persistence?.credentials});
   const localAi=options.localAi || createLocalAi();
   // Na central real, a lista de conversas é compartilhada (2 s) e completa a cada 30 s; nos testes, cada consulta é direta.
   const production=!options.storeDir;
   const now=options.now || Date.now;
-  const accounts=createAccountRegistry(dataDir,options.config,now);
+  const accounts=createAccountRegistry(dataDir,options.config,now,{storeFactory,accounts:options.initialAccounts});
   // Base de conhecimento, produtos, provedor de IA e voz são compartilhados; as regras do robô vêm da conta do pedido.
-  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile,credentials}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json'),credentials});
+  const extra=createKnowledgeRoutes(dataDir,options.aiFetch,{...(options.storeDir?{knowledgeDir:options.knowledgeDir,catalogFile:options.catalogFile}:{knowledgeDir:path.join(root,'base-conhecimento'),catalogFile:path.join(root,'produtos-iniciais.json')}),credentials,storeFactory,...(options.persistence?{blobFactory:options.persistence.blobs}:{})});
   const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   // Cada conta tem conector, dados de atendimento, robôs, fila de equipe e eventos próprios: conversas, regras e envios nunca se misturam.
   function createAccountRuntime(account) {
     const config={...options.config,instanceName:account.instanceName};
-    const client=createEvolutionClient({chatsCacheMs:options.chatsCacheMs ?? (production?2000:0),chatsFullRefreshMs:options.chatsFullRefreshMs ?? (production?30_000:0),...config},options.fetchImpl),store=createStore(accountDir(dataDir,account.id)),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
+    const client=createEvolutionClient({chatsCacheMs:options.chatsCacheMs ?? (production?2000:0),chatsFullRefreshMs:options.chatsFullRefreshMs ?? (production?30_000:0),...config},options.fetchImpl),store=storeFactory(accountDir(dataDir,account.id)),rules=async()=>assistantCore.rulesOf((await store.read()).assistant);
     // Tempo humano nas respostas automáticas: sempre na central real; nos testes só quando options.humanize for informado.
     const humanizer=options.storeDir && !options.humanize?null:createHumanizer({store,sleep:options.sleep,random:options.random});
     const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
@@ -143,16 +144,17 @@ function createWhatsAppServer(options={}) {
     const runtime=runtimes.get(id);runtimes.delete(id);runtime.stop();
     // Uma espera humanizada não pode segurar a resposta; ao terminar, o robô já encontra a parada.
     await Promise.race([runtime.idle(),new Promise(resolve=>{const timer=setTimeout(resolve,3000);timer.unref?.();})]);
-    await archiveAccount(dataDir,id,runtime.store,now);
+    if(options.persistence) await options.persistence.archiveAccount(id,now);else await archiveAccount(dataDir,id,runtime.store,now);
   }
-  const server=http.createServer(async(req,res)=>{
+  const server=options.server || http.createServer();
+  server.on('request',async(req,res)=>{
     for(const [name,value] of Object.entries({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' data: blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})) res.setHeader(name,value);
     const hosts=[`127.0.0.1:${req.socket.localPort}`,`localhost:${req.socket.localPort}`];
     if(!hosts.includes(req.headers.host)) return json(res,403,{error:'Endereço local inválido.'});
     if(req.headers.origin && req.headers.origin!==`http://${req.headers.host}`) return json(res,403,{error:'Abra a central no endereço local.'});
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
-      if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid});}
+      if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid,storage:options.persistence?'postgresql':'local-test'});}
       if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js','/assets/accounts.js','/assets/accounts.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n<meta name="whatsapp-accounts" content="${accounts.list().map(item=>item.id).join(',')}">\n</head>`);
@@ -315,25 +317,37 @@ function createWhatsAppServer(options={}) {
   server.invalidateChats=()=>main.client.invalidateChats();
   server.team=main.team;server.accounts=runtimes;
   let replyTimer=null,cleanTimer=null;
-  server.on('listening',()=>{
+  const startWorkers=()=>{
     for(const runtime of runtimes.values()) runtime.start();
     if(!options.disableWorkers) {
       replyTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.scheduledPoll();},5000);replyTimer.unref?.();
       cleanTimer=setInterval(()=>{for(const runtime of runtimes.values()) runtime.housekeeping().catch(()=>{});},30*60_000);cleanTimer.unref?.();
     }
-  });
+  };
+  server.on('listening',startWorkers);if(server.listening) queueMicrotask(startWorkers);
   server.cleanup=Promise.resolve();
   server.on('close',()=>{clearInterval(replyTimer);clearInterval(cleanTimer);for(const runtime of runtimes.values()) runtime.stop();server.cleanup=Promise.all([...[...runtimes.values()].map(runtime=>runtime.idle()),extra.services.embeddings.close().then(()=>extra.services.ai.close())]).then(()=>credentials.close());server.cleanup.catch(()=>{});});
   return server;
 }
 if(require.main===module) {
   (async()=>{
-    const config=JSON.parse(await fs.readFile(path.join(root,'data','config.json'),'utf8')),server=createWhatsAppServer({config}),url='http://127.0.0.1:8766/';
-    server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`A central já pode estar aberta (talvez uma versão anterior): ${url}\nUse Parar WhatsApp.cmd e depois Abrir WhatsApp.cmd.`:error.message);process.exitCode=1;});
-    server.listen(8766,'127.0.0.1',()=>{
+    // Reserva a porta antes de ler/migrar dados: uma central legada ainda aberta não pode continuar gravando JSON após a importação.
+    const {reserveApplicationPort}=require('./lib/bootstrap.cjs'),reserved=await reserveApplicationPort(8766);
+    let persistence;
+    try {
+    const dataDir=path.join(root,'data'),databaseConfig=JSON.parse(await fs.readFile(path.join(dataDir,'database.json'),'utf8'));
+    const {createPostgresPersistence}=require('./lib/postgres.cjs');persistence=createPostgresPersistence(databaseConfig,dataDir);
+      await persistence.initialize();const migrated=await persistence.migrate();if(migrated.imported) console.log(`Dados importados para PostgreSQL: ${migrated.documents} conjuntos e ${migrated.credentials} credenciais protegidas. Arquivos de origem preservados.`);
+      const config=await persistence.store(dataDir,{file:'config.json',initial:{}}).read(),credentials=createCredentialStore(dataDir,{repository:persistence.credentials});
+      config.apiKey=await credentials.get('evolution');if(await credentials.has('integration')) config.integrationToken=await credentials.get('integration');
+      if(!config.apiKey || !config.apiUrl || !config.instanceName) throw new Error('Configuração do conector ausente no PostgreSQL.');
+      const registry=await persistence.store(dataDir,{file:'contas.json',initial:{accounts:[{id:'principal',name:'Conta principal',instanceName:config.instanceName,createdAt:null}]}}).read();
+      reserved.activate();const server=createWhatsAppServer({config,persistence,credentials,initialAccounts:registry.accounts,server:reserved.server}),url='http://127.0.0.1:8766/';
+      server.on('close',()=>{server.cleanup=server.cleanup.finally(()=>persistence.close());});
+      const shutdown=()=>server.close(()=>{});process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
       console.log(`Whats AI · ${url}\nSessão preservada no Docker. Não remova os volumes.`);
       if(!process.argv.includes('--no-open')) execFile('powershell.exe',['-NoProfile','-Command',`Start-Process '${url}'`],{windowsHide:true},()=>{});
-    });
-  })().catch(error=>{console.error(error.code==='ENOENT'?'Abra Iniciar WhatsApp.cmd para configurar o conector.':error.message);process.exitCode=1;});
+    }catch(error) {await reserved.close();if(persistence) await persistence.close();throw error;}
+  })().catch(error=>{console.error(error.code==='ENOENT'?'Abra Iniciar WhatsApp.cmd para configurar o conector.':error.code==='EADDRINUSE'?'A central já está aberta na porta 8766. Feche a versão anterior antes de migrar; nenhum dado foi importado.':error.message);process.exitCode=1;});
 }
 module.exports={createWhatsAppServer};

@@ -13,4 +13,5 @@ if(!fs.existsSync(configFile) && !fs.existsSync(envFile)) {
 } else if(!fs.existsSync(configFile) || !fs.existsSync(envFile)) {
   console.error('Configuração incompleta. Restaure data/config.json e infra/.env do mesmo backup antes de continuar.');process.exit(1);
 }
+require('../lib/database-config.cjs').ensureDatabaseConfig(root);
 console.log('Configuração local pronta. Segredos preservados.');

@@ -329,7 +329,42 @@
   });
 
   // ---------- Assistente de IA (configuração) ----------
-  let lastDefaultModel='',localBusy=false,localCheck=0;
+  let localBusy=false,localCheck=0,modelCheck=0;
+  const modelCatalogs=new Map();
+  function renderModelOptions(models,selected='') {
+    const options=document.createDocumentFragment(),seen=new Set();
+    for(const item of models || []) {if(!item?.id || seen.has(item.id)) continue;seen.add(item.id);const option=el('option','',item.label===item.id?item.id:`${item.label} · ${item.id}`);option.value=item.id;options.append(option);}
+    if(selected && !seen.has(selected)) {const option=el('option','',selected+' (informado)');option.value=selected;options.append(option);}
+    const manual=el('option','','Informar outro modelo…');manual.value='__custom__';options.append(manual);
+    $('ai-model-select').replaceChildren(options);$('ai-model-select').value=selected || models?.[0]?.id || '__custom__';
+    $('ai-model').value=$('ai-model-select').value==='__custom__'?'':$('ai-model-select').value;syncManualModel();
+  }
+  function syncManualModel() {
+    const manual=$('ai-model-select').value==='__custom__';$('ai-model-manual-field').hidden=!manual;$('ai-model').required=manual;
+  }
+  function invalidateModels() {modelCheck++;$('ai-models-load').disabled=localBusy;}
+  function syncKeyHint() {
+    const provider=$('ai-provider').value,item=ai.providers[provider],hasKey=item.hasKey ?? (provider===ai.provider && ai.hasKey);
+    $('ai-key-hint').textContent=(hasKey?`Chave de ${item.label} salva criptografada no banco local. Cole outra para trocar.`:'Ao salvar, a chave fica criptografada no banco local, protegida pelo seu usuário do Windows.')+' A chave salva nunca volta para a tela.';
+    $('ai-clear').hidden=!hasKey;
+  }
+  function modelCatalogKey() {return JSON.stringify([$('ai-provider').value,$('ai-base').value.trim()]);}
+  function showModelHint() {
+    const item=ai.providers[$('ai-provider').value];
+    $('ai-models-status').textContent=item.key?'Sugestões iniciais. Cole ou use a chave salva e clique em Carregar modelos para consultar sua conta.':'Clique em Carregar modelos para consultar os modelos instalados ou disponíveis nesta API.';
+  }
+  $('ai-model-select').addEventListener('change',()=>{syncManualModel();if($('ai-model-select').value!=='__custom__') $('ai-model').value=$('ai-model-select').value;else $('ai-model').focus();markLocalChanged();});
+  $('ai-models-load').addEventListener('click',async()=>{
+    const version=++modelCheck,provider=$('ai-provider').value,catalogKey=modelCatalogKey(),selected=$('ai-model').value.trim();$('ai-models-load').disabled=true;$('ai-models-status').textContent='Carregando modelos…';
+    try {
+      const result=await api('/ai/models','POST',{provider,baseUrl:$('ai-base').value.trim(),...($('ai-key').value.trim()?{apiKey:$('ai-key').value.trim()}:{})},30000);
+      if(version!==modelCheck || provider!==$('ai-provider').value) return;
+      const models=result.models || [];modelCatalogs.set(catalogKey,models);renderModelOptions(models,selected);markLocalChanged();
+      $('ai-models-status').textContent=models.length?`${models.length} ${models.length===1?'modelo disponível':'modelos disponíveis'}. Escolha um modelo da lista ou informe outro.`:'Nenhum modelo de conversa encontrado. Você pode informar o identificador manualmente.';
+    }catch(error) {if(version===modelCheck) $('ai-models-status').textContent=error.message+' As opções atuais foram mantidas; você também pode informar o modelo manualmente.';}
+    finally {if(version===modelCheck) $('ai-models-load').disabled=false;}
+  });
+  for(const id of ['ai-key','ai-base']) $(id).addEventListener('input',()=>{invalidateModels();showModelHint();});
   function showLocalState(state) {
     const cpu=$('ai-local-cpu').checked,ready=state.running && state.loaded && (!cpu || state.executionMode==='cpu'),missing=state.running && !state.modelInstalled;
     const selected=ai?.provider==='ollama' && ai.model===state.model && (ai.ollamaNumGpu===0)===cpu && (!ai.baseUrl || /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):11434(?:\/v1)?\/?$/.test(ai.baseUrl));
@@ -347,39 +382,39 @@
   }
   $('ai-local-refresh').addEventListener('click',refreshLocalAi);
   $('ai-local-start').addEventListener('click',async()=>{
-    if(localBusy) return;localBusy=true;localCheck++;const fields=['ai-provider','ai-model','ai-base','ai-key','ai-save','ai-test','ai-clear','ai-local-start','ai-local-refresh','ai-local-cpu'];for(const id of fields) $(id).disabled=true;
+    if(localBusy) return;localBusy=true;localCheck++;invalidateModels();const fields=['ai-provider','ai-model','ai-model-select','ai-models-load','ai-base','ai-key','ai-save','ai-test','ai-clear','ai-local-start','ai-local-refresh','ai-local-cpu'];for(const id of fields) $(id).disabled=true;
     $('ai-local-state').textContent='Preparando…';$('ai-local-state').dataset.ready='false';$('ai-local-start').textContent='Ligando IA local…';$('ai-local-description').textContent='Iniciando o Ollama e carregando o modelo. A primeira carga pode demorar um pouco.';
     let result;
     try {result=await api('/ai/local/start','POST',{model:$('ai-model').value.trim() || ai.providers.ollama.model,baseUrl:$('ai-base').value.trim(),device:$('ai-local-cpu').checked?'cpu':'auto'},180000);ai=result.config;renderAi();renderCounters();$('ai-status').textContent='IA local pronta. Configuração do Ollama salva.';}
     catch(error) {$('ai-local-state').textContent='Não foi possível ligar';$('ai-local-description').textContent=error.message;}
     finally {localBusy=false;for(const id of fields) $(id).disabled=false;if(result) showLocalState(result);else $('ai-local-start').textContent='Tentar ligar IA local';}
   });
-  for(const id of ['ai-model','ai-base','ai-local-cpu']) $(id).addEventListener('input',()=>{if(!localBusy) {localCheck++;$('ai-local-refresh').disabled=false;$('ai-local-start').disabled=false;$('ai-local-start').textContent='Ligar IA local';$('ai-local-state').textContent='Configuração alterada';$('ai-local-state').dataset.ready='false';}});
+  function markLocalChanged() {if(!localBusy) {localCheck++;$('ai-local-refresh').disabled=false;$('ai-local-start').disabled=false;$('ai-local-start').textContent='Ligar IA local';$('ai-local-state').textContent='Configuração alterada';$('ai-local-state').dataset.ready='false';}}
+  for(const id of ['ai-model','ai-base','ai-local-cpu']) $(id).addEventListener('input',markLocalChanged);
   function renderAi() {
     if(!ai) return;
     const options=document.createDocumentFragment();
     for(const [id,item] of Object.entries(ai.providers)) {const option=el('option','',item.label);option.value=id;options.append(option);}
     $('ai-provider').replaceChildren(options);$('ai-provider').value=ai.provider;
-    $('ai-model').value=ai.model;$('ai-embedding').value=ai.embeddingModel || '';$('ai-base').value=ai.baseUrl;$('ai-key').value='';$('ai-local-cpu').checked=ai.ollamaNumGpu===0;lastDefaultModel=ai.providers[ai.provider].model;
-    syncProviderHints();
-    $('ai-key-hint').textContent=ai.hasKey?'Uma chave está salva neste computador. Cole outra para trocar.':'A chave fica só neste computador e nunca volta para a tela.';
-    $('ai-clear').hidden=!ai.hasKey;
+    invalidateModels();$('ai-embedding').value=ai.embeddingModel || '';$('ai-base').value=ai.baseUrl;$('ai-key').value='';$('ai-local-cpu').checked=ai.ollamaNumGpu===0;
+    renderModelOptions(modelCatalogs.get(modelCatalogKey()) || ai.providers[ai.provider].models,ai.model || ai.providers[ai.provider].model);syncProviderHints();showModelHint();
   }
   function syncProviderHints() {
     const item=ai.providers[$('ai-provider').value];
     $('ai-model').placeholder=item.model || 'nome do modelo';$('ai-embedding').placeholder=item.embedding?item.embedding+($('ai-provider').value==='anthropic'?' (Ollama local)':''):'nome do modelo de embeddings';$('ai-base').placeholder=item.baseUrl || 'https://seu-servidor/v1';
     $('ai-key').placeholder=item.key?'Cole a chave para salvar ou trocar':'Opcional para este provedor';
+    syncKeyHint();
     refreshLocalAi();
   }
   $('ai-provider').addEventListener('change',()=>{
     const item=ai.providers[$('ai-provider').value];
-    if(!$('ai-model').value || $('ai-model').value===lastDefaultModel) $('ai-model').value=item.model;
-    $('ai-embedding').value='';lastDefaultModel=item.model;syncProviderHints();
+    invalidateModels();$('ai-key').value='';$('ai-embedding').value='';$('ai-base').value=$('ai-provider').value===ai.provider?ai.baseUrl:'';$('ai-local-cpu').checked=$('ai-provider').value===ai.provider && ai.ollamaNumGpu===0;
+    renderModelOptions(modelCatalogs.get(modelCatalogKey()) || item.models,$('ai-provider').value===ai.provider?ai.model || item.model:item.model);syncProviderHints();showModelHint();
   });
   const aiPayload=()=>({provider:$('ai-provider').value,model:$('ai-model').value,embeddingModel:$('ai-embedding').value,baseUrl:$('ai-base').value,...($('ai-key').value.trim()?{apiKey:$('ai-key').value.trim()}:{})});
   $('ai-form').addEventListener('submit',async event=>{
     event.preventDefault();$('ai-status').textContent='';
-    try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();$('ai-status').textContent='Configuração salva.';}
+    try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();$('ai-status').textContent=ai.hasKey?'Configuração salva. Chave criptografada no banco local.':'Configuração salva.';}
     catch(error) {$('ai-status').textContent=error.message;}
   });
   $('ai-test').addEventListener('click',async()=>{
@@ -389,7 +424,7 @@
   });
   $('ai-clear').addEventListener('click',async()=>{
     if(!confirm('Remover a chave de API salva neste computador?')) return;
-    try {ai=await api('/ai','PUT',{...aiPayload(),clearKey:true});renderAi();renderCounters();$('ai-status').textContent='Chave removida.';}catch(error) {$('ai-status').textContent=error.message;}
+    try {ai=await api('/ai/key','DELETE',{provider:$('ai-provider').value});$('ai-key').value='';syncKeyHint();renderCounters();$('ai-status').textContent='Chave removida.';}catch(error) {$('ai-status').textContent=error.message;}
   });
 
   // ---------- Contatos (CRM) ----------

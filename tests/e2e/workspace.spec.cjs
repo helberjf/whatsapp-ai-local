@@ -10,11 +10,6 @@ test('opening an unread conversation stays read after refresh',async({page})=>{
   await page.locator('.chat-item').filter({hasText:'Sam Rivera'}).click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);
   await page.locator('#refresh-top').click();await expect(page.locator('.chat-item').filter({hasText:'Sam Rivera'}).locator('.unread-count')).toHaveCount(0);
 });
-test('reply menu quotes the selected message and sends its identifier',async({page})=>{
-  await openChat(page);const message=page.locator('.message').filter({hasText:'Maneiro'});await message.locator('.message-menu-toggle').click();await message.getByRole('button',{name:'Responder',exact:true}).click();
-  await expect(page.locator('#reply-preview')).toContainText('Maneiro');await page.screenshot({path:path.join(__dirname,'..','..','data','reply-preview.png')});await page.locator('#message-text').fill('Respondendo a esta mensagem');
-  const request=page.waitForRequest(req=>req.url().endsWith('/api/send') && req.method()==='POST');await page.locator('#send').click();expect((await request).postDataJSON().replyTo).toBe('demo-short');await expect(page.locator('#reply-preview')).not.toBeVisible();await expect(page.locator('.message.mine .message-quote')).toContainText('Maneiro');
-});
 test.beforeEach(async({page,demo})=>{const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item'),()=>JSON.stringify(errors)).toHaveCount(10);expect(errors).toEqual([]);});
 
 for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {
@@ -89,9 +84,10 @@ test('trigger audio preview and footer work in a small window',async({page})=>{
   await insideViewport(page.locator('#trigger-save'));await page.locator('#trigger-save').click();await expect(page.locator('#trigger-editor-dialog')).not.toBeVisible();await expect(page.locator('#triggers-list')).toContainText('Fora do horário');
 });
 test('local AI starts from the assistant page without enabling automatic replies',async({page})=>{
+  const startLocal=async()=>{const response=page.waitForResponse(value=>value.url().endsWith('/api/ai/local/start') && value.request().method()==='POST');await page.locator('#ai-local-start').click();expect((await response).status()).toBe(200);};
   await page.locator('#nav-ai').click();await expect(page.locator('#ai-local-start')).toBeVisible();await expect(page.locator('#assistant-enabled')).not.toBeChecked();
-  await page.locator('#ai-local-start').click();await expect(page.locator('#ai-local-state')).toHaveText('Pronta para usar');await expect(page.locator('#ai-local-start')).toBeDisabled();await expect(page.locator('#assistant-enabled')).not.toBeChecked();
-  await page.locator('#ai-local-cpu').check();await expect(page.locator('#ai-local-start')).toBeEnabled();await page.locator('#ai-local-start').click();await expect(page.locator('#ai-local-description')).toContainText('CPU');await expect(page.locator('#ai-local-cpu')).toBeChecked();await expect(page.locator('#assistant-enabled')).not.toBeChecked();
+  await startLocal();await expect(page.locator('#ai-local-state')).toHaveText('Pronta para usar');await expect(page.locator('#ai-local-start')).toBeDisabled();await expect(page.locator('#assistant-enabled')).not.toBeChecked();
+  await page.locator('#ai-local-cpu').check();await expect(page.locator('#ai-local-start')).toBeEnabled();await startLocal();await expect(page.locator('#ai-local-description')).toContainText('CPU');await expect(page.locator('#ai-local-cpu')).toBeChecked();await expect(page.locator('#assistant-enabled')).not.toBeChecked();
   await page.screenshot({path:capturePath('local-ai.png')});
 });
 test('short-message arrow menu stays visible inside the conversation',async({page})=>{

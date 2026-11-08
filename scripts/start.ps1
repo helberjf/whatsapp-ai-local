@@ -54,6 +54,9 @@ try {
   Write-Output 'Preparando WhatsApp, banco e sessão persistente…'
   & docker compose -f $composeFile up -d --build --wait --wait-timeout 180
   if($LASTEXITCODE -ne 0) {throw 'A pilha local não ficou pronta. Consulte docker compose -f infra/compose.yaml logs --tail=50.'}
+  # Banco da central no PostgreSQL: cria usuário e banco só se ainda não existirem; dados existentes não são alterados.
+  & $nodePath (Join-Path $PSScriptRoot 'provision-database.cjs')
+  if($LASTEXITCODE -ne 0) {throw 'O banco PostgreSQL da central não ficou pronto. Consulte docker compose -f infra/compose.yaml logs postgres --tail=50.'}
   $expectedBuild=(& $nodePath (Join-Path $projectRoot 'lib\build-id.cjs') | Out-String).Trim()
   $running=Get-Central
   if($running -and $running.build -and $running.build -eq $expectedBuild) {
