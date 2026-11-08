@@ -163,7 +163,13 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/connection') return json(res,200,{...await client.connection(),events:events?.status() || {connected:false,lastEventAt:null,lastError:null}});
       if(req.method==='POST' && route==='/api/connect') return json(res,200,await client.connect());
       if(req.method==='POST' && route==='/api/disconnect') {await client.disconnect();return json(res,200,{disconnected:true});}
-      if(req.method==='POST' && route==='/api/archived/sync') {const result=await client.archiveSnapshot();client.invalidateChats();return json(res,200,result);}
+      if(req.method==='POST' && route==='/api/archived/sync') {
+        const result=await client.archiveSnapshot();client.invalidateChats();
+        // Quantas aparecem de fato na lista: ajuda a explicar quando o WhatsApp tem mais arquivadas do que a central consegue casar.
+        const [data,remote,list]=await Promise.all([store.read(),client.archivedState({maxAge:0}).catch(()=>null),client.chats()]);
+        const shown=list.filter(chat=>archivedOf(chat,data.contacts?.[chat.jid],remote)).length;
+        return json(res,200,{...result,shown,unarchiveChats:remote?.meta?.unarchiveChats ?? null});
+      }
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);

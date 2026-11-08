@@ -43,7 +43,22 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     const meta=archiveMeta(service),creds=service?.client?.authState?.creds?.accountSettings?.unarchiveChats;
     return typeof meta.unarchiveChats==='boolean'?meta.unarchiveChats:typeof creds==='boolean'?creds:null;
   }
-  const archiveFrom=(service,list)=>{for(const chat of Array.isArray(list)?list:[]) if(chat && typeof chat.archived==='boolean') rememberArchive(service,chat.id,chat.archived);};
+  // O WhatsApp passou a identificar muitas conversas pelo identificador privado (@lid); a lista da central usa o telefone.
+  // Grava o estado também no telefone correspondente, quando o Baileys conhece o vínculo.
+  async function phoneFor(service,jid) {
+    if(typeof jid!=='string' || !jid.endsWith('@lid')) return null;
+    try {
+      const pn=await service?.client?.signalRepository?.lidMapping?.getPNForLID?.(jid);
+      const user=typeof pn==='string'?pn.split('@')[0].split(':')[0]:'';const phone=user?user+'@s.whatsapp.net':null;
+      return individual(phone)?phone:null;
+    } catch {return null;}
+  }
+  function rememberWithPhone(service,jid,archived,updatedAt,options) {
+    const changed=rememberArchive(service,jid,archived,updatedAt,options);
+    phoneFor(service,jid).then(phone=>{if(phone) rememberArchive(service,phone,archived,updatedAt ?? Date.now(),options);},()=>{});
+    return changed;
+  }
+  const archiveFrom=(service,list)=>{for(const chat of Array.isArray(list)?list:[]) if(chat && typeof chat.archived==='boolean') rememberWithPhone(service,chat.id,chat.archived);};
   const load=storage.load || (()=>{try {const stat=fs.statSync(STORE);if(stat.size>2_000_000) throw new Error('Timer store too large');return JSON.parse(fs.readFileSync(STORE,'utf8'));}catch(error) {if(error.code==='ENOENT') return {};throw error;}});
   const save=storage.save || (value=>{const temporary=STORE+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,STORE);});
   let state;
@@ -160,9 +175,14 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(snapshots.has(id)) return snapshots.get(id);
     const job=(async()=>{
       const {chats,unarchiveChats}=await readArchiveSnapshot(socket);
-      let changed=0;for(const chat of chats) if(rememberArchive(service,chat.jid,chat.archived,chat.updatedAt,{lastMessageAt:chat.lastMessageAt,onlyNewer:true})) changed++;
+      let changed=0,linked=0;
+      for(const chat of chats) {
+        const options={lastMessageAt:chat.lastMessageAt,onlyNewer:true};
+        if(rememberArchive(service,chat.jid,chat.archived,chat.updatedAt,options)) changed++;
+        const phone=await phoneFor(service,chat.jid);if(phone) {linked++;rememberArchive(service,phone,chat.archived,chat.updatedAt,options);}
+      }
       const meta=archiveMeta(service);meta.snapshotAt=Date.now();if(typeof unarchiveChats==='boolean') meta.unarchiveChats=unarchiveChats;scheduleArchiveSave();
-      return {archived:chats.filter(chat=>chat.archived && individual(chat.jid)).length,changed,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
+      return {archived:chats.filter(chat=>chat.archived && individual(chat.jid)).length,lid:chats.filter(chat=>chat.archived && String(chat.jid).endsWith('@lid')).length,linked,changed,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
     })().finally(()=>snapshots.delete(id));
     snapshots.set(id,job);return job;
   }

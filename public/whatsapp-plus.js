@@ -72,7 +72,10 @@
     if(archiveSyncing) return;archiveSyncing=true;$('archived-sync-button').disabled=true;$('archived-sync-text').textContent='Buscando as arquivadas no WhatsApp…';
     try {
       const result=await api('/archived/sync','POST',{},120000);await C.sync();
-      notice(result.archived?`${result.archived} conversa${result.archived===1?'':'s'} arquivada${result.archived===1?'':'s'} no WhatsApp.`:'O WhatsApp não tem conversas arquivadas.',true);
+      const plural=n=>n===1?'':'s';
+      if(!result.archived) notice('O WhatsApp não tem conversas arquivadas.',true);
+      else if(result.shown>=result.archived) notice(`${result.archived} conversa${plural(result.archived)} arquivada${plural(result.archived)} no WhatsApp.`,true);
+      else notice(`${result.archived} arquivada${plural(result.archived)} no WhatsApp; ${result.shown} aparece${result.shown===1?'':'m'} aqui. ${result.unarchiveChats?'Com “Manter conversas arquivadas” desligado no celular, as que receberam mensagem depois saem das arquivadas. ':''}As demais não estão na lista de conversas da central${result.lid>result.linked?' ou o WhatsApp não informou o telefone delas':''}.`,true);
     } catch(error) {notice(error.message);}
     finally {archiveSyncing=false;$('archived-sync-button').disabled=false;C.renderChats();}
   });
