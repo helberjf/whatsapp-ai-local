@@ -42,7 +42,14 @@ test('invalid thumbnails are ignored without losing the original message',()=>{
 test('video duration exposes only finite nonnegative numeric seconds',()=>{
   for(const seconds of [0,1,12.5]) assert.equal(message('video',{seconds}).durationSeconds,seconds);
   for(const seconds of [undefined,null,-1,NaN,Infinity,-Infinity,'12',false,{},[]]) assert.equal(Object.hasOwn(message('video',{seconds}),'durationSeconds'),false);
-  for(const type of ['image','audio','document','sticker']) assert.equal(Object.hasOwn(message(type,{seconds:12,jpegThumbnail:jpeg}),'durationSeconds'),false);
+  for(const type of ['image','document','sticker']) assert.equal(Object.hasOwn(message(type,{seconds:12,jpegThumbnail:jpeg}),'durationSeconds'),false);
+});
+
+test('audio exposes duration and size so the screen can skip auto-loading large files',()=>{
+  const audio=message('audio',{seconds:42,fileLength:'4194304'});assert.equal(audio.durationSeconds,42);assert.equal(audio.bytes,4194304);
+  assert.equal(message('audio',{fileLength:{low:2048,high:0,unsigned:true}}).bytes,2048);assert.equal(message('audio',{fileLength:5000}).bytes,5000);
+  for(const fileLength of [undefined,null,0,-1,'x',{}]) assert.equal(Object.hasOwn(message('audio',{fileLength}),'bytes'),false);
+  assert.equal(Object.hasOwn(message('video',{fileLength:9000}),'bytes'),false);assert.equal(Object.hasOwn(message('audio',{jpegThumbnail:jpeg}),'jpegThumbnail'),false);
 });
 
 test('nested media preserves preview metadata while deleted and unrelated media omit it',()=>{

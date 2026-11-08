@@ -80,8 +80,10 @@ test('media players, safe links and draft survive polling',async({page})=>{
   await page.setViewportSize({width:1536,height:1100});
   await openChat(page);await page.locator('#message-text').fill('Rascunho preservado');
   await expect(page.locator('.message-link')).toHaveCount(2);await expect(page.locator('.message-link').first()).toHaveAttribute('rel','noopener noreferrer');
-  await page.locator('.audio-load').click();await expect(page.locator('.audio-player')).toHaveAttribute('src',/^blob:/);await page.locator('.audio-player').evaluate(async node=>{await node.play();node.pause();node.currentTime=1;});
-  await page.locator('.audio-speed').selectOption('1.5');expect(await page.locator('.audio-player').evaluate(node=>node.playbackRate)).toBe(1.5);
+  await expect(page.locator('.audio-player')).toHaveAttribute('src',/^blob:/);await expect(page.locator('.audio-card')).toHaveClass(/ready/);await page.locator('.audio-player').evaluate(async node=>{await node.play();node.pause();node.currentTime=1;});
+  await page.locator('.audio-rate',{hasText:'1,5×'}).click();await expect(page.locator('.audio-rate',{hasText:'1,5×'})).toHaveAttribute('aria-pressed','true');expect(await page.locator('.audio-player').evaluate(node=>node.playbackRate)).toBe(1.5);
+  const rates=await page.locator('.audio-rate').evaluateAll(nodes=>nodes.map(node=>node.getBoundingClientRect().top));expect(Math.max(...rates)-Math.min(...rates)).toBeLessThan(2);
+  await page.locator('.audio-play').click();await expect(page.locator('.audio-play')).toHaveAttribute('aria-label','Pausar áudio');await page.locator('.audio-play').click();await expect(page.locator('.audio-play')).toHaveAttribute('aria-label','Reproduzir áudio');
   await page.locator('.video-load').click();await expect(page.locator('video')).toHaveAttribute('src',/^blob:/);await page.locator('video').evaluate(async node=>{await node.play();node.pause();node.currentTime=1;});
   await page.locator('#refresh-top').click();await expect.poll(()=>page.locator('video').evaluate(node=>node.currentTime)).toBeGreaterThan(.8);await expect(page.locator('#message-text')).toHaveValue('Rascunho preservado');
   await page.screenshot({path:capturePath('media.png')});

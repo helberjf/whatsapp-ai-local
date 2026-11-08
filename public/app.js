@@ -195,28 +195,65 @@
     try {await loadTranscriptions(jid,version);}catch(error) {if(selected?.jid===jid && selection===version) notice('Não foi possível atualizar as transcrições: '+error.message);}
   }
   const audioTime=value=>Number.isFinite(value) && value>=0?Math.floor(value/60)+':'+String(Math.floor(value%60)).padStart(2,'0'):'--:--';
+  // Áudios pequenos carregam sozinhos quando aparecem na tela (dois por vez); os grandes esperam o clique.
+  const AUDIO_AUTO_BYTES=3*1024*1024,AUDIO_AUTO_SECONDS=600,audioQueue=[];let audioActive=0;
+  const audioSize=bytes=>bytes>=1048576?(bytes/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(bytes/1024))+' KB';
+  const audioAuto=message=>!(message.bytes>AUDIO_AUTO_BYTES) && !(message.durationSeconds>AUDIO_AUTO_SECONDS);
+  function pumpAudio() {
+    while(audioActive<2 && audioQueue.length) {
+      const view=audioQueue.shift();if(!view.card.isConnected || view.player.src || view.loading) continue;
+      audioActive++;view.loadAudio(false).finally(()=>{audioActive--;pumpAudio();});
+    }
+  }
+  const audioObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{
+    for(const entry of entries) if(entry.isIntersecting) {audioObserver.unobserve(entry.target);const view=entry.target.audioView;if(view) {audioQueue.push(view);pumpAudio();}}
+  },{rootMargin:'300px 0px'}):null;
   function audioCard(message,jid) {
     const key=jid+'|'+message.id;if(audioViews.has(key)) return audioViews.get(key).card;
-    const card=el('section','audio-card'),heading=el('div','audio-heading'),load=el('button','audio-load','▶ Carregar áudio'),clock=el('span','audio-time','0:00 / --:--'),player=el('audio','audio-player'),speed=el('select','audio-speed'),status=el('p','audio-status');
-    card.setAttribute('aria-label','Mensagem de áudio');load.type='button';load.title='Carregar o áudio para ouvir';clock.setAttribute('aria-label','Tempo reproduzido e duração');
-    player.controls=true;player.preload='none';player.hidden=true;player.setAttribute('aria-label','Reproduzir mensagem de áudio');
-    speed.setAttribute('aria-label','Velocidade de reprodução');speed.disabled=true;
-    for(const rate of ['1','1.5','2']) {const option=el('option','',rate+'×');option.value=rate;speed.append(option);}speed.value='1';
-    status.setAttribute('role','status');status.hidden=true;
-    const view={card,load,clock,player,speed,status,loading:false};audioViews.set(key,view);
-    const updateTime=()=>{clock.textContent=audioTime(player.currentTime || 0)+' / '+audioTime(player.duration);};
-    for(const event of ['loadedmetadata','durationchange','timeupdate','ended']) player.addEventListener(event,updateTime);
-    speed.addEventListener('change',()=>{player.playbackRate=Number(speed.value);});
-    player.addEventListener('error',()=>{status.textContent='Não foi possível reproduzir este formato de áudio. Tente carregar novamente.';status.hidden=false;load.hidden=false;load.disabled=false;load.textContent='↻ Carregar novamente';});
-    load.addEventListener('click',async()=>{
-      if(view.loading) return;focusedMediaKey=key;view.loading=true;load.disabled=true;load.textContent='Carregando áudio…';status.hidden=true;
-      try {const media=await fetchMedia(message,jid);player.src=media.url;player.hidden=false;speed.disabled=false;load.hidden=true;load.textContent='▶ Carregar áudio';}
-      catch(error) {status.textContent=error.message;status.hidden=false;load.textContent='↻ Tentar carregar áudio';}
-      finally {view.loading=false;load.disabled=false;trimMediaCache();}
-    });
-    const label=el('div','media-card-label','Mensagem de voz'),wave=el('div','audio-wave');wave.setAttribute('aria-hidden','true');
-    for(let index=0;index<32;index++) wave.append(el('i'));
-    heading.append(load,clock,speed);card.append(label,heading,wave,player,status);return card;
+    const card=el('section','audio-card'),main=el('div','audio-main'),play=el('button','audio-play','▶'),track=el('div','audio-track'),wave=el('div','audio-wave'),row=el('div','audio-row');
+    const clock=el('span','audio-time'),speed=el('div','audio-speed'),note=el('small','audio-note'),player=el('audio','audio-player'),status=el('p','audio-status');
+    card.setAttribute('aria-label','Mensagem de voz');play.type='button';play.setAttribute('aria-label','Reproduzir áudio');
+    player.preload='none';player.hidden=true;status.setAttribute('role','status');status.hidden=true;note.hidden=true;
+    const known=Number.isFinite(message.durationSeconds)?message.durationSeconds:NaN;
+    const updateTime=()=>{const total=Number.isFinite(player.duration)?player.duration:known;clock.textContent=(player.src?audioTime(player.currentTime || 0)+' / ':'')+audioTime(total);};
+    // Onda fixa por mensagem: as alturas vêm do id, então não mudam a cada atualização da tela.
+    let seed=0;for(const char of String(message.id)) seed=(seed*31+char.charCodeAt(0))>>>0;
+    const bars=[];for(let index=0;index<36;index++) {seed=(seed*1103515245+12345)>>>0;const bar=el('i');bar.setAttribute('style','height:'+(5+seed%19)+'px');bars.push(bar);wave.append(bar);}
+    wave.setAttribute('role','slider');wave.setAttribute('aria-label','Posição do áudio');wave.tabIndex=0;
+    const paint=()=>{const total=player.duration,ratio=Number.isFinite(total) && total>0?player.currentTime/total:0,played=Math.round(ratio*bars.length);bars.forEach((bar,index)=>bar.classList.toggle('played',index<played));wave.setAttribute('aria-valuenow',String(Math.round(ratio*100)));};
+    let rate=1;const rates=[];
+    for(const [value,label] of [[1,'1×'],[1.5,'1,5×'],[2,'2×']]) {
+      const button=el('button','audio-rate',label);button.type='button';button.dataset.rate=String(value);button.setAttribute('aria-pressed',String(value===rate));
+      button.addEventListener('click',()=>{rate=value;player.defaultPlaybackRate=value;player.playbackRate=value;for(const item of rates) item.setAttribute('aria-pressed',String(item===button));});
+      rates.push(button);speed.append(button);
+    }
+    speed.setAttribute('role','group');speed.setAttribute('aria-label','Velocidade de reprodução');
+    const view={card,load:play,clock,player,speed,status,loading:false};audioViews.set(key,view);card.audioView=view;
+    const icon=()=>{const playing=Boolean(player.src) && !player.paused;play.textContent=playing?'❚❚':'▶';play.setAttribute('aria-label',playing?'Pausar áudio':'Reproduzir áudio');card.classList.toggle('playing',playing);};
+    view.loadAudio=async(start)=>{
+      if(view.loading) return;if(player.src) {if(start) await Promise.resolve(player.play?.()).catch(()=>{});return;}
+      view.loading=true;card.classList.add('loading');play.disabled=true;status.hidden=true;
+      try {
+        const media=await fetchMedia(message,jid);if(audioViews.get(key)!==view) return;
+        player.src=media.url;player.defaultPlaybackRate=rate;player.playbackRate=rate;note.hidden=true;card.classList.add('ready');updateTime();
+        if(start) await Promise.resolve(player.play?.()).catch(()=>{});
+      } catch(error) {status.textContent=error.message+' Toque em ▶ para tentar de novo.';status.hidden=false;}
+      finally {view.loading=false;card.classList.remove('loading');play.disabled=false;icon();trimMediaCache();}
+    };
+    // Ao liberar memória, o cartão volta a esperar: o próximo ▶ baixa o áudio de novo.
+    view.reset=()=>{card.classList.remove('ready','playing');bars.forEach(bar=>bar.classList.remove('played'));icon();updateTime();};
+    play.addEventListener('click',()=>{focusedMediaKey=key;if(!player.src) return view.loadAudio(true);if(player.paused) Promise.resolve(player.play?.()).catch(()=>{});else player.pause?.();});
+    const seek=ratio=>{if(player.src && Number.isFinite(player.duration)) {player.currentTime=Math.max(0,Math.min(1,ratio))*player.duration;paint();}};
+    wave.addEventListener('click',event=>{const box=wave.getBoundingClientRect();seek((event.clientX-box.left)/box.width);});
+    wave.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key) || !Number.isFinite(player.duration)) return;event.preventDefault();seek((player.currentTime+(event.key==='ArrowRight'?5:-5))/player.duration);});
+    for(const event of ['loadedmetadata','durationchange','timeupdate']) player.addEventListener(event,()=>{updateTime();paint();});
+    for(const event of ['play','pause','ended']) player.addEventListener(event,icon);
+    player.addEventListener('ended',()=>{player.currentTime=0;paint();updateTime();});
+    player.addEventListener('error',()=>{if(!player.getAttribute('src')) return;status.textContent='Não foi possível reproduzir este formato de áudio. Toque em ▶ para tentar de novo.';status.hidden=false;player.removeAttribute('src');view.reset();});
+    if(audioAuto(message)) audioObserver?.observe(card);
+    else {note.textContent='Áudio grande'+(message.bytes?' ('+audioSize(message.bytes)+')':'')+': toque em ▶ para carregar.';note.hidden=false;}
+    updateTime();
+    track.append(wave,row);row.append(clock,speed);main.append(play,track);card.append(main,note,player,status);return card;
   }
   function videoCard(message,jid) {
     const key=jid+'|'+message.id;if(videoViews.has(key)) return videoViews.get(key).card;
@@ -444,6 +481,7 @@
   function releasePlayer(view,video=false) {
     view.player.pause?.();view.player.removeAttribute('src');view.player.load?.();view.player.hidden=!video;view.load.hidden=false;view.load.disabled=false;
     if(view.speed) view.speed.disabled=true;
+    view.reset?.();
   }
   function protectedMedia(key) {return key===viewerMediaKey || key===focusedMediaKey || mediaLocks.has(key) || [audioViews.get(key),videoViews.get(key)].some(view=>view?.player.src && view.player.paused===false);}
   function discardMedia(key) {

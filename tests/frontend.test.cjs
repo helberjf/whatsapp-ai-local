@@ -219,7 +219,7 @@ test('cache de prévias também limita bytes mesmo com poucas imagens grandes',a
 
 test('trocar de conversa libera mídia recebida e recria players antigos apenas sob demanda',async()=>{
   const other='5511999999999@s.whatsapp.net',browser=await createBrowser({withMedia:true,historyRecords:[imageMessage(1),audio(),{...message(3),type:'video'}],onMedia:async({id})=>id==='1'?imageMedia():{base64:'aGVsbG8=',mimeType:id==='3'?'video/mp4':'audio/ogg'},chatRecords:[{jid,name:'Ana',unread:0,status:'open',labels:[]},{jid:other,name:'Bruno',unread:0,status:'open',labels:[]}]});
-  await findClass(browser.get('messages'),'audio-load').emit('click');await findClass(browser.get('messages'),'video-load').emit('click');
+  await findClass(browser.get('messages'),'audio-play').emit('click');await findClass(browser.get('messages'),'video-load').emit('click');
   const oldPlayers=descendants(browser.get('messages')).filter(node=>['AUDIO','VIDEO'].includes(node.tagName)),oldUrls=[...browser.createdUrls];await browser.selectChat(1);
   assert.ok(oldUrls.every(url=>browser.revokedUrls.includes(url)));assert.ok(oldPlayers.every(player=>player.paused && player.src===undefined));
   await browser.selectChat(0);const newPlayers=descendants(browser.get('messages')).filter(node=>['AUDIO','VIDEO'].includes(node.tagName));assert.ok(newPlayers.every(player=>!oldPlayers.includes(player)));assert.ok(newPlayers.every(player=>player.src===undefined));
@@ -481,7 +481,7 @@ test('polling de transcrição mostra resultado e permite copiar sem recriar o �
     if(method==='POST') {saved=[job(input)];return saved[0];}return saved;
   }});
   let row=browser.get('messages').children[0];
-  await findClass(row,'audio-load').emit('click'); // Abre o player local.
+  await findClass(row,'audio-play').emit('click'); // Abre o player local.
   row=browser.get('messages').children[0];
   const player=descendants(row).find(child=>child.tagName==='AUDIO');
   assert.ok(player,'O player precisa continuar funcionando junto à transcrição.');
@@ -563,28 +563,37 @@ test('cartão de áudio carrega por clique, mostra tempo e velocidade e mantém 
   const player=descendants(card).find(child=>child.tagName==='AUDIO');
   assert.equal(browser.requests.some(request=>request.path==='/api/media'),false);
   assert.equal(player.preload,'none');
-  assert.equal(player.controls,true);
-  await findClass(card,'audio-load').emit('click');
+  assert.equal(findClass(card,'audio-speed').children.length,3,'Velocidades 1×, 1,5× e 2× lado a lado.');
+  await findClass(card,'audio-play').emit('click');
   assert.equal(browser.requests.filter(request=>request.path==='/api/media').length,1);
   assert.match(player.src,/^blob:/);
   assert.notEqual(player.autoplay,true,'Carregar o áudio não deve iniciar a reprodução automaticamente.');
   player.currentTime=12;player.duration=95;await player.emit('timeupdate');
   assert.equal(findClass(card,'audio-time').textContent,'0:12 / 1:35');
-  const speed=findClass(card,'audio-speed');speed.value='1.5';await speed.emit('change');
+  const rate=findClass(card,'audio-speed').children[1];await rate.emit('click');
   assert.equal(player.playbackRate,1.5);
   browser.appendMessages(1);await browser.poll();
   assert.equal(descendants(browser.get('messages')).find(child=>child.tagName==='AUDIO'),player,'Uma mensagem nova interrompeu o áudio.');
   assert.equal(player.currentTime,12);
 });
 
+test('áudio grande não carrega sozinho e mostra o tamanho',async()=>{
+  const browser=await createBrowser({historyRecords:[{...audio(),bytes:5*1048576}]});
+  const card=findClass(browser.get('messages'),'audio-card');
+  assert.ok(findClass(card,'audio-note').textContent.includes('Áudio grande (5,0 MB)'));
+  assert.equal(browser.requests.some(request=>request.path==='/api/media'),false);
+  await findClass(card,'audio-play').emit('click');
+  assert.equal(browser.requests.filter(request=>request.path==='/api/media').length,1);
+});
+
 test('erro ao carregar áudio permanece no cartão e só tenta novamente por clique',async()=>{
   const browser=await createBrowser({historyRecords:[audio()],onMedia:async()=>{throw new Error('Áudio não disponível no conector.');}});
   const card=findClass(browser.get('messages'),'audio-card');assert.ok(card);
-  await findClass(card,'audio-load').emit('click');
+  await findClass(card,'audio-play').emit('click');
   assert.match(card.textContent,/Áudio não disponível/);
   await browser.poll();
   assert.equal(browser.requests.filter(request=>request.path==='/api/media').length,1);
-  assert.equal(findClass(card,'audio-load').disabled,false);
+  assert.equal(findClass(card,'audio-play').disabled,false);
 });
 
 test('atualizar nomes preserva seleção, telefone conhecido de LID, rascunho e anexo',async()=>{
