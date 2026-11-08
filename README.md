@@ -90,10 +90,14 @@ Other entry points:
 | `npm run configure` | Generate missing initial configuration without replacing existing secrets. |
 | `npm run serve` | Run only the Node server when configuration and the connector are already available. |
 | `npm run shortcut` | Create the **Whats AI** desktop shortcut and migrate the previous app shortcut when owned by this project. |
-| `Iniciar WhatsApp Local.cmd` / `npm start` | Start the local stack and open the application. Existing `Abrir WhatsApp.cmd` and `Iniciar WhatsApp.cmd` launchers remain compatible. The launcher restarts an older running build after an update. |
-| `Parar WhatsApp.cmd` | Stop the application and containers while preserving data. |
+| `Iniciar WhatsApp Central.cmd` / `npm start` | Start the local stack and open the application. `Iniciar WhatsApp Local.cmd`, `Abrir WhatsApp.cmd` and `Iniciar WhatsApp.cmd` remain compatible. The launcher restarts an older running build after an update. |
+| `Parar WhatsApp Central.cmd` / `npm run stop` | Stop the application and containers while preserving data. `Parar WhatsApp.cmd` remains compatible. |
 | `Ativar inicio com Windows.cmd` | Opt into starting the services at Windows sign-in. |
 | `Desativar inicio com Windows.cmd` | Remove that sign-in shortcut. |
+
+`Iniciar WhatsApp Central.cmd` and `Parar WhatsApp Central.cmd` run `scripts/start-central.ps1` and `scripts/stop.ps1`. If either script is missing from the local copy, they run the version from the last commit under a temporary name in `scripts/` and remove it afterwards.
+
+If the launcher reports that Docker did not start, open Docker Desktop and read its error. If the error mentions `docker-secrets-engine\engine.sock`, a socket left by an interrupted shutdown is blocking it: quit Docker Desktop, delete `%LOCALAPPDATA%\docker-secrets-engine\engine.sock` (restart Windows first if it cannot be deleted) and start again.
 
 The application listens on `127.0.0.1:8766`; Evolution API is published on `127.0.0.1:8767`. PostgreSQL and Redis have no published Windows ports. Keep the computer awake, Node running, Docker active, and WhatsApp connected for scheduling and automatic replies to work with the browser closed.
 
