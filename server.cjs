@@ -46,6 +46,26 @@ function archivedOf(chat,contact,remote) {
   if(archived && remote?.meta?.unarchiveChats===true && since>0 && Number(chat.lastMessage?.timestamp || 0)>since+1000) return false;
   return archived;
 }
+// A mesma pessoa pode aparecer com o identificador privado (@lid) e com o número (ex.: depois de parear de novo,
+// o histórico chega pelo número). A tela mostra uma conversa só, com a mensagem mais recente das duas.
+// Fica o identificador que já tem dados do atendimento; com os dois ou nenhum, o @lid (o de antes).
+function mergeAliasChats(chats,contacts={},waiting={}) {
+  const byJid=new Map(chats.map(chat=>[chat.jid,chat])),merged=new Set(),result=[];
+  for(const chat of chats) {
+    if(merged.has(chat.jid)) continue;
+    const other=(chat.aliasJids || []).map(jid=>byJid.get(jid)).find(item=>item && item.jid!==chat.jid && !merged.has(item.jid) && (item.aliasJids || []).includes(chat.jid));
+    if(!other) {result.push(chat);continue;}
+    merged.add(chat.jid);merged.add(other.jid);
+    const known=item=>Boolean(contacts[item.jid]);
+    const main=known(chat)!==known(other)?(known(chat)?chat:other):(chat.jid.endsWith('@lid')?chat:other),second=main===chat?other:chat;
+    const newer=(second.lastMessage?.timestamp || 0)>(main.lastMessage?.timestamp || 0)?second:main;
+    const named=main.nameSource==='number' && second.nameSource!=='number'?second:main;
+    const since=[waiting[main.jid]?.since,waiting[second.jid]?.since].filter(Number.isFinite);
+    result.push({...main,aliasJids:[...new Set([...(main.aliasJids || []),second.jid])].filter(jid=>jid!==main.jid),name:named.name,nameSource:named.nameSource,phone:main.phone || second.phone,
+      unread:(Number(main.unread) || 0)+(Number(second.unread) || 0),lastMessage:newer.lastMessage,...(since.length?{waitingSince:Math.min(...since)}:{})});
+  }
+  return result;
+}
 const quoteId=value=>{if(value===undefined || value===null || value==='') return undefined;if(typeof value!=='string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(value) || value.includes('..')) throw new ApiError('Mensagem citada inválida.',422);return value;};
 function textField(value,max,label) {if(typeof value!=='string' || !value.trim() || value.length>max) throw new ApiError(`${label}: informe de 1 a ${max} caracteres.`,422);return value.trim();}
 async function readBody(req) {
@@ -246,9 +266,9 @@ function createWhatsAppServer(options={}) {
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
         if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
         // readState: a última mensagem já lida pela central zera o contador, mesmo antes de o WhatsApp confirmar a leitura.
-        const chats=(await client.chats()).map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage;
+        const chats=mergeAliasChats(await client.chats(),data.contacts,waiting).map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage,since=chat.waitingSince ?? waiting[chat.jid]?.since;
           const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
-          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,contact,archived),...(waiting[chat.jid]?{waitingSince:waiting[chat.jid].since}:{}),...(read?{unread:0}:{})};});
+          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,contact,archived),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
