@@ -107,7 +107,7 @@
     try {
       const result=await api('/chat-lists','GET',undefined,115000);
       chatLists=result.lists;listContacts=result.contacts || [];
-      const filter=$('chat-list-filter'),options=[el('option','','Todas as conversas'),el('option','','Grupos')];
+      const filter=$('chat-list-filter'),options=[el('option','','Conversas individuais'),el('option','','Grupos')];
       options[0].value='';options[1].value='groups';
       for(const list of chatLists) {const option=el('option','',list.name);option.value='list:'+list.id;options.push(option);}
       if(!options.some(option=>option.value===listFilter)) listFilter='';
@@ -686,8 +686,8 @@
     selected=chat;selection++;editRevision++;historyQueue=Promise.resolve();historyLoaded=false;messages=[];page=1;pages=1;attachment=null;attachmentKind=null;pendingSend=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;$('send-status').textContent='';
     globalThis.WhatsAppMedia?.onAttachment?.(null);
     $('conversation-empty').hidden=true;$('conversation-content').hidden=false;$('contact-empty').hidden=true;$('contact-details').hidden=false;
-    $('composer').hidden=$('show-contact').hidden=$('contact-flags').hidden=Boolean(chat.isGroup);
-    $('group-read-only').hidden=!chat.isGroup;
+    $('composer').classList.toggle('group-composer',Boolean(chat.isGroup));
+    $('show-contact').hidden=$('contact-flags').hidden=Boolean(chat.isGroup);
     if(chat.isGroup) {$('contact-details').hidden=true;toggleContact(false);}
     $('app-shell').classList.toggle('has-chat',true);
     showSelectedIdentity(chat);$('message-text').value=drafts.get(chat.jid) || '';renderTemplateShortcuts();
@@ -778,9 +778,10 @@
   for(const id of ['search','unread-only','status-filter']) $(id).addEventListener(id==='search'?'input':'change',renderChats);
   $('older').addEventListener('click',async()=>{$('older').disabled=true;try {await loadMessages(true);}catch(error) {notice(error.message);}finally {$('older').disabled=false;}});
   $('quick-template').addEventListener('change',()=>{if($('quick-template').value==='') return;insertTemplate(templates[Number($('quick-template').value)]);$('quick-template').value='';});
-  $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;if(selected) extras()?.onTyping?.(selected.jid);});
+  $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;if(selected && !selected.isGroup) extras()?.onTyping?.(selected.jid);});
   $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && !event.shiftKey && !event.altKey && !event.isComposing && event.keyCode!==229 && !event.repeat) {event.preventDefault();$('composer').requestSubmit();}});
   function setAttachment(file,kind=null,viewOnce=false) {
+    if(selected?.isGroup) return;
     if(sending) return;
     editRevision++;pendingSend=null;
     if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
@@ -835,7 +836,7 @@
   $('voice-text-cancel').addEventListener('click',()=>$('voice-text-dialog').close());
   $('voice-text-dialog').addEventListener('cancel',event=>{if(sending) event.preventDefault();});
   async function sendMessage(event) {
-    event.preventDefault();if(!selected || $('speak-send').disabled) return;
+    event.preventDefault();if(!selected || (!selected.isGroup && $('speak-send').disabled)) return;
     const asText=event.currentTarget===$('voice-text-form'),status=$(asText?'voice-text-status':'send-status');
     // Enter durante um envio não se perde: a próxima mensagem sai assim que a atual terminar.
     if(sending) {if(!asText) submitQueued=true;return;}
@@ -908,7 +909,7 @@
   const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-team','nav-voice','nav-profile','settings','nav-connection','nav-settings'];
   const pageIds=['page-dashboard','page-contacts','page-knowledge','page-products','page-ai','page-team','page-voice','page-profile'];
   function renderDashboard() {
-    const cards=document.createDocumentFragment(),activeChats=chats.filter(chat=>chat.archived!==true);
+    const cards=document.createDocumentFragment(),activeChats=chats.filter(chat=>!chat.isGroup && chat.archived!==true);
     for(const [label,count,status,unread] of [
       ['Conversas',activeChats.length,'',false],['Não lidas',activeChats.filter(c=>c.unread>0 || c.markedUnread===true).length,'',true],
       ['Pendentes',activeChats.filter(c=>c.status==='pending').length,'pending',false],
@@ -1056,7 +1057,7 @@
   globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});
-  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),send:()=>$('composer').requestSubmit(),isSending:()=>sending,touchDraft:()=>{editRevision++;pendingSend=null;},hooks});
+  globalThis.WhatsAppMedia?.init?.({notice,setAttachment,getSelected:()=>selected,canRecord:()=>!!selected && !selected.isGroup && !sending && !attachment && connection?.state==='connected',onRecording:(jid,active)=>extras()?.onRecording?.(jid,active),send:()=>$('composer').requestSubmit(),isSending:()=>sending,touchDraft:()=>{editRevision++;pendingSend=null;},hooks});
   $('media-viewer').addEventListener('close',()=>{const key=viewerMediaKey;viewerMediaKey=null;if(key && !key.startsWith((selected?.jid || '')+'|')) discardMedia(key);trimMediaCache();});
   window.addEventListener('pagehide',()=>{viewerMediaKey=null;mediaLocks.clear();clearConversationMedia();});
   const mainNav=document.querySelector('.main-nav');

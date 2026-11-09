@@ -355,7 +355,7 @@ Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing
 
 ## Current limits
 
-- Individual conversations support sending and customer-service tools. The inbox also shows groups and WhatsApp custom lists. Group chats display the history available to the connector in read-only mode.
+- Individual conversations support sending and customer-service tools. Open a group from the inbox's Groups filter or a WhatsApp custom list to see its synced history and send text manually.
 - The central does not support bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
 - Accounts are separate workspaces: forwarding and search stay inside the account in use, and there is no combined inbox. Up to 10 accounts.
 - Attendants are names for people sharing this central on this computer; there is no per-person login, and the central is still reachable only through loopback. Using it from several computers needs accounts, HTTPS and a deployment design that this version does not include.

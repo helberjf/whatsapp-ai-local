@@ -142,3 +142,5 @@ dialog.media-viewer{width:min(1200px,calc(100vw - 32px));height:calc(100dvh - 48
 .message-receipt svg{width:16px;height:11px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}
 .message-receipt.receipt-read{color:#55c8ff}
 .message-receipt.receipt-failed{color:#ff9a91}
+.group-composer :is(#ai-suggest,#speak-send,#attachment-toggle,#record-audio){display:none}
+.group-composer .composer-editor{grid-template-columns:minmax(0,1fr) auto auto}

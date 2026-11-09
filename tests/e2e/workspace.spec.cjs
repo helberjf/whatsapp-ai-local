@@ -21,20 +21,41 @@ test('mostra um tique no envio e dois após entrega e leitura confirmadas',async
 });
 async function insideViewport(locator) {await locator.scrollIntoViewIfNeeded();const box=await locator.boundingBox();expect(box).not.toBeNull();const viewport=locator.page().viewportSize();expect(box.x).toBeGreaterThanOrEqual(-1);expect(box.y).toBeGreaterThanOrEqual(-1);expect(box.x+box.width).toBeLessThanOrEqual(viewport.width+1);expect(box.y+box.height).toBeLessThanOrEqual(viewport.height+1);}
 
-test('filtra grupos e listas personalizadas e abre o histórico do grupo',async({page})=>{
-  const group={jid:'123@g.us',name:'Grupo da família',isGroup:true,status:'open',labels:[],unread:0};
-  await page.route('**/api/chats?**',route=>route.fulfill({json:[group]}));
-  await page.route('**/api/chat-lists',route=>route.fulfill({json:{lists:[{id:'1',name:'Família',jids:[group.jid,'5511998765432@s.whatsapp.net']}]}}));
-  await page.route('**/api/messages?jid=123%40g.us&**',route=>route.fulfill({json:{messages:[{id:'hi',type:'text',text:'Almoço de domingo',fromMe:false}],page:1,pages:1}}));
+test('filtra grupos e listas personalizadas e envia texto no grupo aberto',async({page})=>{
+  const group={jid:'123@g.us',name:'Grupo da família',isGroup:true,status:'open',labels:[],unread:2};
+  const contact={jid:'5511998765432@s.whatsapp.net',name:'Contato individual',status:'open',labels:[],unread:0};
+  await page.route(/\/api\/(?:chats|chat-lists|messages|send)(?:\?|$)/,route=>{
+    const url=new URL(route.request().url());
+    if(url.pathname==='/api/chats') return route.fulfill({json:[group,contact]});
+    if(url.pathname==='/api/chat-lists') return route.fulfill({json:{lists:[{id:'1',name:'Família',jids:[group.jid,contact.jid]}]}});
+    if(url.pathname==='/api/messages') {
+      if(url.searchParams.get('jid')!==group.jid) return route.continue();
+      return route.fulfill({json:{messages:[{id:'hi',type:'text',text:'Almoço de domingo',fromMe:false}],page:1,pages:1}});
+    }
+    const {jid,text}=route.request().postDataJSON();
+    expect(jid).toBe(group.jid);
+    return route.fulfill({json:{id:'out-group',jid,text,fromMe:true,type:'text',timestamp:Date.now(),deliveryStatus:'sent'}});
+  });
   await page.locator('#refresh-top').click();
   const filter=page.getByRole('combobox',{name:'Grupos e listas do WhatsApp'});
+  const rows=page.locator('#chat-list .chat-item');
+  await expect(rows).toHaveText([/Contato individual/]);
+  await expect(page.locator('#filter-total-count')).toHaveText('1');
+  await expect(page.locator('#filter-unread-count')).toHaveText('0');
   await filter.selectOption({label:'Família'});
-  await expect(page.locator('.chat-item')).toHaveCount(2);
+  await expect(rows).toHaveText([/Grupo da família/,/Contato individual/]);
   await filter.selectOption({label:'Grupos'});
-  await expect(page.locator('.chat-item')).toHaveCount(1);
+  await expect(rows).toHaveText([/Grupo da família/]);
   await page.getByRole('button',{name:/Grupo da família/}).click();
   await expect(page.locator('#messages')).toContainText('Almoço de domingo');
-  await expect(page.locator('#composer')).toBeHidden();
+  await expect(page.locator('#composer')).toBeVisible();
+  await expect(page.locator('#attachment-toggle')).toBeHidden();
+  await expect(page.locator('#record-audio')).toBeHidden();
+  await page.locator('#message-text').fill('Confirmado para domingo');
+  await page.locator('#send').click();
+  await expect(page.locator('#messages .message.mine')).toContainText('Confirmado para domingo');
+  await page.locator('#filter-all').click();
+  await expect(rows).toHaveText([/Contato individual/]);
 });
 
 test('grupos ficam à parte como as arquivadas e voltam às conversas',async({page})=>{

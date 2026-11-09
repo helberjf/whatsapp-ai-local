@@ -35,7 +35,7 @@ before(async()=>{
     else if(req.url==='/chat/localGroups/teste') output={groups:[{id:'123@g.us',subject:'Grupo com histórico'},{id:'123-456@g.us',subject:'Grupo sem histórico'}]};
     else if(req.url==='/chat/localLists/teste') output={lists:[{id:'15',name:'Família',jids:[jid,'123@g.us']}]};
     else if(req.url==='/chat/findMessages/teste') output={messages:{total:2,pages:2,currentPage:input.page,records:[{...incoming,key:{...incoming.key,id:`in-${input.page}`}}]}};
-    else if(req.url==='/message/sendText/teste') { if(failSend) res.statusCode=500;output={key:{id:'out-1',remoteJid:jid,fromMe:true},message:{conversation:input.text},status:'PENDING'}; }
+    else if(req.url==='/message/sendText/teste') { if(failSend) res.statusCode=500;output={key:{id:'out-1',remoteJid:input.number,fromMe:true},message:{conversation:input.text},status:'PENDING'}; }
     else if(req.url==='/message/sendMedia/teste') output={key:{id:'media-1',remoteJid:jid,fromMe:true},status:'PENDING'};
     else if(req.url==='/chat/getBase64FromMediaMessage/teste') output={base64:'aGVsbG8=',mimetype:'text/plain',fileName:'teste.txt'};
     res.end(JSON.stringify(output));
@@ -103,7 +103,17 @@ test('envia texto só por ação explícita e usa text no contrato v2.3.7; dedup
   const sends=calls.filter(c=>c.url==='/message/sendText/teste');assert.equal(sends.length,before+1);
   assert.equal(sends.at(-1).input.text,input.text);assert.equal(sends.at(-1).input.number,jid);assert.equal(sends.at(-1).input.textMessage,undefined);
   assert.equal((await request('/api/send','POST',{...input,text:''})).status,422);
-  assert.equal((await request('/api/send','POST',{...input,jid:'123@g.us'})).status,422);
+  assert.equal((await request('/api/send','POST',{...input,jid:'status@broadcast'})).status,422);
+});
+test('envia texto ao grupo aberto e deduplica o mesmo pedido',async()=>{
+  const group='123-456@g.us',input={jid:group,text:'Mensagem para o grupo',requestId:'req-grupo-001'};
+  const sends=()=>calls.filter(c=>c.url==='/message/sendText/teste' && c.input.number===group);
+  const [first,second]=await Promise.all([api('/api/send','POST',input),api('/api/send','POST',input)]);
+  assert.deepEqual(first,second);
+  assert.deepEqual([first.jid,first.text,first.fromMe],[group,input.text,true]);
+  assert.equal(sends().length,1);
+  assert.equal((await request('/api/send','POST',{...input,requestId:'req-grupo-002',quotedId:'in-1'})).status,422);
+  assert.equal(sends().length,1);
 });
 test('falha de envio é informada e não dispara repetição automática',async()=>{
   failSend=true;const before=calls.length;

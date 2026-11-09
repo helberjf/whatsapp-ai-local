@@ -377,8 +377,11 @@ function createWhatsAppServer(options={}) {
         return json(res,200,{read:true});
       }
       if(req.method==='POST' && route==='/api/send') {
-        const input=await readBody(req),jid=assertJid(input.jid),text=textField(input.text,10000,'Mensagem'),quotedId=quoteId(input.quotedId);
-        return json(res,200,await sendOnce(input,()=>client.sendText(jid,text,quotedId?{quotedId}:{})));
+        const validate=typeof integrationGiven==='string'?assertJid:assertConversationJid;
+        const input=await readBody(req),jid=validate(input.jid),text=textField(input.text,10000,'Mensagem'),quotedId=quoteId(input.quotedId);
+        const allowGroup=groupJid(jid);
+        if(allowGroup && quotedId) throw new ApiError('Envie a mensagem sem citação neste grupo.',422);
+        return json(res,200,await sendOnce(input,()=>client.sendText(jid,text,{allowGroup,quotedId})));
       }
       if(req.method==='POST' && route==='/api/send-media') {
         const input=await readBody(req),jid=assertJid(input.jid);

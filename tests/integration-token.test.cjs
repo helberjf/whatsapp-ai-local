@@ -26,6 +26,8 @@ test('token de integração libera apenas status, consulta de número, envio de 
   assert.equal((await call('/api/crm')).status,403,'rota fora da lista');
   assert.equal((await call('/api/disconnect','POST',integrationToken,{})).status,403,'desconectar não é liberado');
   assert.equal((await call('/api/settings')).status,403);
+  assert.equal((await call('/api/send','POST',integrationToken,{jid:'123@g.us',text:'Oi',requestId:'group-integration-01'})).status,422);
+  assert.ok(!upstreamCalls.some(route=>route.startsWith('/message/sendText')));
   // Sem o header, o comportamento antigo continua: exige a sessão da própria tela.
   assert.equal((await fetch(base+'/api/connection')).status,403);
 });
