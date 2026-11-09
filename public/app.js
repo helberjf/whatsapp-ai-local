@@ -59,8 +59,8 @@
     const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
     const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
     const matching=conversationsForFilter().filter(chat=>(!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
-    const filtered=extras()?.arrangeChats?.(matching) || matching;
-    const active=chats.filter(chat=>chat.archived!==true),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
+    const filtered=extras()?.arrangeChats?.(matching) || matching;renderGroupsRow();
+    const active=chats.filter(chat=>chat.archived!==true && !chat.isGroup),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
     $('metric-total').textContent=active.length;$('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=active.filter(chat=>chat.status==='closed').length;$('chat-count').textContent=filtered.length;
     $('filter-total-count').textContent=active.length;$('nav-chat-count').textContent=active.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
     $('filter-all').classList.toggle('active',!listFilter && !status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
@@ -73,8 +73,19 @@
     if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
     $('chat-list').replaceChildren(fragment);
   }
+  function renderGroupsRow() {
+    const groups=chats.filter(chat=>chat.isGroup),open=listFilter==='groups',unread=groups.filter(chat=>Number(chat.unread)>0).length;
+    $('groups-row').hidden=!groups.length && !open;
+    $('groups-row').setAttribute('aria-pressed',String(open));$('groups-row').classList.toggle('back',open);
+    $('groups-row-label').textContent=open?'← Voltar às conversas':'Grupos';
+    $('groups-row-count').textContent=open || !unread?'':String(unread);
+    $('groups-row').title=`${groups.length} grupo${groups.length===1?'':'s'}${unread?` · ${unread} com mensagem não vista`:''}`;
+    // Dentro dos grupos, a linha de arquivadas some para as duas visões não se misturarem.
+    if(open) {$('archived-row').hidden=true;const title=$('inbox-title').firstChild;if(title) title.textContent='Grupos ';}
+  }
   function conversationsForFilter() {
-    if(!listFilter) return chats;
+    // Grupos ficam à parte, como as arquivadas: aparecem pela linha "Grupos" ou numa busca.
+    if(!listFilter) return $('search').value.trim()?chats:chats.filter(chat=>!chat.isGroup);
     if(listFilter==='groups') return chats.filter(chat=>chat.isGroup);
     const members=new Set(chatLists.find(list=>'list:'+list.id===listFilter)?.jids || []);
     const result=[];
@@ -971,6 +982,7 @@
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
   $('filter-all').addEventListener('click',()=>applyFilter());$('filter-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('chat-list-filter').addEventListener('change',event=>applyFilter('',false,'nav-conversations',event.target.value));
+  $('groups-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups'?'':'groups'));
   $('toggle-filters').addEventListener('click',()=>{$('advanced-filters').hidden=!$('advanced-filters').hidden;$('toggle-filters').setAttribute('aria-expanded',String(!$('advanced-filters').hidden));});
   for(const section of ['attendance','products','assistant','templates','connection']) $('tab-'+section).addEventListener('click',()=>showPanel(section));
   $('nav-connection').addEventListener('click',()=>$('connection-dialog').showModal());

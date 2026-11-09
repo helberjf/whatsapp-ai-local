@@ -37,6 +37,21 @@ test('filtra grupos e listas personalizadas e abre o histórico do grupo',async(
   await expect(page.locator('#composer')).toBeHidden();
 });
 
+test('grupos ficam à parte como as arquivadas e voltam às conversas',async({page})=>{
+  const group={jid:'123@g.us',name:'Grupo da família',isGroup:true,status:'open',labels:[],unread:2};
+  const person={jid:'5511998765432@s.whatsapp.net',name:'Ana Souza',status:'open',labels:[],unread:0};
+  await page.route('**/api/chats?**',route=>route.fulfill({json:[group,person]}));
+  await page.locator('#refresh-top').click();
+  await expect(page.locator('.chat-item')).toHaveCount(1);await expect(page.locator('.chat-item')).toContainText('Ana Souza');
+  await expect(page.locator('#groups-row')).toBeVisible();await expect(page.locator('#groups-row-count')).toHaveText('1');
+  await page.locator('#groups-row').click();
+  await expect(page.locator('.chat-item')).toHaveCount(1);await expect(page.locator('.chat-item')).toContainText('Grupo da família');
+  await expect(page.locator('#groups-row')).toContainText('Voltar às conversas');await expect(page.locator('#archived-row')).toBeHidden();
+  await page.locator('#groups-row').click();
+  await expect(page.locator('.chat-item')).toHaveCount(1);await expect(page.locator('.chat-item')).toContainText('Ana Souza');
+  await page.locator('#search').fill('família');await expect(page.locator('.chat-item')).toContainText('Grupo da família');
+});
+
 test('recording offers text preview before stopping manually',async({page})=>{
   await openChat(page);
   const sent=[];page.on('request',req=>{if(/\/api\/send(?:-voice|-media)?$/.test(req.url())) sent.push(req.url());});
