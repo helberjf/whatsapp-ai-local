@@ -31,3 +31,10 @@ test('sem depender do Ollama, nenhuma faixa aparece',async({page,demo})=>{
   await expect(page.locator('#ai-health-banner')).toBeHidden();
   await expect(page.locator('#status-ai')).not.toHaveText('Fora do ar');
 });
+
+test('central sem resposta mostra o que fazer em vez de "Failed to fetch"',async({page,demo})=>{
+  await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item').first()).toBeVisible();
+  await page.route('**/api/kb',route=>route.abort('connectionrefused'));
+  await page.getByRole('button',{name:/Base de Conhecimento/}).click();
+  await expect(page.locator('#notice')).toHaveText('A central não está respondendo. Se ela foi fechada, abra "Iniciar WhatsApp Central" e recarregue a página.');
+});

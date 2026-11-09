@@ -32,7 +32,10 @@
   const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
   function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
   async function api(route,method='GET',input,timeout=30000,signal) {
-    const response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:signal || AbortSignal.timeout(timeout)});
+    let response;
+    try {response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:signal || AbortSignal.timeout(timeout)});}
+    // Sem resposta nenhuma (central fechada ou reiniciando), o navegador só diz "Failed to fetch": explica o que fazer.
+    catch(error) {if(error?.name==='TypeError') throw new Error('A central não está respondendo. Se ela foi fechada, abra "Iniciar WhatsApp Central" e recarregue a página.');throw error;}
     const result=await response.json();if(!response.ok) throw new Error(result.error || 'Não foi possível completar a operação.');return result;
   }
   function notice(message,success=false) {$('notice').textContent=message;$('notice').classList.toggle('success',success);$('notice').hidden=!message;}
