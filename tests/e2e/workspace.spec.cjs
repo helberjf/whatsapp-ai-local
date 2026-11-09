@@ -5,7 +5,37 @@ const test=base.extend({demo:async({},use)=>{const demo=await createDemo({port:0
 const screenshotDir=path.join(__dirname,'..','..','docs','screenshots');
 const capturePath=name=>process.env.WHATSAPP_CAPTURE_DOCS==='1'?path.join(screenshotDir,name):test.info().outputPath(name);
 async function openChat(page) {await page.locator('.chat-item').filter({hasText:'Alex Morgan'}).click();await expect(page.locator('#conversation-content')).toBeVisible();}
+test('mostra um tique no envio e dois após entrega e leitura confirmadas',async({page})=>{
+  let deliveryStatus='sent';
+  await page.route('**/api/messages?**',route=>route.fulfill({json:{page:1,pages:1,messages:[{id:'receipt',fromMe:true,type:'text',text:'Teste de entrega',timestamp:Date.now(),deliveryStatus}]}}));
+  await openChat(page);
+  const receipt=page.locator('[data-id="receipt"] .message-receipt');
+  await expect(receipt).toHaveAttribute('aria-label','Enviada');
+  await expect(receipt.locator('path')).toHaveCount(1);
+  deliveryStatus='delivered';await page.locator('#refresh-top').click();
+  await expect(receipt).toHaveAttribute('aria-label','Entregue');
+  await expect(receipt.locator('path')).toHaveCount(2);
+  deliveryStatus='read';await page.locator('#refresh-top').click();
+  await expect(receipt).toHaveAttribute('aria-label','Visualizada');
+  await expect(receipt).toHaveClass(/receipt-read/);
+});
 async function insideViewport(locator) {await locator.scrollIntoViewIfNeeded();const box=await locator.boundingBox();expect(box).not.toBeNull();const viewport=locator.page().viewportSize();expect(box.x).toBeGreaterThanOrEqual(-1);expect(box.y).toBeGreaterThanOrEqual(-1);expect(box.x+box.width).toBeLessThanOrEqual(viewport.width+1);expect(box.y+box.height).toBeLessThanOrEqual(viewport.height+1);}
+
+test('filtra grupos e listas personalizadas e abre o histórico do grupo',async({page})=>{
+  const group={jid:'123@g.us',name:'Grupo da família',isGroup:true,status:'open',labels:[],unread:0};
+  await page.route('**/api/chats?**',route=>route.fulfill({json:[group]}));
+  await page.route('**/api/chat-lists',route=>route.fulfill({json:{lists:[{id:'1',name:'Família',jids:[group.jid,'5511998765432@s.whatsapp.net']}]}}));
+  await page.route('**/api/messages?jid=123%40g.us&**',route=>route.fulfill({json:{messages:[{id:'hi',type:'text',text:'Almoço de domingo',fromMe:false}],page:1,pages:1}}));
+  await page.locator('#refresh-top').click();
+  const filter=page.getByRole('combobox',{name:'Grupos e listas do WhatsApp'});
+  await filter.selectOption({label:'Família'});
+  await expect(page.locator('.chat-item')).toHaveCount(2);
+  await filter.selectOption({label:'Grupos'});
+  await expect(page.locator('.chat-item')).toHaveCount(1);
+  await page.getByRole('button',{name:/Grupo da família/}).click();
+  await expect(page.locator('#messages')).toContainText('Almoço de domingo');
+  await expect(page.locator('#composer')).toBeHidden();
+});
 
 test('recording offers text preview before stopping manually',async({page})=>{
   await openChat(page);

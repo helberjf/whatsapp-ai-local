@@ -9,6 +9,19 @@ const {createWhatsAppServer}=require('../server.cjs');
 const jidOf=i=>'55119'+String(i).padStart(8,'0')+'@s.whatsapp.net',lid='123456789012345@lid';
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
+test('confirmação do servidor que chega antes da gravação atualiza só a mensagem própria pendente',async()=>{
+  const handlers={},updates=[];
+  const client={ev:{on(){}},ws:{on(event,handler){handlers[event]=handler;}}};
+  const service={instanceId:'inst',client,prismaRepository:{message:{updateMany:async input=>{updates.push(input);return {count:updates.length===1?0:1};}}}};
+  createExtension().observe(service);
+  await handlers['CB:ack,class:message']({attrs:{id:'message-id'}});
+  assert.equal(updates.length,2);
+  assert.deepEqual(updates[1],{
+    where:{instanceId:'inst',AND:[{key:{path:['id'],equals:'message-id'}},{key:{path:['fromMe'],equals:true}}],OR:[{status:null},{status:'PENDING'}]},
+    data:{status:'SERVER_ACK'}
+  });
+});
+
 test('extensão guarda arquivadas do WhatsApp (celular, sincronização e central) e responde pela rota local',async()=>{
   const handlers={},saved=[];
   const extension=createExtension({load:()=>({}),save:()=>{}},{load:()=>({}),save:value=>saved.push(structuredClone(value)),delayMs:5});
@@ -68,17 +81,39 @@ test('contatos: agenda e conversas juntas, sem duplicar telefone e identificador
 });
 
 // Baileys de mentira com a mesma interface usada pela extensão (consulta, decodificação de snapshot e de patches).
-function fakeBaileys(rounds) {
+function fakeBaileys(rounds,collection='regular_low') {
   let call=0;
   return {
     library:{
       S_WHATSAPP_NET:'@s.whatsapp.net',newLTHashState:()=>({version:0,hash:Buffer.alloc(128),indexValueMap:{}}),
-      extractSyncdPatches:async()=>({regular_low:rounds[call++]}),
+      extractSyncdPatches:async()=>({[collection]:rounds[call++]}),
       decodeSyncdSnapshot:async(name,snapshot)=>({state:{version:snapshot.version},mutationMap:Object.fromEntries(snapshot.mutations.map((item,i)=>['s'+i,item]))}),
       decodePatches:async(name,patches,state)=>({state:{version:state.version+patches.length},mutationMap:Object.fromEntries(patches.flatMap(patch=>patch.mutations).map((item,i)=>['p'+i,item]))})
     }
   };
 }
+
+test('lê listas personalizadas de regular e aplica remoções sem alterar a sessão',async()=>{
+  const group='120363@g.us',m=(index,value)=>({index,syncAction:{value}});
+  const edit=(id,name,type,extra={})=>m(['label_edit',id],{labelEditAction:{name,type,...extra}});
+  const link=(id,jid,labeled=true)=>m(['label_jid',id,jid],{labelAssociationAction:{labeled}});
+  const rounds=[{snapshot:{version:4,mutations:[
+    edit('1','Trabalho',5,{orderIndex:2}),edit('2','Família',5,{orderIndex:1}),edit('3','Grupos',2),
+    edit('4','Apagada',5,{deleted:true}),link('1',group),link('1',lid),link('3',group),link('4',group)
+  ]},hasMorePatches:true},{patches:[{version:{version:5},mutations:[link('1',lid,false),link('2',jidOf(1)),link('2','status@broadcast')]}]}];
+  const {library}=fakeBaileys(rounds,'regular'),queries=[];
+  const key=Buffer.alloc(32,1),decodePatches=library.decodePatches;
+  library.decodePatches=async(name,patches,state,getKey)=>{
+    assert.deepEqual((await getKey('fixture')).keyData,key);
+    return decodePatches(name,patches,state);
+  };
+  const extension=createExtension({},{},{loadBaileys:async()=>library});
+  const service={instanceId:'inst',client:{query:async node=>{queries.push(node.content[0].content[0].attrs);return {};},authState:{keys:{get:async()=>({fixture:{keyData:key.toString('base64')}})}}}};
+  const response={status(code) {assert.equal(code,200);return this;},json(value) {return value;}};
+  const result=await extension.listsHandler({waMonitor:{waInstances:{teste:service}}})({params:{instanceName:'teste'}},response);
+  assert.deepEqual(result.lists,[{id:'2',name:'Família',jids:[jidOf(1)]},{id:'1',name:'Trabalho',jids:[group]}]);
+  assert.deepEqual(queries.map(({name,version})=>[name,version]),[['regular','0'],['regular','4']]);
+});
 
 test('extensão lê as arquivadas antigas do WhatsApp sem alterar a sessão e sem apagar o que é mais novo',async()=>{
   const at=Date.now(),m=(type,jid,value,timestamp)=>({index:[type,jid],syncAction:{value:{timestamp:{toNumber:()=>timestamp},...value}}});

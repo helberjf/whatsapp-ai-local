@@ -12,6 +12,7 @@ const OFFLINE_BATCH_IDLE_MS=1500;
 const STORE='/evolution/instances/whatsapp-central-disappearing.v1.json';
 const ARCHIVE_STORE='/evolution/instances/whatsapp-central-archived.v1.json';
 const individual=value=>typeof value==='string' && /^[1-9]\d{5,19}@(s\.whatsapp\.net|lid)$/.test(value);
+const group=value=>typeof value==='string' && /^\d{1,20}(?:-\d{1,20})?@g\.us$/.test(value);
 const expirationValid=value=>[0,86400,604800,7776000].includes(value);
 const ARCHIVE_META='$meta';
 const SNAPSHOT_COLLECTION='regular_low';
@@ -94,6 +95,20 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
   function observe(service) {
     const socket=service?.client;if(!socket || typeof socket!=='object' || listening.has(socket) || typeof socket.ev?.on!=='function') return;
     listening.add(socket);
+    const instanceId=instanceKey(service),messages=service.prismaRepository?.message;
+    if(instanceId && typeof messages?.updateMany==='function') socket.ws?.on('CB:ack,class:message',async({attrs}={})=>{
+      const id=attrs?.id;
+      if(typeof id!=='string' || !/^[\w.:-]{1,200}$/.test(id)) return;
+      // O ACK pode chegar antes de a Evolution salvar a mensagem enviada.
+      const where={instanceId,AND:[{key:{path:['id'],equals:id}},{key:{path:['fromMe'],equals:true}}],OR:[{status:null},{status:'PENDING'}]};
+      try {
+        for(const delay of [0,100,400,1200]) {
+          if(delay) await new Promise(resolve=>setTimeout(resolve,delay));
+          const result=await messages.updateMany({where,data:{status:attrs.error?'ERROR':'SERVER_ACK'}});
+          if(result.count) break;
+        }
+      } catch { /* A consulta normal ainda lê os recibos salvos pela Evolution. */ }
+    });
     socket.ev.on('messages.upsert',payload=>{
       for(const message of Array.isArray(payload?.messages)?payload.messages:[]) {
         let content=message.message;
@@ -186,10 +201,16 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
   };}
   // Lê do WhatsApp o estado atual de arquivar/desarquivar sem gravar nada na sessão: o mesmo pedido que o
   // Baileys faz ao sincronizar do zero, mas decodificado aqui, sem alterar a versão salva nem disparar eventos.
-  async function readArchiveSnapshot(socket) {
+  async function readAppState(socket,name) {
     const {extractSyncdPatches,decodeSyncdSnapshot,decodePatches,newLTHashState,S_WHATSAPP_NET}=await loadBaileys();
-    const getKey=async keyId=>(await socket.authState.keys.get('app-state-sync-key',[keyId]))?.[keyId];
-    const name=SNAPSHOT_COLLECTION,mutations={};let state=null,partial=false;
+    const getKey=async keyId=>{
+      const key=(await socket.authState.keys.get('app-state-sync-key',[keyId]))?.[keyId];
+      // A Evolution pode devolver a chave do Redis em Base64. O Baileys deriva a chave a partir dos bytes.
+      if(typeof key?.keyData!=='string') return key;
+      const bytes=Buffer.from(key.keyData,'base64');
+      return bytes.length===32 && bytes.toString('base64')===key.keyData?{...key,keyData:bytes}:undefined;
+    };
+    const mutations={};let state=null,partial=false;
     const ask=async version=>{
       const node={tag:'iq',attrs:{to:S_WHATSAPP_NET,xmlns:'w:sync:app:state',type:'set'},content:[{tag:'sync',attrs:{},content:[{tag:'collection',attrs:{name,version:String(version),return_snapshot:String(!version)}}]}]};
       // Uma nova tentativa quando o WhatsApp demora a responder.
@@ -201,7 +222,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
       try {
         result=await ask(version);decoded=(await extractSyncdPatches(result,{}))?.[name];
       } catch(error) {if(!state) throw error;partial=true;break;}
-      if(!decoded) break;
+      if(!decoded) {partial=Boolean(state);break;}
       if(decoded.snapshot) {const next=await decodeSyncdSnapshot(name,decoded.snapshot,getKey,undefined,false);state=next.state;Object.assign(mutations,next.mutationMap);}
       state ||= newLTHashState();
       if(decoded.patches?.length) {
@@ -210,7 +231,12 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
         catch(error) {if(!Object.keys(mutations).length) throw error;partial=true;break;}
       }
       if(!decoded.hasMorePatches) break;
+      if(round===49) partial=true;
     }
+    return {mutations,partial};
+  }
+  async function readArchiveSnapshot(socket) {
+    const {mutations,partial}=await readAppState(socket,SNAPSHOT_COLLECTION);
     const chats=[];let unarchiveChats=null;
     for(const {syncAction,index} of Object.values(mutations)) {
       const [type,jid]=Array.isArray(index)?index:[],value=syncAction?.value;
@@ -221,6 +247,49 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     }
     return {chats,unarchiveChats,partial};
   }
+  function groupsHandler(controller) {return async(request,response)=>{
+    const service=serviceFor(controller,request);
+    if(typeof service?.client?.groupFetchAllParticipating!=='function') return fail(response,503,'O WhatsApp precisa estar conectado.');
+    try {
+      const settings=await service.findSettings();
+      if(settings?.groupsIgnore===true) await service.setSettings({...settings,groupsIgnore:false});
+      const groups=Object.values(await service.client.groupFetchAllParticipating())
+        .filter(item=>group(item?.id)).map(({id,subject})=>({id,subject}));
+      return response.status(200).json({groups});
+    } catch {return fail(response,502,'Não foi possível consultar os grupos no WhatsApp.');}
+  };}
+  function listsHandler(controller) {return async(request,response)=>{
+    const socket=serviceFor(controller,request)?.client;
+    if(typeof socket?.query!=='function' || typeof socket.authState?.keys?.get!=='function') return fail(response,503,'O WhatsApp precisa estar conectado.');
+    try {
+      const {mutations,partial}=await readAppState(socket,'regular');
+      if(partial) return fail(response,502,'O WhatsApp enviou uma leitura incompleta das listas.');
+      const definitions=new Map(),memberships=new Map();
+      for(const {syncAction,index} of Object.values(mutations)) {
+        const [type,id,jid]=index || [],value=syncAction?.value;
+        if(typeof id!=='string' || !id || id.length>100) continue;
+        if(type==='label_edit') {
+          const edit=value?.labelEditAction;
+          if(edit?.type===5 && !edit.deleted && typeof edit.name==='string' && edit.name.trim()) {
+            definitions.set(id,{id,name:edit.name.trim().slice(0,160),order:edit.orderIndex ?? Infinity});
+          } else definitions.delete(id);
+        }
+        if(type==='label_jid' && (individual(jid) || group(jid))) {
+          if(!memberships.has(id)) memberships.set(id,new Set());
+          const members=memberships.get(id);
+          if(value?.labelAssociationAction?.labeled===true) members.add(jid);
+          else members.delete(jid);
+        }
+      }
+      const lists=[...definitions.values()].sort((a,b)=>a.order-b.order || a.name.localeCompare(b.name,'pt-BR'))
+        .map(({id,name})=>({id,name,jids:[...(memberships.get(id) || [])]}));
+      return response.status(200).json({lists});
+    } catch(error) {
+      const message=String(error?.message || '').replace(/"[^"]+"/g,'"[omitido]"').slice(0,200);
+      console.warn('[whatsapp-central] Falha ao ler listas personalizadas:',message);
+      return fail(response,502,'Não foi possível consultar as listas personalizadas no WhatsApp.');
+    }
+  };}
   const snapshots=new Map();
   function archiveSnapshot(service) {
     const id=instanceKey(service),socket=service?.client;
@@ -252,7 +321,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
         error:missingKey?'O WhatsApp ainda não enviou as chaves para ler as arquivadas deste aparelho. Deixe conectado alguns minutos e tente de novo.':'O WhatsApp não respondeu à leitura das arquivadas.'});
     }
   };}
-  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,observe,rememberArchive,viewOnceHandler};
+  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,groupsHandler,listsHandler,observe,rememberArchive,viewOnceHandler};
 }
 function patchBundle(source,version) {
   if(version!=='2.3.7') throw new Error('Unsupported Evolution version; expected 2.3.7.');
@@ -261,11 +330,19 @@ function patchBundle(source,version) {
   const send='l=await this.sendMessage(r,t,u,a,c,null,void 0,m)';
   const events='eventHandler(){this.client.ev.process(';
   const media='if(!n)throw"Message not found";for(let d of Xr)';
-  if([route,send,events,media].some(anchor=>source.split(anchor).length!==2)) throw new Error('Evolution extension patch anchors must each occur exactly once.');
+  const historyStatus='source:!0,contextInfo:!0,MessageUpdate:{select:{status:!0}}';
+  const upsertStart='"messages.upsert":async({messages:e,type:t,requestId:o},i)=>{try{for(let n of e){';
+  const upsertEnd='update:d,create:d})}}}catch(n){this.logger.error(n)}},"messages.update":async(e,t)=>';
+  if([route,send,events,media,upsertStart,upsertEnd].some(anchor=>source.split(anchor).length!==2)) throw new Error('Evolution extension patch anchors must each occur exactly once.');
+  if(source.split(historyStatus).length!==3) throw new Error('Evolution history status anchors changed.');
   const extension='require("/evolution/local/evolution-extensions.cjs")';
-  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).post(this.routerPath("localArchivedSnapshot"),...e,${extension}.archiveSnapshotHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y)).post(this.routerPath("sendViewOnce"),...e,${extension}.viewOnceHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`).replace(media,`if(${extension}.isViewOnce(n))throw"Mídia de visualização única";`+media);
-  new vm.Script(patched,{filename:'evolution-patched-main.js'});
-  return patched;
+  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).get(this.routerPath("localGroups"),...e,${extension}.groupsHandler(Y)).get(this.routerPath("localLists"),...e,${extension}.listsHandler(Y)).post(this.routerPath("localArchivedSnapshot"),...e,${extension}.archiveSnapshotHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y)).post(this.routerPath("sendViewOnce"),...e,${extension}.viewOnceHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`).replace(media,`if(${extension}.isViewOnce(n))throw"Mídia de visualização única";`+media);
+  // Um erro ao gravar uma mensagem não pode descartar as seguintes no mesmo lote do WhatsApp.
+  const withHistoryStatus=patched.replaceAll(historyStatus,'source:!0,contextInfo:!0,status:!0,MessageUpdate:{select:{status:!0}}')
+    .replace(upsertStart,'"messages.upsert":async({messages:e,type:t,requestId:o},i)=>{for(let n of e){try{')
+    .replace(upsertEnd,'update:d,create:d})}}catch(n){this.logger.error(n)}}},"messages.update":async(e,t)=>');
+  new vm.Script(withHistoryStatus,{filename:'evolution-patched-main.js'});
+  return withHistoryStatus;
 }
 // Baileys 7.0.0-rc.9 pede só um lote de 100 itens offline (offline_batch) e nunca o seguinte.
 // Com mais de 100 pendências o servidor para de entregar, inclusive as mensagens novas, e a conexão segue "open".

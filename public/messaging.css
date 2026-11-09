@@ -138,3 +138,7 @@ dialog.media-viewer{width:min(1200px,calc(100vw - 32px));height:calc(100dvh - 48
 .view-once-toggle[aria-pressed="true"]{border-style:solid;border-color:var(--green);background:var(--green);color:#033d2b}
 .view-once-badge{width:19px;height:19px;margin-right:6px;font-size:11px}
 #voice-send-text[hidden]{display:none}
+.message-receipt{display:inline-flex;margin-inline-start:4px;vertical-align:middle;color:#a7b9bf}
+.message-receipt svg{width:16px;height:11px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}
+.message-receipt.receipt-read{color:#55c8ff}
+.message-receipt.receipt-failed{color:#ff9a91}

@@ -38,6 +38,7 @@
     decorate(target,chat,options={}) {
       if(!target || !chat?.jid || !api) return;
       target.dataset.avatarJid=chat.jid;target.dataset.avatarName=chat.name || 'Contato';target.classList.add('person-avatar');target.textContent=initials(chat.name);
+      if(chat.isGroup) {observer?.unobserve(target);targets.delete(target);return;}
       const saved=cache.get(chat.jid);
       if(saved && saved.expires>Date.now()) {paint(target,chat.jid,saved);return;}
       targets.set(target,{jid:chat.jid});

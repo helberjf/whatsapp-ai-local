@@ -3,7 +3,7 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const {randomBytes,randomUUID,timingSafeEqual,createHash}=require('node:crypto');
 const {execFile}=require('node:child_process');
-const {createEvolutionClient,ApiError,assertJid}=require('./lib/evolution.cjs');
+const {createEvolutionClient,ApiError,assertJid,assertConversationJid,groupJid}=require('./lib/evolution.cjs');
 const {createStore}=require('./lib/store.cjs');
 const {createCredentialStore}=require('./lib/credentials.cjs');
 const {createTranscriptionService}=require('./lib/transcription.cjs');
@@ -302,13 +302,19 @@ function createWhatsAppServer(options={}) {
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
         if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
         // readState: a última mensagem já lida pela central zera o contador, mesmo antes de o WhatsApp confirmar a leitura.
-        const listed=mergeAliasChats(await client.chats(),data.contacts,waiting),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
+        const listed=mergeAliasChats(await client.inboxChats(),data.contacts,waiting),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
         const chats=[...listed,...extra].map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage,since=chat.waitingSince ?? waiting[chat.jid]?.since;
           const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
           return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,data.contacts,archived),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
+      }
+      if(req.method==='GET' && route==='/api/chat-lists') {
+        const [lists,book]=await Promise.all([client.chatLists(),client.contactsList()]);
+        const members=new Set(lists.flatMap(list=>list.jids));
+        const contacts=book.filter(contact=>[contact.jid,...contact.aliasJids].some(jid=>members.has(jid)));
+        return json(res,200,{lists,contacts});
       }
       // Contatos: agenda do WhatsApp e conversas numa lista só, com os dados do atendimento e paginação.
       if(req.method==='GET' && route==='/api/contacts') {
@@ -324,10 +330,11 @@ function createWhatsAppServer(options={}) {
         return json(res,200,{total:listed.length,withChat:listed.filter(row=>row.hasChat).length,offset,limit,contacts:listed.slice(offset,offset+limit)});
       }
       if(req.method==='GET' && route==='/api/messages') {
-        const jid=assertJid(url.searchParams.get('jid')),page=Number(url.searchParams.get('page') || 1);
+        const validate=typeof integrationGiven==='string'?assertJid:assertConversationJid;
+        const jid=validate(url.searchParams.get('jid')),page=Number(url.searchParams.get('page') || 1);
         if(!Number.isSafeInteger(page) || page<1 || page>100000) throw new ApiError('Página inválida.',422);
         const result=await client.messages(jid,page);
-        if(autoTranscription) await transcriptions.discover(jid,result.messages).catch(()=>{});
+        if(autoTranscription && !groupJid(jid)) await transcriptions.discover(jid,result.messages).catch(()=>{});
         return json(res,200,result);
       }
       if(route==='/api/contact' && ['GET','PATCH'].includes(req.method)) {
@@ -382,7 +389,7 @@ function createWhatsAppServer(options={}) {
         return json(res,200,await sendOnce(input,()=>client.sendMedia(jid,{...input,quotedId,viewOnce})));
       }
       if(req.method==='GET' && route==='/api/media') {
-        const jid=assertJid(url.searchParams.get('jid')),id=textField(url.searchParams.get('id'),200,'Mensagem');
+        const jid=assertConversationJid(url.searchParams.get('jid')),id=textField(url.searchParams.get('id'),200,'Mensagem');
         const media=await client.media(jid,id);if(typeof media.base64!=='string') throw new ApiError('Mídia indisponível. Abra a mensagem no celular.');
         return json(res,200,{base64:media.base64,mimeType:media.mimetype || 'application/octet-stream',fileName:media.fileName || 'anexo'});
       }

@@ -355,7 +355,8 @@ Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing
 
 ## Current limits
 
-- Individual conversations only; no bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
+- Individual conversations support sending and customer-service tools. The inbox also shows groups and WhatsApp custom lists. Group chats display the history available to the connector in read-only mode.
+- The central does not support bulk campaigns, group management, calls, status/stories, billing, or multi-user permissions.
 - Accounts are separate workspaces: forwarding and search stay inside the account in use, and there is no combined inbox. Up to 10 accounts.
 - Attendants are names for people sharing this central on this computer; there is no per-person login, and the central is still reachable only through loopback. Using it from several computers needs accounts, HTTPS and a deployment design that this version does not include.
 - Evolution 2.3.7 does not keep a chat's archive state, so the bundled connector extension records what WhatsApp reports (including chats archived on the phone and during the initial sync) and the central shows them under **Arquivadas**; the most recent change, from the phone or from the central, wins. Restart through the launcher once so the connector image is rebuilt with it. Chats archived before that rebuild are read once, automatically, from a read-only copy of WhatsApp's own archive state (it never changes the session's sync state); **Arquivadas → Buscar no WhatsApp** reads it again on demand. When WhatsApp's "Keep chats archived" is off, a chat with a message newer than its archive leaves **Arquivadas**, as on the phone. Block, pin and mute state are not read back from the phone: blocking from the central is native, pinning and muting are local to the central. Desktop notifications depend on browser permission and stop when the central is closed.

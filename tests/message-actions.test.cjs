@@ -54,6 +54,15 @@ test('message list folds revoke events over originals and keeps a tombstone on l
   const first=await client.messages(jid);assert.equal(first.messages.length,1);assert.equal(first.messages[0].deleted,true);
   state.messages.pop();assert.equal((await client.messages(jid)).messages[0].deleted,true);
 });
+test('delivery status preserves the strongest confirmation when receipts are out of order',()=>{
+  const raw={key,message:{conversation:'Oi'}};
+  assert.equal(normalizeMessage({...raw,status:'SERVER_ACK'}).deliveryStatus,'sent');
+  assert.equal(normalizeMessage({...raw,status:2,MessageUpdate:[{status:'READ'},{status:'DELIVERY_ACK'},{status:'SERVER_ACK'}]}).deliveryStatus,'read');
+  assert.equal(normalizeMessage({...raw,status:'PENDING',MessageUpdate:[{status:3},{status:'EDITED'}]}).deliveryStatus,'delivered');
+  assert.equal(normalizeMessage({...raw,status:1,MessageUpdate:[{status:0}]}).deliveryStatus,'failed');
+  assert.equal(normalizeMessage(raw).deliveryStatus,'unknown');
+  assert.equal(normalizeMessage({...raw,key:{...key,fromMe:false},status:'READ'}).deliveryStatus,undefined);
+});
 test('ephemeral metadata is retained without pretending ordinary messages disappear',()=>{
   const message=normalizeMessage({key,message:{ephemeralMessage:{message:{extendedTextMessage:{text:'Temporary',contextInfo:{expiration:86400}}}}}});
   assert.equal(message.ephemeral,true);assert.equal(message.ephemeralExpiration,86400);assert.equal(message.text,'Temporary');

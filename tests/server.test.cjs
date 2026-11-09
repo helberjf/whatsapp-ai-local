@@ -31,7 +31,9 @@ before(async()=>{
     else if(req.url==='/instance/create') { exists=true;output={instance:{instanceName:'teste'}}; }
     else if(req.url==='/instance/connect/teste') output={base64:'data:image/png;base64,cXI=',code:'qr-vivo',count:1};
     else if(req.url==='/instance/logout/teste') { connected=false; output={status:'SUCCESS'}; }
-    else if(req.url==='/chat/findChats/teste') output=[{remoteJid:jid,pushName:'Ana <teste>',unreadCount:2,lastMessage:incoming},{remoteJid:'123@g.us',pushName:'Grupo'}];
+    else if(req.url==='/chat/findChats/teste') output=[{remoteJid:jid,pushName:'Ana <teste>',unreadCount:2,lastMessage:incoming},{remoteJid:'123@g.us',pushName:'Participante'},{remoteJid:'status@broadcast'}];
+    else if(req.url==='/chat/localGroups/teste') output={groups:[{id:'123@g.us',subject:'Grupo com histórico'},{id:'123-456@g.us',subject:'Grupo sem histórico'}]};
+    else if(req.url==='/chat/localLists/teste') output={lists:[{id:'15',name:'Família',jids:[jid,'123@g.us']}]};
     else if(req.url==='/chat/findMessages/teste') output={messages:{total:2,pages:2,currentPage:input.page,records:[{...incoming,key:{...incoming.key,id:`in-${input.page}`}}]}};
     else if(req.url==='/message/sendText/teste') { if(failSend) res.statusCode=500;output={key:{id:'out-1',remoteJid:jid,fromMe:true},message:{conversation:input.text},status:'PENDING'}; }
     else if(req.url==='/message/sendMedia/teste') output={key:{id:'media-1',remoteJid:jid,fromMe:true},status:'PENDING'};
@@ -75,10 +77,18 @@ test('só informa conectado quando o conector confirma e encerra QR após parear
   const qr=await api('/api/connect','POST',{});assert.equal(qr.state,'connected');assert.equal(qr.base64,null);
   assert.equal(calls.filter(c=>c.url==='/instance/connect/teste').length,2);
 });
-test('lista conversas diretas com busca, não lidas e conteúdo normalizado',async()=>{
-  const all=await api('/api/chats');assert.equal(all.length,1);assert.equal(all[0].jid,jid);assert.equal(all[0].lastMessage.text,'Olá!');
+test('lista conversas diretas e grupos, inclusive os que ainda não têm histórico',async()=>{
+  const all=await api('/api/chats');assert.equal(all.length,3);assert.equal(all[0].jid,jid);assert.equal(all[0].lastMessage.text,'Olá!');
+  assert.deepEqual(all.slice(1).map(chat=>[chat.jid,chat.name,chat.isGroup]),[['123@g.us','Grupo com histórico',true],['123-456@g.us','Grupo sem histórico',true]]);
   assert.equal((await api('/api/chats?search=ana&unread=1')).length,1);
   assert.equal((await api('/api/chats?search=inexistente')).length,0);
+  assert.equal((await api('/api/contacts')).total,1);
+});
+test('consulta as listas personalizadas e abre o histórico de um grupo',async()=>{
+  assert.deepEqual((await api('/api/chat-lists')).lists,[{id:'15',name:'Família',jids:[jid,'123@g.us']}]);
+  await api('/api/messages?jid=123%40g.us');
+  assert.equal(calls.findLast(c=>c.url==='/chat/findMessages/teste').input.where.key.remoteJid,'123@g.us');
+  assert.equal((await request('/api/messages?jid=status%40broadcast')).status,422);
 });
 test('histórico preserva paginação do contrato Evolution 2.3.7',async()=>{
   const result=await api('/api/messages?jid='+encodeURIComponent(jid)+'&page=2');
