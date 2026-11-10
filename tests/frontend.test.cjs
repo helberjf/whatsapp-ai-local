@@ -128,7 +128,7 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
       history.push(...Array.from({length:amount},(_,index)=>message(start+index+1)));
     },
     async poll() {await intervals.find(interval=>interval.delay===4000).callback();},
-    async pollTranscriptions() {const interval=intervals.find(interval=>interval.delay!==4000);assert.ok(interval,'A transcrição precisa de polling independente.');await interval.callback();},
+    async pollTranscriptions() {const interval=intervals.find(interval=>interval.delay===2000);assert.ok(interval,'A transcrição precisa de polling independente.');await interval.callback();},
     async selectChat(index) {await get('chat-list').children[index].emit('click');},
     renderedMessages() {
       return get('messages').children.filter(row=>row.tagName==='ARTICLE')

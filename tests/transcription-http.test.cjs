@@ -13,6 +13,7 @@ test('rotas de transcrição exigem sessão e persistem texto sem expor chave de
   const token=(await(await fetch(base)).text()).match(/name="whatsapp-session" content="([a-f0-9]{64})"/)[1];
   const req=(route,method='GET',body)=>fetch(base+route,{method,headers:{'X-WhatsApp-Token':token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
   assert.equal((await fetch(base+'/api/transcription/settings')).status,403);
+  assert.equal((await fetch(base+'/api/transcriptions/queue')).status,403);
   const settings=await req('/api/transcription/settings');assert.equal(settings.status,200);assert.equal((await settings.json()).defaultProvider,'whisper');
   const saved=await req('/api/transcription/settings','PATCH',{aiApiKey:'sk-nao-expor'});assert.doesNotMatch(await saved.text(),/nao-expor/);
   assert.doesNotMatch(await(await req('/api/settings')).text(),/nao-expor/);
@@ -20,6 +21,8 @@ test('rotas de transcrição exigem sessão e persistem texto sem expor chave de
   const job=await req('/api/transcriptions','POST',{jid,messageId:'audio-http'});assert.equal(job.status,202);
   await server.transcriptions.idle();
   const records=await(await req('/api/transcriptions?jid='+encodeURIComponent(jid))).json();assert.equal(records[0].text,'Teste local');assert.equal(calls,1);
+  const queue=await(await req('/api/transcriptions/queue')).json();assert.equal(queue.completed,1);assert.equal(queue.running,0);assert.doesNotMatch(JSON.stringify(queue),/Teste local|nao-expor/);
+  assert.equal((await req('/api/transcriptions','POST',{jid,messageId:'audio-http',priority:true})).status,202);assert.equal(calls,1);
   assert.equal((await req('/api/transcriptions','POST',{jid,messageId:'audio-http'})).status,202);await server.transcriptions.idle();assert.equal(calls,1);
   assert.equal((await req('/api/transcriptions?jid=../file')).status,422);
 });

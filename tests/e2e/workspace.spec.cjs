@@ -5,6 +5,49 @@ const test=base.extend({demo:async({},use)=>{const demo=await createDemo({port:0
 const screenshotDir=path.join(__dirname,'..','..','docs','screenshots');
 const capturePath=name=>process.env.WHATSAPP_CAPTURE_DOCS==='1'?path.join(screenshotDir,name):test.info().outputPath(name);
 async function openChat(page) {await page.locator('.chat-item').filter({hasText:'Alex Morgan'}).click();await expect(page.locator('#conversation-content')).toBeVisible();}
+
+test('audio menu prioritizes transcription and the queue card updates without resetting settings',async({page})=>{
+  await openChat(page);
+  const audio=page.locator('.message').filter({has:page.locator('.audio-transcription')}).first();
+  await audio.locator('.message-menu-toggle').click();
+  const request=page.waitForRequest(req=>req.url().endsWith('/api/transcriptions') && req.method()==='POST');
+  await audio.getByRole('button',{name:'Priorizar transcrição',exact:true}).click();
+  expect((await request).postDataJSON().priority).toBe(true);
+  await expect(audio.locator('.transcription-text')).toContainText('Transcrição');
+  await page.locator('#transcription-settings').click();
+  await expect(page.locator('#transcription-queue-card')).toBeVisible();
+  await expect(page.locator('#transcription-queue-summary')).toContainText('concluída');
+  await page.locator('#transcription-model').selectOption('tiny');
+  await expect.poll(()=>page.locator('#transcription-queue-card').getAttribute('data-refresh'),{timeout:10000}).not.toBe('1');
+  await expect(page.locator('#transcription-model')).toHaveValue('tiny');
+});
+
+test('transcription queue card shows activity and clears loading when work ends',async({page})=>{
+  let pending=true;
+  await page.route('**/api/transcriptions/queue',route=>route.fulfill({json:{running:pending?1:0,queued:pending?2:0,completed:pending?3:6,failed:0,drafts:0,current:pending?[{jid:'5511000000000@s.whatsapp.net'}]:[],waiting:pending?[{jid:'5511000000001@s.whatsapp.net',prioritized:true}]:[]}}));
+  await page.locator('#transcription-settings').click();
+  const card=page.locator('#transcription-queue-card');
+  await expect(card).toContainText('1 em andamento · 2 aguardando');await expect(card.locator('progress')).toBeVisible();await expect(card).toContainText('Prioridade');
+  await page.setViewportSize({width:390,height:844});await card.scrollIntoViewIfNeeded();await insideViewport(card);
+  await page.screenshot({path:test.info().outputPath('transcription-queue.png')});
+  pending=false;await expect(card).toContainText('6 concluídas');await expect(card.locator('progress')).toBeHidden();
+  await expect(card.locator('li')).toHaveCount(0);
+});
+
+test('priority waits for job details even while another transcription load is pending',async({page})=>{
+  let release,loads=0;const gate=new Promise(resolve=>release=resolve);
+  const job={id:'pending-ai',jid:'5511000000000@s.whatsapp.net',messageId:'demo-audio',provider:'ai',status:'queued',createdAt:1,updatedAt:1};
+  await page.route('**/api/transcriptions?*',async route=>{if(++loads===1) await gate;await route.fulfill({json:[job]});});
+  await page.route('**/api/transcriptions',route=>route.fulfill({status:202,json:job}));
+  try {
+    await openChat(page);
+    const audio=page.locator('.message').filter({has:page.locator('.audio-transcription')}).first();
+    await audio.locator('.message-menu-toggle').click();
+    const request=page.waitForRequest(req=>req.url().endsWith('/api/transcriptions') && req.method()==='POST');
+    await audio.getByRole('button',{name:'Priorizar transcrição',exact:true}).click();
+    expect((await request).postDataJSON().provider).toBe('ai');
+  } finally {release();}
+});
 test('mostra um tique no envio e dois após entrega e leitura confirmadas',async({page})=>{
   let deliveryStatus='sent';
   await page.route('**/api/messages?**',route=>route.fulfill({json:{page:1,pages:1,messages:[{id:'receipt',fromMe:true,type:'text',text:'Teste de entrega',timestamp:Date.now(),deliveryStatus}]}}));

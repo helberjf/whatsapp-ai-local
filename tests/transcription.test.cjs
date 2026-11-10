@@ -8,6 +8,27 @@ const {createCredentialStore}=require('../lib/credentials.cjs');
 const {createTranscriptionService}=require('../lib/transcription.cjs');
 const {transcribeWithOpenAI}=require('../lib/audio-engines.cjs');
 const jid='5511998765432@s.whatsapp.net';
+
+test('prioridade move um áudio pendente para o início sem interromper nem duplicar',async t=>{
+  let release,started;const gate=new Promise(r=>release=r),begun=new Promise(r=>started=r),order=[];
+  const {service}=await fixture(t,{mediaLoader:async(_,id)=>{order.push(id);return {base64:'aGVsbG8=',mimetype:'audio/ogg'};},whisperEngine:async()=>{if(order.length===1) {started();await gate;}return {text:'Pronto'};}});
+  try {
+    await service.enqueue({jid,messageId:'first'});await begun;
+    await service.enqueue({jid,messageId:'second'});
+    const third=await service.enqueue({jid,messageId:'third'});
+    await service.saveSettings({whisperModel:'small'});
+    const priority=await service.enqueue({jid,messageId:'third',priority:true});
+    assert.equal(priority.id,third.id);assert.equal((await service.list(jid)).length,3);
+    const queue=await service.queue();assert.equal(queue.running,1);assert.equal(queue.queued,2);
+    assert.deepEqual(queue.waiting.map(job=>job.messageId),['third','second']);assert.deepEqual(order,['first']);
+    await service.enqueue({jid,messageId:'third',priority:true});
+    await service.enqueue({jid,messageId:'first',priority:true});assert.equal((await service.list(jid)).length,3);
+  } finally {release();await service.idle();}
+  assert.deepEqual(order,['first','third','second']);
+  const done=await service.queue();assert.equal(done.completed,3);assert.equal(done.queued,0);assert.equal(done.running,0);
+  await service.enqueue({jid,messageId:'third',priority:true});await service.idle();assert.deepEqual(order,['first','third','second']);
+  await assert.rejects(service.enqueue({jid,messageId:'invalid',priority:'yes'}),{status:422});
+});
 async function fixture(t,options={}) {
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'wa-transcription-test-'));
   let credentials;

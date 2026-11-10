@@ -279,6 +279,7 @@ function createWhatsAppServer(options={}) {
       if(req.method==='POST' && route==='/api/forward') {const input=await readBody(req);assertJid(input.sourceJid);assertJid(input.targetJid);return json(res,200,await sendOnce(input,send=>send(),()=>prepareForward(client,input)));}
       if(route==='/api/transcription/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await transcriptions.settings():await transcriptions.saveSettings(await readBody(req)));
       if(req.method==='GET' && route==='/api/transcriptions') return json(res,200,await transcriptions.list(url.searchParams.get('jid')));
+      if(req.method==='GET' && route==='/api/transcriptions/queue') return json(res,200,await transcriptions.queue());
       if(req.method==='POST' && route==='/api/transcriptions') return json(res,202,await transcriptions.enqueue(await readBody(req)));
       if(req.method==='GET' && route==='/api/avatar') return json(res,200,await avatars.get(url.searchParams.get('jid')));
       if(route==='/api/crm' && req.method==='GET') return json(res,200,await crm.list(await client.chats()));

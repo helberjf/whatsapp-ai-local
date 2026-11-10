@@ -361,6 +361,22 @@
     forward.addEventListener('click',()=>{if(message.canForward===false) return;menu.open=false;openForward(message,jid);});
     copy.addEventListener('click',async()=>{const text=messageCopyText(message,jid);if(!text) return;menu.open=false;try {await navigator.clipboard.writeText(text);notice('Texto copiado.',true);}catch {notice('Não foi possível copiar. Selecione o texto da mensagem para copiar.');}});
     options.append(forward,copy);
+    if(message.type==='audio' && !message.deleted && !message.viewOnce && !jid.endsWith('@g.us')) {
+      const priority=el('button','message-prioritize-transcription','Priorizar transcrição');priority.type='button';
+      priority.addEventListener('click',async()=>{
+        if(priority.disabled) return;priority.disabled=true;menu.open=false;
+        try {
+          const loaded=await api('/transcriptions?jid='+encodeURIComponent(jid));
+          rememberTranscriptions(jid,loaded);
+          const jobs=loaded.filter(job=>job.messageId===message.id);
+          const pending=jobs.find(pendingTranscription),completed=jobs.find(job=>job.status==='completed');
+          if(!pending && completed) {notice('Este áudio já foi transcrito.',true);return;}
+          const result=await api('/transcriptions','POST',{jid,messageId:message.id,provider:pending?.provider || 'whisper',priority:true,retry:true});
+          rememberTranscriptions(jid,[result]);updateTranscriptionViews(jid);
+          notice(result.status==='running'?'Este áudio já está sendo transcrito.':result.status==='completed'?'Este áudio já foi transcrito.':'Áudio colocado no início da fila de transcrição.',true);
+        } catch(error) {notice(error.message);}finally {priority.disabled=false;}
+      });options.append(priority);
+    }
     try {extras()?.extendActions?.({options,message,jid,close:()=>{menu.open=false;}});}catch {}
     if(message.fromMe && !message.deleted && !deletedMessages.has(jid+'|'+message.id)) {
       const remove=el('button','message-delete','Apagar para todos');remove.type='button';remove.addEventListener('click',()=>{menu.open=false;deleteState={jid,messageId:message.id,requestId:crypto.randomUUID(),busy:false};$('delete-preview').textContent=message.text || 'Mensagem de '+message.type;$('delete-error').textContent='';$('delete-confirm').disabled=false;$('delete-dialog').showModal();});options.append(remove);
@@ -1025,9 +1041,31 @@
     if(!transcriptionSettingsLoading) transcriptionSettingsLoading=api('/transcription/settings').then(settings=>{transcriptionSettings=settings;return settings;}).finally(()=>{transcriptionSettingsLoading=null;});
     return transcriptionSettingsLoading;
   }
+  let transcriptionQueueBusy=false,transcriptionQueueRefresh=0;
+  async function refreshTranscriptionQueue() {
+    if(!$('transcription-dialog').open || transcriptionQueueBusy || document.visibilityState==='hidden') return;
+    transcriptionQueueBusy=true;
+    try {
+      const queue=await api('/transcriptions/queue');if(!$('transcription-dialog').open) return;
+      const busy=queue.running+queue.queued+queue.drafts>0;
+      $('transcription-queue-summary').textContent=`${busy?'Processando áudios':'Fila concluída'} · ${queue.running} em andamento · ${queue.queued} aguardando · ${queue.completed} concluídas · ${queue.failed} com falha`+(queue.drafts?` · ${queue.drafts} prévia(s) de envio`:'');
+      if(!busy && !queue.completed && !queue.failed) $('transcription-queue-summary').textContent='Nenhuma transcrição solicitada ainda.';
+      $('transcription-queue-progress').hidden=!busy;
+      const fragment=document.createDocumentFragment();
+      for(const [label,list] of [['Transcrevendo',queue.current],['Na fila',queue.waiting]]) for(const [index,job] of list.entries()) {
+        const name=chats.find(chat=>chat.jid===job.jid)?.name || phoneLabel(job.jid.split('@')[0]);
+        fragment.append(el('li','',`${label}${label==='Na fila'?' · '+(index+1)+'º':''}: ${name}${job.prioritized?' · Prioridade':''}`));
+      }
+      $('transcription-queue-items').replaceChildren(fragment);
+      $('transcription-queue-card').setAttribute('data-refresh',String(++transcriptionQueueRefresh));
+    } catch(error) {$('transcription-queue-summary').textContent='Não foi possível atualizar a fila: '+error.message;$('transcription-queue-progress').hidden=true;}
+    finally {transcriptionQueueBusy=false;}
+  }
+  setInterval(refreshTranscriptionQueue,3000);
   async function openTranscriptionSettings(reason='') {
     $('transcription-settings-status').textContent=reason;$('transcription-settings-error').textContent='';$('transcription-api-key').value='';
     if(!$('transcription-dialog').open) $('transcription-dialog').showModal();
+    refreshTranscriptionQueue();
     $('save-transcription-settings').disabled=true;
     try {await loadTranscriptionSettings();if($('transcription-dialog').open) fillTranscriptionSettings();}
     catch(error) {$('transcription-settings-error').textContent=error.message;}
