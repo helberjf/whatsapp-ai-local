@@ -394,14 +394,17 @@
     finally {state.busy=false;if(deleteState===state) $('delete-confirm').disabled=false;}
   });
   let infoVersion=0,temporaryTarget=null,temporaryVersion=0;
-  $('contact-info-open').addEventListener('click',async()=>{
-    if(!selected) return;const jid=selected.jid,version=++infoVersion;$('contact-info-dialog').showModal();$('contact-info-data').replaceChildren();$('contact-info-status').textContent='Carregando dados do WhatsApp…';
+  async function openContactInfo() {
+    if(!selected || selected.isGroup || $('contact-info-dialog').open) return;
+    const jid=selected.jid,version=++infoVersion;$('contact-info-dialog').showModal();$('contact-info-data').replaceChildren();$('contact-info-status').textContent='Carregando dados do WhatsApp…';
     try {const info=await api('/contact/details?jid='+encodeURIComponent(jid));if(version!==infoVersion || !$('contact-info-dialog').open) return;
       const add=(label,value)=>{if(value) $('contact-info-data').append(el('dt','',label),el('dd','',String(value)));};
       add('Nome',info.name);add('Telefone',info.phone?phoneLabel(info.phone):'Não disponibilizado pelo WhatsApp');add('Recado',info.about || 'Não disponível');add('Empresa',info.business?.description);add('Endereço',info.business?.address);add('E-mail',info.business?.email);add('Sites',info.business?.websites?.join('\n'));add('Identificador da conversa',jid);
       $('contact-info-status').textContent='Alguns dados dependem da privacidade definida pelo contato.';
     } catch(error) {if(version===infoVersion) $('contact-info-status').textContent=error.message;}
-  });
+  }
+  $('contact-header-info').addEventListener('click',openContactInfo);
+  $('contact-info-open').addEventListener('click',openContactInfo);
   $('disappearing-open').addEventListener('click',async()=>{
     if(!selected) return;temporaryTarget=selected.jid;const version=++temporaryVersion;$('disappearing-dialog').showModal();$('disappearing-status').textContent='Verificando o conector…';$('disappearing-save').disabled=true;
     try {const info=await api('/contact/details?jid='+encodeURIComponent(temporaryTarget));if(version!==temporaryVersion || !$('disappearing-dialog').open || temporaryTarget!==info.jid) return;
@@ -704,6 +707,7 @@
     $('conversation-empty').hidden=true;$('conversation-content').hidden=false;$('contact-empty').hidden=true;$('contact-details').hidden=false;
     $('composer').classList.toggle('group-composer',Boolean(chat.isGroup));
     $('show-contact').hidden=$('contact-flags').hidden=Boolean(chat.isGroup);
+    $('contact-header-info').disabled=Boolean(chat.isGroup);
     if(chat.isGroup) {$('contact-details').hidden=true;toggleContact(false);}
     $('app-shell').classList.toggle('has-chat',true);
     showSelectedIdentity(chat);$('message-text').value=drafts.get(chat.jid) || '';renderTemplateShortcuts();
