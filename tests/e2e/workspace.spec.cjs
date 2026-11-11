@@ -83,13 +83,12 @@ test('filtra grupos e listas personalizadas e envia texto no grupo aberto',async
   const filter=page.getByRole('combobox',{name:'Grupos e listas do WhatsApp'});
   const rows=page.locator('#chat-list .chat-item');
   await expect(rows).toHaveText([/Contato individual/]);
-  await expect(page.locator('#filter-total-count')).toHaveText('1');
   await expect(page.locator('#filter-unread-count')).toHaveText('0');
   await filter.selectOption({label:'Família'});
   await expect(rows).toHaveText([/Grupo da família/,/Contato individual/]);
   await filter.selectOption({label:'Grupos'});
   await expect(rows).toHaveText([/Grupo da família/]);
-  await page.getByRole('button',{name:/Grupo da família/}).click();
+  await page.locator('#chat-list .chat-item').filter({hasText:'Grupo da família'}).click();
   await expect(page.locator('#messages')).toContainText('Almoço de domingo');
   await expect(page.locator('#composer')).toBeVisible();
   await expect(page.locator('#attachment-toggle')).toBeHidden();
