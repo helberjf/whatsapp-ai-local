@@ -47,11 +47,12 @@ Make the Whats AI conversation experience denser and closer to WhatsApp while pr
 ### Transcription timing
 
 - Background scanning of every conversation for new audio is removed.
-- Opening an individual conversation discovers every loaded audio message that has no completed, running, or queued transcription and enqueues it once.
-- Loading older pages in that open individual conversation also discovers untranscribed audio on those pages.
+- Opening an individual conversation considers only the five most recent audio messages in that conversation. Among those five, each audio that has no completed, running, or queued transcription is enqueued once.
+- Loading older pages does not automatically enqueue additional audio. Audio outside the five-most-recent window remains available through an explicit `Transcrever áudio` action in its hamburger menu.
 - Existing transcription deduplication remains the source of truth, so repeated opens never create duplicate jobs.
 - Group conversations never enqueue transcription automatically.
 - A group audio exposes a `Transcrever áudio` action in its hamburger menu. The action enqueues only that message and then shows queued, running, completed, or failed state normally.
+- Individual audio outside the automatic five-message window exposes the same `Transcrever áudio` action and enqueues only the selected message.
 - Existing priority and retry behavior remains available where relevant.
 
 ### Dark-theme select readability
@@ -69,14 +70,14 @@ Make the Whats AI conversation experience denser and closer to WhatsApp while pr
 - Contact header and avatar clicks are separate explicit targets.
 - A focused contact-media module manages the side panel, paginated gallery, lazy media previews, and viewer handoff instead of adding more unrelated state to `public/app.js`.
 - A focused group-order module manages drag state, pinned boundaries, optimistic rendering, rollback, and persistence calls.
-- Conversation selection requests discovery only after an individual chat is open; group audio actions remain per-message controls.
+- Conversation selection requests discovery only after an individual chat is open and limits automatic discovery to its five most recent audio messages; older individual audio and all group audio remain per-message controls.
 
 ### Server responsibilities
 
 - Group presentation state is stored in the existing per-account application store as a versioned structure containing pinned IDs and ordered IDs. Unknown or removed groups are reconciled without deleting stored preferences prematurely.
 - A small authenticated endpoint reads and updates the active account's group presentation state. It validates JIDs, uniqueness, block membership, and maximum list size.
 - A paginated authenticated media endpoint returns only safe metadata for image and video messages belonging to the requested conversation. Existing `/api/media` remains responsible for loading bytes for a selected item.
-- The existing message-page route invokes transcription discovery for individual conversations only. It does not do so for groups.
+- The first message-page request for an opened individual conversation invokes transcription discovery with at most the five most recent audio messages. Older pages and group pages do not invoke automatic discovery.
 - The periodic background audio discovery loop is removed, while transcription workers and explicit enqueue routes remain unchanged.
 
 ## Data model
@@ -111,7 +112,7 @@ The media gallery response contains pagination plus message metadata already aut
 
 - Unit/frontend tests verify unread-title formatting, zero-title behavior, removed totals, compact metric markup, distinct avatar/header actions, select contrast classes, gallery pagination, and stale-request cancellation.
 - Server tests verify authenticated per-account group order, last-fixed-first insertion, reorder validation, rollback-compatible failures, gallery filtering, pagination, and rejection of invalid JIDs.
-- Transcription tests verify that closed chats do not enqueue work, opening an individual chat discovers missing audio once, older opened pages discover additional audio, and groups require explicit enqueue.
+- Transcription tests verify that closed chats do not enqueue work, opening an individual chat discovers at most the five most recent audio messages once, older pages do not enqueue automatically, older individual audio can be requested explicitly, and groups require explicit enqueue.
 - End-to-end tests verify the compact dashboard at desktop and mobile widths, profile-photo viewing, contact gallery navigation, drag ordering after reload, pin/unpin ordering, group manual transcription, and opaque dropdown options.
 - The complete Node test suite and relevant Playwright suites run before integration.
 
