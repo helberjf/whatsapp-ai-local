@@ -59,7 +59,8 @@
     const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
     const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
     const matching=conversationsForFilter().filter(chat=>(!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
-    const filtered=extras()?.arrangeChats?.(matching) || matching;renderGroupsRow();
+    const arranged=listFilter==='groups'?globalThis.WhatsAppGroups?.arrange?.(matching) || matching:matching;
+    const filtered=extras()?.arrangeChats?.(arranged) || arranged;renderGroupsRow();
     const active=chats.filter(chat=>chat.archived!==true && !chat.isGroup),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
     const unreadMessages=active.reduce((sum,chat)=>sum+Math.max(0,Number(chat.unread)||0),0);document.title=unreadMessages?`(${unreadMessages}) Whats AI`:'Whats AI';
     $('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=active.filter(chat=>chat.status==='closed').length;
@@ -139,7 +140,7 @@
       if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
       else if(chat.markedUnread) {const dot=el('span','unread-count marked','');dot.setAttribute('aria-label','Marcada como não lida');preview.append(dot);}
       copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>extras()?.onChatClick?.(chat)?undefined:selectChat(chat));
-      return button;
+      return chat.isGroup && listFilter==='groups'?(globalThis.WhatsAppGroups?.wrap?.(button,chat) || button):button;
   }
   let virtualScroll=false;
   $('chat-list').addEventListener('scroll',()=>{if(!virtualRows || virtualScroll) return;virtualScroll=true;(globalThis.requestAnimationFrame || setTimeout)(()=>{virtualScroll=false;renderChatWindow();});});
@@ -1096,6 +1097,7 @@
   });
   globalThis.WhatsAppAccounts?.init?.({api,notice});
   globalThis.WhatsAppAvatars?.init?.({api});
+  globalThis.WhatsAppGroups?.init?.({api,notice,render:renderChats});
   globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});
