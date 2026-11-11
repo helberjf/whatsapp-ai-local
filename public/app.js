@@ -59,7 +59,8 @@
     const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
     const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
     const matching=conversationsForFilter().filter(chat=>(!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
-    const arranged=listFilter==='groups'?globalThis.WhatsAppGroups?.arrange?.(matching) || matching:matching;
+    const groupMode=['groups','groups-archived'].includes(listFilter),visibleGroups=listFilter==='groups-archived'?globalThis.WhatsAppGroups?.archived?.(matching) || matching:listFilter==='groups'?globalThis.WhatsAppGroups?.active?.(matching) || matching:matching;
+    const arranged=groupMode?globalThis.WhatsAppGroups?.arrange?.(visibleGroups) || visibleGroups:visibleGroups;
     const filtered=extras()?.arrangeChats?.(arranged) || arranged;renderGroupsRow();
     const active=chats.filter(chat=>chat.archived!==true && !chat.isGroup),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
     const unreadMessages=active.reduce((sum,chat)=>sum+Math.max(0,Number(chat.unread)||0),0);document.title=unreadMessages?`(${unreadMessages}) Whats AI`:'Whats AI';
@@ -76,19 +77,20 @@
     $('chat-list').replaceChildren(fragment);
   }
   function renderGroupsRow() {
-    const groups=chats.filter(chat=>chat.isGroup),open=listFilter==='groups',unread=groups.filter(chat=>Number(chat.unread)>0).length;
+    const groups=chats.filter(chat=>chat.isGroup),open=['groups','groups-archived'].includes(listFilter),archivedOpen=listFilter==='groups-archived',unread=groups.filter(chat=>Number(chat.unread)>0).length;
     $('groups-row').hidden=!groups.length && !open;
     $('groups-row').setAttribute('aria-pressed',String(open));$('groups-row').classList.toggle('back',open);
-    $('groups-row-label').textContent=open?'← Voltar às conversas':'Grupos';
+    $('groups-row-label').textContent=archivedOpen?'← Voltar aos grupos':open?'← Voltar às conversas':'Grupos';
     $('groups-row-count').textContent=open || !unread?'':String(unread);
     $('groups-row').title=`${groups.length} grupo${groups.length===1?'':'s'}${unread?` · ${unread} com mensagem não vista`:''}`;
+    $('group-archived-row').hidden=!open || archivedOpen;$('group-archived-row').setAttribute('aria-pressed',String(archivedOpen));
     // Dentro dos grupos, a linha de arquivadas some para as duas visões não se misturarem.
-    if(open) {$('archived-row').hidden=true;const title=$('inbox-title').firstChild;if(title) title.textContent='Grupos ';}
+    if(open) {$('archived-row').hidden=true;const title=$('inbox-title').firstChild;if(title) title.textContent=archivedOpen?'Grupos arquivados ':'Grupos ';}
   }
   function conversationsForFilter() {
     // Grupos ficam à parte, como as arquivadas: aparecem pela linha "Grupos" ou numa busca.
     if(!listFilter) return $('search').value.trim()?chats:chats.filter(chat=>!chat.isGroup);
-    if(listFilter==='groups') return chats.filter(chat=>chat.isGroup);
+    if(['groups','groups-archived'].includes(listFilter)) return chats.filter(chat=>chat.isGroup);
     const members=new Set(chatLists.find(list=>'list:'+list.id===listFilter)?.jids || []);
     const result=[];
     for(const chat of [...chats,...listContacts]) {
@@ -112,7 +114,7 @@
       const filter=$('chat-list-filter'),options=[el('option','','Conversas individuais'),el('option','','Grupos')];
       options[0].value='';options[1].value='groups';
       for(const list of chatLists) {const option=el('option','',list.name);option.value='list:'+list.id;options.push(option);}
-      if(!options.some(option=>option.value===listFilter)) listFilter='';
+      if(listFilter!=='groups-archived' && !options.some(option=>option.value===listFilter)) listFilter='';
       filter.replaceChildren(...options);filter.value=listFilter;renderChats();
     } catch {}
     finally {listsPending=false;listsRefreshAt=Date.now()+60_000;}
@@ -140,7 +142,7 @@
       if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
       else if(chat.markedUnread) {const dot=el('span','unread-count marked','');dot.setAttribute('aria-label','Marcada como não lida');preview.append(dot);}
       copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>extras()?.onChatClick?.(chat)?undefined:selectChat(chat));
-      return chat.isGroup && listFilter==='groups'?(globalThis.WhatsAppGroups?.wrap?.(button,chat) || button):button;
+      return chat.isGroup && ['groups','groups-archived'].includes(listFilter)?(globalThis.WhatsAppGroups?.wrap?.(button,chat) || button):button;
   }
   let virtualScroll=false;
   $('chat-list').addEventListener('scroll',()=>{if(!virtualRows || virtualScroll) return;virtualScroll=true;(globalThis.requestAnimationFrame || setTimeout)(()=>{virtualScroll=false;renderChatWindow();});});
@@ -1005,7 +1007,8 @@
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
   $('filter-all').addEventListener('click',()=>applyFilter());$('filter-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('chat-list-filter').addEventListener('change',event=>applyFilter('',false,'nav-conversations',event.target.value));
-  $('groups-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups'?'':'groups'));
+  $('groups-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups-archived'?'groups':listFilter==='groups'?'':'groups'));
+  $('group-archived-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations','groups-archived'));
   $('toggle-filters').addEventListener('click',()=>{$('advanced-filters').hidden=!$('advanced-filters').hidden;$('toggle-filters').setAttribute('aria-expanded',String(!$('advanced-filters').hidden));});
   for(const section of ['attendance','products','assistant','templates','connection']) $('tab-'+section).addEventListener('click',()=>showPanel(section));
   $('nav-connection').addEventListener('click',()=>$('connection-dialog').showModal());

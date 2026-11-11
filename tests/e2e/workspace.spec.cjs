@@ -115,6 +115,46 @@ test('grupos ficam à parte como as arquivadas e voltam às conversas',async({pa
   await page.locator('#search').fill('família');await expect(page.locator('.chat-item')).toContainText('Grupo da família');
 });
 
+test('grupos arquivados ficam em pasta própria e o hambúrguer controla as ações',async({page})=>{
+  const fixed={jid:'111@g.us',name:'Grupo fixado',isGroup:true,status:'open',labels:[],unread:24};
+  const normal={jid:'222@g.us',name:'Grupo normal',isGroup:true,status:'open',labels:[],unread:3};
+  const person={jid:'5511998765432@s.whatsapp.net',name:'Contato individual',status:'open',labels:[],unread:0};
+  let presentation={version:2,pinned:[fixed.jid],normal:[normal.jid],archived:[]};
+  await page.route('**/api/chats?**',route=>route.fulfill({json:[fixed,normal,person]}));
+  await page.route('**/api/group-presentation**',route=>{
+    const url=new URL(route.request().url()),method=route.request().method();
+    if(method==='GET') return route.fulfill({json:presentation});
+    const input=route.request().postDataJSON();
+    if(url.pathname.endsWith('/archive')) {
+      presentation={...presentation,pinned:presentation.pinned.filter(jid=>jid!==input.jid),normal:presentation.normal.filter(jid=>jid!==input.jid),archived:presentation.archived.filter(jid=>jid!==input.jid)};
+      (input.archived?presentation.archived:presentation.normal).unshift(input.jid);
+    } else if(url.pathname.endsWith('/pin')) {
+      presentation={...presentation,pinned:presentation.pinned.filter(jid=>jid!==input.jid),normal:presentation.normal.filter(jid=>jid!==input.jid)};
+      (input.pinned?presentation.pinned:presentation.normal).unshift(input.jid);
+    } else presentation=input;
+    return route.fulfill({json:presentation});
+  });
+  await page.reload();
+  await expect(page).toHaveTitle('Whats AI');await expect(page.locator('#metric-unread')).toHaveText('0');
+  await page.locator('#groups-row').click();
+  const fixedRow=page.locator('.group-chat-row').filter({hasText:'Grupo fixado'});
+  await fixedRow.getByRole('button',{name:'Opções do grupo Grupo fixado'}).click();
+  await expect(page.getByRole('menuitem',{name:'Arquivar grupo'})).toBeVisible();
+  await page.keyboard.press('Escape');await expect(page.getByRole('menuitem',{name:'Arquivar grupo'})).toBeHidden();
+  await fixedRow.getByRole('button',{name:'Opções do grupo Grupo fixado'}).click();
+  await page.getByRole('menuitem',{name:'Arquivar grupo'}).click();
+  await expect(page.locator('#group-archived-row')).toBeVisible();await expect(page.locator('#group-archived-row')).not.toContainText('24');
+  await expect(page.locator('#chat-list')).not.toContainText('Grupo fixado');
+  await page.reload();await page.locator('#groups-row').click();await page.locator('#group-archived-row').click();
+  await expect(page.locator('#chat-list')).toContainText('Grupo fixado');await expect(page).toHaveTitle('Whats AI');
+  const archivedRow=page.locator('.group-chat-row').filter({hasText:'Grupo fixado'});
+  await archivedRow.getByRole('button',{name:'Opções do grupo Grupo fixado'}).click();
+  await expect(page.getByRole('menuitem',{name:'Fixar grupo'})).toHaveCount(0);
+  await page.getByRole('menuitem',{name:'Desarquivar grupo'}).click();
+  await expect(page.locator('#chat-list')).not.toContainText('Grupo fixado');
+  await page.locator('#groups-row').click();await expect(page.locator('#chat-list')).toContainText('Grupo fixado');
+});
+
 test('recording offers text preview before stopping manually',async({page})=>{
   await openChat(page);
   const sent=[];page.on('request',req=>{if(/\/api\/send(?:-voice|-media)?$/.test(req.url())) sent.push(req.url());});
