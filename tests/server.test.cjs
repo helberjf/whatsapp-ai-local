@@ -86,6 +86,7 @@ test('estado ausente permite criar instância e obter QR; não cria novamente ao
   await api('/api/connect','POST',{});
   const creates=calls.filter(c=>c.url==='/instance/create');assert.equal(creates.length,1);
   assert.equal(creates[0].input.integration,'WHATSAPP-BAILEYS');
+  assert.equal(creates[0].input.syncFullHistory,true,'a nova sessão precisa recuperar mensagens recebidas enquanto a central estava fechada');
 });
 test('só informa conectado quando o conector confirma e encerra QR após parear',async()=>{
   connected=true;

@@ -2,6 +2,8 @@
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
 $centralUrl='http://127.0.0.1:8766/'
+$launchNonce=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$launchUrl=$centralUrl+'?iniciar='+$launchNonce
 $composeFile=Join-Path $projectRoot 'infra\compose.yaml'
 $dataPath=Join-Path $projectRoot 'data'
 $nodePath=(Get-Command node -ErrorAction Stop).Source
@@ -61,7 +63,7 @@ try {
   $running=Get-Central
   if($running -and $running.build -and $running.build -eq $expectedBuild) {
     Write-Output 'Central ja iniciada. Reutilizando a sessao.'
-    if(-not $NoBrowser) {Start-Process $centralUrl}
+    if(-not $NoBrowser) {Start-Process $launchUrl}
     exit 0
   }
   if($running) {
@@ -79,6 +81,6 @@ try {
   for($attempt=0;$attempt -lt 30;$attempt++) {if(Test-Central) {$ready=$true;break};Start-Sleep -Milliseconds 500}
   if(-not $ready) {throw 'A central não respondeu na porta 8766. Consulte data/server.err.log.'}
   Write-Output ('Whats AI pronto: '+$centralUrl)
-  if(-not $NoBrowser) {Start-Process ($centralUrl+'?conectar=1')}
+  if(-not $NoBrowser) {Start-Process ($launchUrl+'&conectar=1')}
 } catch {Write-Error $_.Exception.Message;exit 1}
 finally {if($hasMutex) {$taskMutex.ReleaseMutex()};$taskMutex.Dispose()}

@@ -68,3 +68,12 @@ test('atalhos do Windows chamam o launcher canônico e usam a marca Whats AI',()
   assert.match(autostart,/-NoBrowser/);
   assert.doesNotMatch(shortcut+autostart,/\$launcherPath=Join-Path \$PSScriptRoot 'start\.ps1'/);
 });
+
+test('iniciador abre uma URL nova para não reutilizar a aba antiga em cache',()=>{
+  const root=path.join(__dirname,'..'),start=fs.readFileSync(path.join(root,'scripts','start-central.ps1'),'utf8');
+  assert.match(start,/\$launchNonce=\[DateTimeOffset\]::UtcNow\.ToUnixTimeMilliseconds\(\)/);
+  assert.match(start,/\$launchUrl=\$centralUrl\+'\?iniciar='\+\$launchNonce/);
+  assert.match(start,/Start-Process \$launchUrl/);
+  assert.match(start,/Start-Process \(\$launchUrl\+'\&conectar=1'\)/);
+  assert.doesNotMatch(start,/Start-Process \$centralUrl/);
+});
