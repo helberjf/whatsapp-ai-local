@@ -64,6 +64,22 @@ test('token, origem, host e arquivos privados são protegidos',async()=>{
   assert.equal((await fetch(address+'/assets/../server.cjs')).status,404);
   const page=await (await fetch(address)).text(); assert.doesNotMatch(page,/segredo-apenas-servidor/);
 });
+test('manifesto, service worker e ícones PWA são entregues com tipos seguros',async()=>{
+  const expected={
+    '/manifest.webmanifest':'application/manifest+json',
+    '/service-worker.js':'text/javascript',
+    '/offline.html':'text/html',
+    '/icons/whats-ai.svg':'image/svg+xml',
+    '/icons/whats-ai-192.png':'image/png',
+    '/icons/whats-ai-512.png':'image/png',
+    '/icons/whats-ai-maskable-512.png':'image/png',
+    '/icons/whats-ai.ico':'image/x-icon'
+  };
+  for(const [route,type] of Object.entries(expected)) {const response=await fetch(address+route);assert.equal(response.status,200,route);assert.match(response.headers.get('content-type') || '',new RegExp('^'+type.replace('+','\\+')));}
+  assert.equal((await fetch(address+'/service-worker.js')).headers.get('service-worker-allowed'),'/');
+  assert.match((await fetch(address+'/icons/whats-ai-512.png')).headers.get('cache-control'),/immutable/);
+  assert.equal((await fetch(address+'/manifest.webmanifest')).headers.get('cache-control'),'no-store');
+});
 test('estado ausente permite criar instância e obter QR; não cria novamente ao reconectar',async()=>{
   const state=await api('/api/connection'); assert.equal(state.state,'disconnected'); assert.equal(state.reachable,true);
   const qr=await api('/api/connect','POST',{});assert.match(qr.base64,/^data:image\/png;base64,/);

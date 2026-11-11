@@ -4,7 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="Sua central pessoal para conversar e organizar seus atendimentos do WhatsApp.">
+  <meta name="theme-color" content="#102b25">
   <title>Whats AI · atendimento, CRM e IA</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/whats-ai.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/whats-ai.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/icons/whats-ai-192.png">
+  <script defer src="/pwa.js"></script>
   <link rel="stylesheet" href="/assets/app.css">
   <link rel="stylesheet" href="/assets/features.css">
   <link rel="stylesheet" href="/assets/avatars.css">
@@ -74,7 +80,7 @@
   </defs></svg>
     <div class="shell" id="app-shell">
     <aside class="sidebar" aria-label="Menu principal">
-      <a class="brand" href="/" aria-label="Whats AI, início"><span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg></span><span>Whats <b>AI</b></span><small>Local</small></a>
+      <a class="brand" href="/" aria-label="Whats AI, início"><span class="brand-icon"><img class="brand-logo" src="/icons/whats-ai.svg" alt=""></span><span>Whats <b>AI</b></span><small>Local</small></a>
       <button id="account-switcher" class="account-switcher" type="button" aria-haspopup="dialog" aria-label="Trocar ou adicionar conta do WhatsApp"><i id="account-dot" class="dot"></i><span><strong id="account-name">Conta do WhatsApp</strong><small id="account-state">Verificando…</small></span><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg></button>
       <div class="sidebar-search"><button id="global-search-open" class="nav-item" type="button" aria-label="Buscar em todo o sistema" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><span>Buscar em tudo</span><kbd>Ctrl K</kbd></button><button id="refresh-top" class="icon-button" type="button" title="Atualizar" aria-label="Atualizar"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button></div>
       <nav class="main-nav" aria-label="Navegação da central">

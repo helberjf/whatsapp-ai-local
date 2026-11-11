@@ -219,6 +219,23 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid,storage:options.persistence?'postgresql':'local-test'});}
+      const pwaAssets={
+        '/manifest.webmanifest':{file:'manifest.webmanifest',type:'application/manifest+json; charset=utf-8'},
+        '/pwa.js':{file:'pwa.js',type:'text/javascript; charset=utf-8'},
+        '/service-worker.js':{file:'service-worker.js',type:'text/javascript; charset=utf-8',headers:{'Service-Worker-Allowed':'/'}},
+        '/offline.html':{file:'offline.html',type:'text/html; charset=utf-8'},
+        '/offline.css':{file:'offline.css',type:'text/css; charset=utf-8'},
+        '/icons/whats-ai.svg':{file:'icons/whats-ai.svg',type:'image/svg+xml'},
+        '/icons/whats-ai-192.png':{file:'icons/whats-ai-192.png',type:'image/png',binary:true,immutable:true},
+        '/icons/whats-ai-512.png':{file:'icons/whats-ai-512.png',type:'image/png',binary:true,immutable:true},
+        '/icons/whats-ai-maskable-512.png':{file:'icons/whats-ai-maskable-512.png',type:'image/png',binary:true,immutable:true},
+        '/icons/whats-ai.ico':{file:'icons/whats-ai.ico',type:'image/x-icon',binary:true,immutable:true}
+      };
+      if(req.method==='GET' && pwaAssets[route]) {
+        const asset=pwaAssets[route],content=await fs.readFile(path.join(root,'public',asset.file),asset.binary?undefined:'utf8');
+        if(asset.immutable) res.setHeader('Cache-Control','public, max-age=31536000, immutable');
+        res.writeHead(200,{'Content-Type':asset.type,...(asset.headers || {})});return res.end(content);
+      }
       if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js','/assets/accounts.js','/assets/accounts.css','/assets/prospection.js','/assets/prospection.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n<meta name="whatsapp-accounts" content="${accounts.list().map(item=>item.id).join(',')}">\n</head>`);

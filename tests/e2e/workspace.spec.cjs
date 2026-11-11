@@ -204,6 +204,17 @@ test('composer sends dictated text or a view-once audio from the media preview',
 });
 test.beforeEach(async({page,demo})=>{const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item'),()=>JSON.stringify(errors)).toHaveCount(10);expect(errors).toEqual([]);});
 
+test('expõe marca e PWA sem guardar respostas privadas',async({page})=>{
+  await expect(page.locator('.brand-logo')).toBeVisible();
+  await page.evaluate(()=>navigator.serviceWorker.ready);
+  const manifest=await page.evaluate(()=>fetch('/manifest.webmanifest').then(response=>response.json()));
+  expect(manifest).toMatchObject({name:'Whats AI',display:'standalone'});
+  await page.evaluate(()=>fetch('/api/chats').catch(()=>null));
+  const cached=await page.evaluate(async()=>{const urls=[];for(const name of await caches.keys()) for(const request of await (await caches.open(name)).keys()) urls.push(new URL(request.url).pathname);return urls;});
+  expect(cached.some(path=>path.startsWith('/api/'))).toBe(false);
+  expect(cached).toContain('/offline.html');
+});
+
 for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {
   test(`navigation and composer remain reachable at ${viewport.width}x${viewport.height}`,async({page})=>{
     await page.setViewportSize(viewport);
