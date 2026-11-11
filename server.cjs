@@ -29,6 +29,7 @@ const {createChatDelta}=require('./lib/chat-delta.cjs');
 const {createTeamService}=require('./lib/team.cjs');
 const {createAccountRegistry,archiveAccount,accountDir}=require('./lib/accounts.cjs');
 const {prospectionDrafts}=require('./lib/prospection.cjs');
+const {createGroupPresentation}=require('./lib/group-presentation.cjs');
 const root=__dirname;
 const {buildId}=require('./lib/build-id.cjs');
 // Código com que esta central iniciou; o de disco é conferido de novo a cada 15 s para perceber atualizações.
@@ -130,7 +131,7 @@ function createWhatsAppServer(options={}) {
     const voice=createVoiceFlow({store,client,transcriptions,speech,credentials,now});
     const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.retrieve,reliability:extra.services.reliability,catalogText:extra.services.catalogText,now,intervalMs:options.assistantIntervalMs,voice});
     const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
-    const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer});
+    const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer}),groupPresentation=createGroupPresentation({store});
     const triggers=createTriggerService({store,client,now,humanizer});
     const scheduler=createScheduler({store,client,now});
     const team=createTeamService({store,client,ai:extra.services.ai,now});
@@ -196,7 +197,7 @@ function createWhatsAppServer(options={}) {
     const stop=()=>{stopped=true;clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();};
     // Ao fechar, espera o ciclo em andamento e as transcrições: nada grava depois que o PostgreSQL fecha.
     const idle=async()=>{if(replyTick) await replyTick;await Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),transcriptions.idle()]);};
-    return {account,client,store,rules,transcriptions,voice,assistant,avatars,crm,automation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
+    return {account,client,store,rules,transcriptions,voice,assistant,avatars,crm,automation,groupPresentation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
   }
   const runtimes=new Map(accounts.list().map(account=>[account.id,createAccountRuntime(account)]));
   async function accountList() {
@@ -261,7 +262,7 @@ function createWhatsAppServer(options={}) {
       // A conta vem do cabeçalho X-WhatsApp-Account; sem ele, vale a primeira conta (a original).
       const chosen=req.headers['x-whatsapp-account'],runtime=runtimes.get(chosen===undefined?accounts.fallback().id:chosen);
       if(!runtime) return json(res,404,{error:'Conta não encontrada. Recarregue a página.'});
-      const {account,client,store,rules,transcriptions,assistant,avatars,crm,automation,triggers,scheduler,team,chatDelta,sendOnce,messaging}=runtime;
+      const {account,client,store,rules,transcriptions,assistant,avatars,crm,automation,groupPresentation,triggers,scheduler,team,chatDelta,sendOnce,messaging}=runtime;
       res.setHeader('X-WhatsApp-Account',account.id);
       if(route==='/api/prospection/drafts') return json(res,200,await prospectionDrafts({account,config:options.config,method:req.method,input:req.method==='PATCH'?await readBody(req):undefined,fetchImpl:options.prospectionFetch}));
       if(route==='/api/accounts' && req.method==='GET') return json(res,200,await accountList());
@@ -295,6 +296,9 @@ function createWhatsAppServer(options={}) {
       if(scheduledMatch && req.method==='PATCH' && !scheduledMatch[2]) return json(res,200,await scheduler.update(scheduledMatch[1],await readBody(req)));
       if(scheduledMatch && req.method==='POST' && scheduledMatch[2]) {await readBody(req);return json(res,200,await scheduler.cancel(scheduledMatch[1]));}
       if(req.method==='POST' && route==='/api/contacts/sync') {await readBody(req);return json(res,200,await client.syncContacts(true));}
+      if(route==='/api/group-presentation' && req.method==='GET') return json(res,200,await groupPresentation.reconcile((await client.chats()).filter(chat=>chat.isGroup || groupJid(chat.jid)).map(chat=>chat.jid)));
+      if(route==='/api/group-presentation' && req.method==='PUT') return json(res,200,await groupPresentation.reorder(await readBody(req)));
+      if(route==='/api/group-presentation/pin' && req.method==='PATCH') {const input=await readBody(req);return json(res,200,await groupPresentation.setPinned(input.jid,input.pinned));}
       if(req.method==='POST' && route==='/api/forward') {const input=await readBody(req);assertJid(input.sourceJid);assertJid(input.targetJid);return json(res,200,await sendOnce(input,send=>send(),()=>prepareForward(client,input)));}
       if(route==='/api/transcription/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await transcriptions.settings():await transcriptions.saveSettings(await readBody(req)));
       if(req.method==='GET' && route==='/api/transcriptions') return json(res,200,await transcriptions.list(url.searchParams.get('jid')));
