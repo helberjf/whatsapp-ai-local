@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Whats AI">
+  <defs>
+    <linearGradient id="tile" x1="74" y1="52" x2="438" y2="466" gradientUnits="userSpaceOnUse"><stop stop-color="#143d33"/><stop offset="1" stop-color="#0a201c"/></linearGradient>
+    <linearGradient id="bubble" x1="128" y1="84" x2="390" y2="374" gradientUnits="userSpaceOnUse"><stop stop-color="#38df91"/><stop offset="1" stop-color="#11a968"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+  <path d="M113 144c0-42 34-76 76-76h134c42 0 76 34 76 76v133c0 42-34 76-76 76h-96l-96 82 22-91c-24-13-40-38-40-67V144Z" fill="url(#bubble)"/>
+  <path d="m358 86 9 25 25 9-25 9-9 25-9-25-25-9 25-9 9-25Z" fill="#c7ffe2"/>
+  <circle cx="173" cy="156" r="11" fill="#8ff3bd" opacity=".65"/>
+  <text x="256" y="283" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="128" font-weight="800" letter-spacing="-8" fill="#fff">AI</text>
+</svg>
