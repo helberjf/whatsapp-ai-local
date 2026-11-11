@@ -19,8 +19,10 @@
   <script defer src="/assets/conversation-media.js"></script>
   <link rel="stylesheet" href="/assets/accounts.css">
   <script defer src="/assets/accounts.js"></script>
+  <link rel="stylesheet" href="/assets/prospection.css">
   <script defer src="/assets/app.js"></script>
   <script defer src="/assets/pages.js"></script>
+  <script defer src="/assets/prospection.js"></script>
   <link rel="stylesheet" href="/assets/whatsapp-plus.css">
   <script defer src="/assets/whatsapp-plus.js"></script>
   <script defer src="/assets/voice.js"></script>
@@ -78,6 +80,7 @@
       <nav class="main-nav" aria-label="Navegação da central">
         <button id="nav-overview" class="nav-item active" type="button" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span>Dashboard</span></button>
         <button id="nav-conversations" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-messages"/></svg><span>Conversas</span><small id="nav-chat-count">—</small></button>
+        <button id="nav-prospection" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Prospecção</span></button>
         <button id="nav-contacts" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><span>Contatos</span></button>
         <button id="nav-pending" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>Pendentes</span><small id="nav-pending-count">—</small></button>
         <button id="nav-closed" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Concluídos</span></button>
@@ -229,6 +232,11 @@
             <p id="human-example" class="muted"></p><p id="human-status" class="form-status" role="status"></p>
             <div class="form-actions"><button id="human-save" class="button primary" type="button">Salvar</button></div></section>
         </div>
+      </section>
+      <section id="page-prospection" class="page prospection-page" hidden aria-labelledby="prospection-title">
+        <div class="page-head"><div><p class="eyebrow">CONTA SUPORTE</p><h1 id="prospection-title">Rascunhos de prospecção</h1><p>Revise as mensagens preparadas antes do envio. Nada é enviado ao WhatsApp por esta tela.</p></div><div class="page-actions"><a id="prospection-open" class="button secondary" href="#" target="_blank" rel="noopener noreferrer">Abrir prospecção</a><button id="prospection-refresh" class="button secondary" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Atualizar</button><button id="prospection-prepare" class="button primary" type="button">Preparar rascunhos</button></div></div>
+        <p id="prospection-status" class="form-status" role="status" aria-live="polite"></p>
+        <div id="prospection-list" class="prospection-grid"></div>
       </section>
       <section id="page-team" class="page" hidden aria-labelledby="team-title">
         <div class="page-head"><div><h1 id="team-title">Equipe e painel</h1><p>Como está o atendimento agora e no período, e as ferramentas de equipe: atendentes, prazos, triagem, aviso de fila e pesquisa de satisfação.</p></div><div class="page-actions"><div class="segmented" role="radiogroup" aria-label="Período do painel"><label><input type="radio" name="team-range" value="1" checked><span>Hoje</span></label><label><input type="radio" name="team-range" value="7"><span>7 dias</span></label><label><input type="radio" name="team-range" value="30"><span>30 dias</span></label></div><button id="team-refresh" class="button secondary" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Atualizar</button></div></div>

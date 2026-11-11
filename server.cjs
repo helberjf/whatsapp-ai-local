@@ -28,6 +28,7 @@ const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
 const {createChatDelta}=require('./lib/chat-delta.cjs');
 const {createTeamService}=require('./lib/team.cjs');
 const {createAccountRegistry,archiveAccount,accountDir}=require('./lib/accounts.cjs');
+const {prospectionDrafts}=require('./lib/prospection.cjs');
 const root=__dirname;
 const {buildId}=require('./lib/build-id.cjs');
 // Código com que esta central iniciou; o de disco é conferido de novo a cada 15 s para perceber atualizações.
@@ -218,7 +219,7 @@ function createWhatsAppServer(options={}) {
     try {
       const url=new URL(req.url,`http://${req.headers.host}`),route=url.pathname;
       if(req.method==='GET' && route==='/health') {const current=currentBuild();return json(res,200,{service:'whatsapp-local',version:1,build:RUNNING_BUILD,current,stale:current!==RUNNING_BUILD,pid:process.pid,storage:options.persistence?'postgresql':'local-test'});}
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js','/assets/accounts.js','/assets/accounts.css'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js','/assets/accounts.js','/assets/accounts.css','/assets/prospection.js','/assets/prospection.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n<meta name="whatsapp-accounts" content="${accounts.list().map(item=>item.id).join(',')}">\n</head>`);
         if(file==='index.html' && options.demo) content=content.replace('<body>','<body class="demo-mode"><div class="demo-banner" role="status">DEMO · Fictional contacts · No real WhatsApp connection</div>');
@@ -245,6 +246,7 @@ function createWhatsAppServer(options={}) {
       if(!runtime) return json(res,404,{error:'Conta não encontrada. Recarregue a página.'});
       const {account,client,store,rules,transcriptions,assistant,avatars,crm,automation,triggers,scheduler,team,chatDelta,sendOnce,messaging}=runtime;
       res.setHeader('X-WhatsApp-Account',account.id);
+      if(route==='/api/prospection/drafts') return json(res,200,await prospectionDrafts({account,config:options.config,method:req.method,input:req.method==='PATCH'?await readBody(req):undefined,fetchImpl:options.prospectionFetch}));
       if(route==='/api/accounts' && req.method==='GET') return json(res,200,await accountList());
       if(route==='/api/accounts' && req.method==='POST') {
         const created=await accounts.add((await readBody(req)).name),added=createAccountRuntime(created);

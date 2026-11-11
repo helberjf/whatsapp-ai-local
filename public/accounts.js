@@ -6,7 +6,8 @@
   function stored() {try {return sessionStorage.getItem(KEY) || localStorage.getItem(KEY);}catch {return null;}}
   function remember(id) {try {sessionStorage.setItem(KEY,id);localStorage.setItem(KEY,id);}catch {}}
   // Fixada ao carregar a página: tudo o que esta tela envia sai pela conta que ela mostra.
-  const active=ids.includes(stored())?stored():ids[0];
+  const requested=new URLSearchParams(location.search).get('conta');
+  const active=ids.includes(requested)?requested:ids.includes(stored())?stored():ids[0];
   let accounts=[],api=null,notice=()=>{},naming=null,removing=null,loading=null;
   const labels={connected:'Conectada',connecting:'Aguardando QR Code'};
   const stateLabel=account=>labels[account.state] || (account.reachable?'Desconectada':'Conector indisponível');
