@@ -52,3 +52,19 @@ test('atalhos de iniciar e parar usam fim de linha do Windows e chamam os script
   const scripts=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).scripts;
   assert.deepEqual([scripts.start,scripts.stop],['node scripts/open-central.cjs','node scripts/stop-central.cjs']);
 });
+
+test('somente os iniciadores canônicos de abrir e parar permanecem',()=>{
+  const root=path.join(__dirname,'..');
+  assert.equal(fs.existsSync(path.join(root,'Iniciar WhatsApp Central.cmd')),true);
+  assert.equal(fs.existsSync(path.join(root,'Parar WhatsApp Central.cmd')),true);
+  for(const legacy of ['Abrir WhatsApp.cmd','Iniciar WhatsApp.cmd','Iniciar WhatsApp Local.cmd','Parar WhatsApp.cmd']) assert.equal(fs.existsSync(path.join(root,legacy)),false,legacy+' deve ser removido');
+});
+
+test('atalhos do Windows chamam o launcher canônico e usam a marca Whats AI',()=>{
+  const root=path.join(__dirname,'..'),shortcut=fs.readFileSync(path.join(root,'scripts','shortcut.ps1'),'utf8'),autostart=fs.readFileSync(path.join(root,'scripts','autostart.ps1'),'utf8');
+  assert.match(shortcut,/Iniciar WhatsApp Central\.cmd/);
+  assert.match(shortcut,/public\\icons\\whats-ai\.ico/);
+  assert.match(autostart,/Iniciar WhatsApp Central\.cmd/);
+  assert.match(autostart,/-NoBrowser/);
+  assert.doesNotMatch(shortcut+autostart,/\$launcherPath=Join-Path \$PSScriptRoot 'start\.ps1'/);
+});
