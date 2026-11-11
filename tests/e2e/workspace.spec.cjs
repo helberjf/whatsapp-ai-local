@@ -247,12 +247,13 @@ test('contact details, disappearing options and deletion are explicit',async({pa
   const contact=page.locator('#contact-header-info');
   await expect(contact).toBeVisible({timeout:5000});
   await contact.press('Enter');
+  await expect(page.locator('#contact-panel')).toBeVisible();
+  await expect(page.locator('#contact-media-preview')).toBeVisible();
+  await page.locator('#contact-info-open').click();
   await expect(page.locator('#contact-info-data')).toContainText('Alex Morgan');
   await page.getByRole('button',{name:'Fechar dados do contato'}).click();
-  await page.locator('#contact-avatar').click();
-  await expect(page.locator('#contact-info-dialog')).toBeVisible();
-  await page.getByRole('button',{name:'Fechar dados do contato'}).click();
-  await page.locator('#show-contact').click();
+  await page.locator('#contact-avatar-open').click();
+  await expect(page.locator('#notice')).toContainText('não possui foto');
   await page.locator('#disappearing-open').click();await expect(page.locator('#disappearing-save')).toBeEnabled();await page.locator('#disappearing-expiration').selectOption('86400');await page.locator('#disappearing-save').click();await expect(page.locator('#disappearing-dialog')).not.toBeVisible();await page.locator('#hide-contact').click();
   const own=page.locator('.message.mine').filter({hasText:'Conheça o catálogo'});await own.locator('.message-menu-toggle').click();await own.getByRole('button',{name:'Apagar para todos'}).click();await expect(page.locator('#delete-dialog')).toBeVisible();await expect(own).toContainText('Conheça o catálogo');await page.locator('#delete-confirm').click();await expect(page.locator('.message-deleted')).toContainText('Mensagem apagada');
 });
