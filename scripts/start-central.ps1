@@ -66,7 +66,7 @@ try {
   }
   if($running) {
     Write-Output 'A central aberta e de uma versao anterior. Reiniciando com a atualizacao...'
-    if(-not (Stop-OldCentral $running)) {throw 'A central anterior continua aberta. Use Parar WhatsApp.cmd e abra de novo.'}
+    if(-not (Stop-OldCentral $running)) {throw 'A central anterior continua aberta. Use Parar WhatsApp Central.cmd e abra de novo.'}
   }
   # O auxiliar fica em segundo plano, sem depender de uma janela de terminal aberta.
   $scriptPath=Join-Path $projectRoot 'server.cjs'
