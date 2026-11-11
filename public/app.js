@@ -363,8 +363,8 @@
     forward.addEventListener('click',()=>{if(message.canForward===false) return;menu.open=false;openForward(message,jid);});
     copy.addEventListener('click',async()=>{const text=messageCopyText(message,jid);if(!text) return;menu.open=false;try {await navigator.clipboard.writeText(text);notice('Texto copiado.',true);}catch {notice('Não foi possível copiar. Selecione o texto da mensagem para copiar.');}});
     options.append(forward,copy);
-    if(message.type==='audio' && !message.deleted && !message.viewOnce && !jid.endsWith('@g.us')) {
-      const priority=el('button','message-prioritize-transcription','Priorizar transcrição');priority.type='button';
+    if(message.type==='audio' && !message.deleted && !message.viewOnce) {
+      const priority=el('button','message-prioritize-transcription',jid.endsWith('@g.us')?'Transcrever áudio':'Transcrever / priorizar');priority.type='button';
       priority.addEventListener('click',async()=>{
         if(priority.disabled) return;priority.disabled=true;menu.open=false;
         try {
@@ -491,7 +491,7 @@
       const chips=removed?[]:[...(reactions.get(message.id)?.values() || [])].filter(item=>item.emoji);
       if(chips.length) {const box=el('div','message-reactions');box.setAttribute('aria-label','Reações');for(const item of chips) {const chip=el('span','reaction-chip'+(item.fromMe?' mine':''),item.emoji);chip.title=item.fromMe?'Sua reação':'Reação do contato';box.append(chip);}row.append(box);}
       const star=!removed && extras()?.isStarred?.(selected.jid,message.id)?'★ ':'',edited=message.edited && !removed?' · Editada':'';
-      if(!removed && !selected.isGroup) row.append(messageActions(message,selected.jid));
+      if(!removed) row.append(messageActions(message,selected.jid));
       const meta=el('span','message-meta'),clock=el('time','',star+time(message.timestamp)+edited);
       if(message.timestamp) clock.title=dateTime(message.timestamp);
       meta.append(clock);
@@ -719,7 +719,7 @@
     $('contact-status').value=chat.status || 'open';$('contact-ai').value=chat.aiMode || 'off';$('contact-labels').value=(chat.labels || []).join(', ');$('notes').replaceChildren();
     try {
       if(chat.isGroup) await loadMessages();
-      else {await Promise.all([loadMessages(),loadContact(chat.jid),loadTranscriptions(chat.jid)]);runHooks('open',chat);}
+      else {await Promise.all([loadMessages(),loadContact(chat.jid),loadTranscriptions(chat.jid)]);runHooks('open',chat);void api('/transcriptions/discover','POST',{jid:chat.jid}).then(()=>loadTranscriptions(chat.jid)).catch(error=>notice(error.message));}
     } catch(error) {notice(error.message);}
   }
   function renderTemplates() {

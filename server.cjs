@@ -117,8 +117,6 @@ function createWhatsAppServer(options={}) {
   const aiWatchdog=createAiWatchdog({ai:extra.services.ai,localAi,onRecovered:()=>extra.services.embeddings.refresh({force:true}),now,...options.aiWatchdog});
   const watchLocalAi=options.watchLocalAi ?? production;
   const speech=options.speech || createSpeechEngines({fetchImpl:options.speechFetch});
-  // Transcrição de todo áudio recebido (Whisper local): sempre na central real; nos testes só quando options.autoTranscription for informado.
-  const autoTranscription=options.autoTranscription ?? !options.storeDir;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
   // Cada conta tem conector, dados de atendimento, robôs, fila de equipe e eventos próprios: conversas, regras e envios nunca se misturam.
   function createAccountRuntime(account) {
@@ -162,23 +160,11 @@ function createWhatsAppServer(options={}) {
     const messaging=createMessagingRoutes({client,store,sendOnce,voice,speech,avatars,transcriptions,now});
     const housekeeping=()=>store.update(data=>pruneState(data,now()));
     let replyTick=null,lastPoll=0,pollAgain=false,eventTimer=null,stopped=false;
-    const audioCursors=new Map(),audioStartedAt=Date.now();
-    async function pollAudio() {
-      for(const chat of await client.chats()) {
-        const last=chat.lastMessage;if(!last) continue;
-        const cursor=last.id || String(last.timestamp),known=audioCursors.has(chat.jid);
-        if(audioCursors.get(chat.jid)===cursor) continue;
-        // Read the recent page when a chat changes: a later text must not hide a preceding voice message.
-        if(known || last.timestamp>=audioStartedAt) await transcriptions.discover(chat.jid,(await client.messages(chat.jid,1)).messages);
-        else if(last.type==='audio') await transcriptions.discover(chat.jid,[last]);
-        audioCursors.set(chat.jid,cursor);
-      }
-    }
     const pollReplies=()=>{
       if(stopped) return Promise.resolve();
       if(replyTick) {pollAgain=true;return replyTick;}
       lastPoll=Date.now();
-      replyTick=(async()=>{if(autoTranscription) await pollAudio().catch(()=>{});await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
+      replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
       return replyTick;
     };
     // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
@@ -303,6 +289,7 @@ function createWhatsAppServer(options={}) {
       if(route==='/api/transcription/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await transcriptions.settings():await transcriptions.saveSettings(await readBody(req)));
       if(req.method==='GET' && route==='/api/transcriptions') return json(res,200,await transcriptions.list(url.searchParams.get('jid')));
       if(req.method==='GET' && route==='/api/transcriptions/queue') return json(res,200,await transcriptions.queue());
+      if(req.method==='POST' && route==='/api/transcriptions/discover') {const input=await readBody(req),jid=assertJid(input.jid),audios=await client.recentAudioMessages(jid,5);await transcriptions.discover(jid,audios);return json(res,200,{discovered:audios.length});}
       if(req.method==='POST' && route==='/api/transcriptions') return json(res,202,await transcriptions.enqueue(await readBody(req)));
       if(req.method==='GET' && route==='/api/avatar') return json(res,200,await avatars.get(url.searchParams.get('jid')));
       if(route==='/api/crm' && req.method==='GET') return json(res,200,await crm.list(await client.chats()));
@@ -357,9 +344,7 @@ function createWhatsAppServer(options={}) {
         const validate=typeof integrationGiven==='string'?assertJid:assertConversationJid;
         const jid=validate(url.searchParams.get('jid')),page=Number(url.searchParams.get('page') || 1);
         if(!Number.isSafeInteger(page) || page<1 || page>100000) throw new ApiError('Página inválida.',422);
-        const result=await client.messages(jid,page);
-        if(autoTranscription && !groupJid(jid)) await transcriptions.discover(jid,result.messages).catch(()=>{});
-        return json(res,200,result);
+        return json(res,200,await client.messages(jid,page));
       }
       if(route==='/api/contact' && ['GET','PATCH'].includes(req.method)) {
         const jid=assertJid(url.searchParams.get('jid'));
