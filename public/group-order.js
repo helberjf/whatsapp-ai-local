@@ -2,6 +2,7 @@
   let api,notice,render,state={version:2,pinned:[],normal:[],archived:[]},dragged=null,openMenu=null;
   const pinned=jid=>state.pinned.includes(jid),isArchived=jid=>state.archived.includes(jid);
   const clone=()=>({version:2,pinned:[...state.pinned],normal:[...state.normal],archived:[...state.archived]});
+  const known=jid=>state.pinned.includes(jid) || state.normal.includes(jid) || state.archived.includes(jid);
   const active=chats=>chats.filter(chat=>!isArchived(chat.jid));
   const archived=chats=>chats.filter(chat=>isArchived(chat.jid));
   function arrange(chats) {
@@ -12,23 +13,27 @@
   function closeMenu(focus=false) {
     if(!openMenu) return;const current=openMenu;openMenu=null;current.menu.hidden=true;current.toggle.setAttribute('aria-expanded','false');if(focus) current.toggle.focus();
   }
+  function accept(value) {state={version:2,pinned:Array.isArray(value?.pinned)?value.pinned:[],normal:Array.isArray(value?.normal)?value.normal:[],archived:Array.isArray(value?.archived)?value.archived:[]};return state;}
   async function refresh() {
-    try {state=await api('/group-presentation');render?.();}catch(error) {notice?.(error.message);}
+    try {accept(await api('/group-presentation'));render?.();}catch(error) {notice?.(error.message);}
     return state;
+  }
+  async function recover(snapshot,error) {
+    state=snapshot;try {accept(await api('/group-presentation'));}catch {}render?.();notice?.(error.message);
   }
   async function togglePin(chat) {
     const before=clone(),willPin=!pinned(chat.jid);closeMenu();
     state.pinned=state.pinned.filter(id=>id!==chat.jid);state.normal=state.normal.filter(id=>id!==chat.jid);
     (willPin?state.pinned:state.normal).unshift(chat.jid);render?.();
-    try {state=await api('/group-presentation/pin','PATCH',{jid:chat.jid,pinned:willPin});render?.();}
-    catch(error) {state=before;render?.();notice?.(error.message);}
+    try {accept(await api('/group-presentation/pin','PATCH',{jid:chat.jid,pinned:willPin}));render?.();}
+    catch(error) {await recover(before,error);}
   }
   async function toggleArchive(chat) {
     const before=clone(),willArchive=!isArchived(chat.jid);closeMenu();
     state.pinned=state.pinned.filter(id=>id!==chat.jid);state.normal=state.normal.filter(id=>id!==chat.jid);state.archived=state.archived.filter(id=>id!==chat.jid);
     (willArchive?state.archived:state.normal).unshift(chat.jid);render?.();
-    try {state=await api('/group-presentation/archive','PATCH',{jid:chat.jid,archived:willArchive});render?.();notice?.(willArchive?'Grupo arquivado. Veja em “Grupos arquivados”.':'Grupo desarquivado.',true);}
-    catch(error) {state=before;render?.();notice?.(error.message);}
+    try {accept(await api('/group-presentation/archive','PATCH',{jid:chat.jid,archived:willArchive}));render?.();notice?.(willArchive?'Grupo arquivado. Veja em “Grupos arquivados”.':'Grupo desarquivado.',true);}
+    catch(error) {await recover(before,error);}
   }
   function blockOf(jid) {return state.pinned.includes(jid)?'pinned':state.normal.includes(jid)?'normal':state.archived.includes(jid)?'archived':null;}
   async function persistOrder(target,beforeTarget) {
@@ -36,8 +41,8 @@
     if(!dragged || dragged===target || !sourceBlock || sourceBlock!==targetBlock) {if(dragged && target && sourceBlock!==targetBlock) notice?.('Use o menu para fixar, desafixar, arquivar ou desarquivar antes de mover entre os blocos.');return;}
     const snapshot=clone(),block=state[sourceBlock],source=block.indexOf(dragged),destination=block.indexOf(target);if(source<0 || destination<0) return;
     block.splice(source,1);const index=block.indexOf(target)+(beforeTarget?0:1);block.splice(index,0,dragged);render?.();
-    try {state=await api('/group-presentation','PUT',{pinned:state.pinned,normal:state.normal,archived:state.archived});render?.();}
-    catch(error) {state=snapshot;render?.();notice?.(error.message);}
+    try {accept(await api('/group-presentation','PUT',{pinned:state.pinned,normal:state.normal,archived:state.archived}));render?.();}
+    catch(error) {await recover(snapshot,error);}
   }
   function action(text,handler) {const button=document.createElement('button');button.type='button';button.setAttribute('role','menuitem');button.textContent=text;button.addEventListener('click',event=>{event.stopPropagation();handler();});return button;}
   function wrap(button,chat) {
@@ -59,5 +64,6 @@
     document.addEventListener('keydown',event=>{if(event.key==='Escape' && openMenu) {event.preventDefault();closeMenu(true);}});
     return refresh();
   }
-  globalThis.WhatsAppGroups={init,active,archived,arrange,wrap,refresh};
+  const sync=chats=>chats.some(chat=>!known(chat.jid))?refresh():Promise.resolve(state);
+  globalThis.WhatsAppGroups={init,active,archived,arrange,wrap,refresh,sync};
 })();

@@ -77,12 +77,12 @@
     $('chat-list').replaceChildren(fragment);
   }
   function renderGroupsRow() {
-    const groups=chats.filter(chat=>chat.isGroup),open=['groups','groups-archived'].includes(listFilter),archivedOpen=listFilter==='groups-archived',unread=groups.filter(chat=>Number(chat.unread)>0).length;
+    const groups=chats.filter(chat=>chat.isGroup),activeGroups=globalThis.WhatsAppGroups?.active?.(groups) || groups,open=['groups','groups-archived'].includes(listFilter),archivedOpen=listFilter==='groups-archived',unread=activeGroups.filter(chat=>Number(chat.unread)>0).length;
     $('groups-row').hidden=!groups.length && !open;
     $('groups-row').setAttribute('aria-pressed',String(open));$('groups-row').classList.toggle('back',open);
     $('groups-row-label').textContent=archivedOpen?'← Voltar aos grupos':open?'← Voltar às conversas':'Grupos';
     $('groups-row-count').textContent=open || !unread?'':String(unread);
-    $('groups-row').title=`${groups.length} grupo${groups.length===1?'':'s'}${unread?` · ${unread} com mensagem não vista`:''}`;
+    $('groups-row').title=`${activeGroups.length} grupo${activeGroups.length===1?'':'s'}${unread?` · ${unread} com mensagem não vista`:''}`;
     $('group-archived-row').hidden=!open || archivedOpen;$('group-archived-row').setAttribute('aria-pressed',String(archivedOpen));
     // Dentro dos grupos, a linha de arquivadas some para as duas visões não se misturarem.
     if(open) {$('archived-row').hidden=true;const title=$('inbox-title').firstChild;if(title) title.textContent=archivedOpen?'Grupos arquivados ':'Grupos ';}
@@ -761,7 +761,7 @@
           chatsVersion=result.version;changed=result.changed.length>0 || result.removed.length>0;
           if(changed) {const merged=new Map(chats.map(chat=>[chat.jid,chat]));for(const jid of result.removed) merged.delete(jid);for(const chat of result.changed) merged.set(chat.jid,chat);chats=[...merged.values()].sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0));}
         }
-        if(changed) {globalThis.WhatsAppFeatures?.onChats?.(chats.filter(chat=>!chat.isGroup));globalThis.WhatsAppSchedule?.onChats?.(chats);}
+        if(changed) {globalThis.WhatsAppFeatures?.onChats?.(chats.filter(chat=>!chat.isGroup));globalThis.WhatsAppSchedule?.onChats?.(chats);void globalThis.WhatsAppGroups?.sync?.(chats.filter(chat=>chat.isGroup));}
         if(selected) {const updated=chats.find(chat=>chat.jid===selected.jid);if(updated) {const identityChanged=selected.name!==updated.name || contactPhone(selected)!==contactPhone(updated);Object.assign(selected,updated);if(identityChanged) showSelectedIdentity(selected);}}
         if(changed) renderChats();runHooks('sync');if($('forward-dialog').open) renderForwardDestinations();if(selected && !sending) await loadMessages();$('sync-time').textContent=time(Date.now());
       } else if(!selected) renderChats();

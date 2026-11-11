@@ -119,7 +119,7 @@ test('grupos arquivados ficam em pasta própria e o hambúrguer controla as aç�
   const fixed={jid:'111@g.us',name:'Grupo fixado',isGroup:true,status:'open',labels:[],unread:24};
   const normal={jid:'222@g.us',name:'Grupo normal',isGroup:true,status:'open',labels:[],unread:3};
   const person={jid:'5511998765432@s.whatsapp.net',name:'Contato individual',status:'open',labels:[],unread:0};
-  let presentation={version:2,pinned:[fixed.jid],normal:[normal.jid],archived:[]};
+  let presentation={version:2,pinned:[fixed.jid],normal:[normal.jid],archived:[]},rejectNextOrder=false;
   await page.route('**/api/chats?**',route=>route.fulfill({json:[fixed,normal,person]}));
   await page.route('**/api/group-presentation**',route=>{
     const url=new URL(route.request().url()),method=route.request().method();
@@ -131,6 +131,9 @@ test('grupos arquivados ficam em pasta própria e o hambúrguer controla as aç�
     } else if(url.pathname.endsWith('/pin')) {
       presentation={...presentation,pinned:presentation.pinned.filter(jid=>jid!==input.jid),normal:presentation.normal.filter(jid=>jid!==input.jid)};
       (input.pinned?presentation.pinned:presentation.normal).unshift(input.jid);
+    } else if(method==='PUT' && rejectNextOrder) {
+      rejectNextOrder=false;presentation={...presentation,normal:[normal.jid,fixed.jid]};
+      return route.fulfill({status:409,json:{error:'Atualize a lista de grupos e tente novamente.'}});
     } else presentation=input;
     return route.fulfill({json:presentation});
   });
@@ -145,7 +148,7 @@ test('grupos arquivados ficam em pasta própria e o hambúrguer controla as aç�
   await page.getByRole('menuitem',{name:'Arquivar grupo'}).click();
   await expect(page.locator('#group-archived-row')).toBeVisible();await expect(page.locator('#group-archived-row')).not.toContainText('24');
   await expect(page.locator('#chat-list')).not.toContainText('Grupo fixado');
-  await page.reload();await page.locator('#groups-row').click();await page.locator('#group-archived-row').click();
+  await page.reload();await expect(page.locator('#groups-row-count')).toHaveText('1');await page.locator('#groups-row').click();await page.locator('#group-archived-row').click();
   await expect(page.locator('#chat-list')).toContainText('Grupo fixado');await expect(page).toHaveTitle('Whats AI');
   const archivedRow=page.locator('.group-chat-row').filter({hasText:'Grupo fixado'});
   await archivedRow.getByRole('button',{name:'Opções do grupo Grupo fixado'}).click();
@@ -153,6 +156,9 @@ test('grupos arquivados ficam em pasta própria e o hambúrguer controla as aç�
   await page.getByRole('menuitem',{name:'Desarquivar grupo'}).click();
   await expect(page.locator('#chat-list')).not.toContainText('Grupo fixado');
   await page.locator('#groups-row').click();await expect(page.locator('#chat-list')).toContainText('Grupo fixado');
+  rejectNextOrder=true;
+  await page.locator('.group-chat-row').filter({hasText:'Grupo fixado'}).dragTo(page.locator('.group-chat-row').filter({hasText:'Grupo normal'}));
+  await expect(page.locator('#chat-list .chat-title strong')).toHaveText(['Grupo normal','Grupo fixado']);
 });
 
 test('recording offers text preview before stopping manually',async({page})=>{
