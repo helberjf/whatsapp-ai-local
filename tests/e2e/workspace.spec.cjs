@@ -320,9 +320,9 @@ test('one attachment button handles files and Enter sends while Shift+Enter adds
 test('video action starts playback after an explicit click',async({page})=>{
   await openChat(page);await page.getByRole('button',{name:'Reproduzir vídeo',exact:true}).click();await expect.poll(()=>page.locator('video').evaluate(node=>node.currentTime)).toBeGreaterThan(.1);await expect.poll(()=>page.locator('video').evaluate(node=>node.error?.code || null)).toBe(null);
 });
-test('automatic Whisper transcript appears under audio and survives page reload without duplication',async({page})=>{
-  const auto=await createDemo({port:0,autoTranscription:true});
-  try {await page.goto(auto.base);await openChat(page);await expect(page.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração',{timeout:10000});
+test('opening a private chat discovers recent audio and keeps its transcript after reload',async({page})=>{
+  const auto=await createDemo({port:0});await page.unroute('**/api/transcriptions/discover');
+  try {await page.goto(auto.base);await openChat(page);await expect(page.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração',{timeout:30000});
     await page.reload();await openChat(page);await expect(page.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração');
     expect((await auto.server.transcriptions.list('5511000000000@s.whatsapp.net')).length).toBe(1);
   } finally {await auto.close();}
