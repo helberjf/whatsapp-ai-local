@@ -405,7 +405,6 @@
       $('contact-info-status').textContent='Alguns dados dependem da privacidade definida pelo contato.';
     } catch(error) {if(version===infoVersion) $('contact-info-status').textContent=error.message;}
   }
-  $('contact-header-info').addEventListener('click',openContactInfo);
   $('contact-info-open').addEventListener('click',openContactInfo);
   $('disappearing-open').addEventListener('click',async()=>{
     if(!selected) return;temporaryTarget=selected.jid;const version=++temporaryVersion;$('disappearing-dialog').showModal();$('disappearing-status').textContent='Verificando o conector…';$('disappearing-save').disabled=true;
@@ -710,10 +709,12 @@
     $('composer').classList.toggle('group-composer',Boolean(chat.isGroup));
     $('show-contact').hidden=$('contact-flags').hidden=Boolean(chat.isGroup);
     $('contact-header-info').disabled=Boolean(chat.isGroup);
+    $('contact-avatar-open').disabled=Boolean(chat.isGroup);
     if(chat.isGroup) {$('contact-details').hidden=true;toggleContact(false);}
     $('app-shell').classList.toggle('has-chat',true);
     showSelectedIdentity(chat);$('message-text').value=drafts.get(chat.jid) || '';renderTemplateShortcuts();
     globalThis.WhatsAppFeatures?.onSelectChat?.(chat.isGroup?null:chat);
+    globalThis.WhatsAppContactMedia?.onSelect?.(chat);
     globalThis.WhatsAppSchedule?.onSelectChat?.(chat);extras()?.onSelectChat?.(chat);
     renderChats();renderMessages();$('messages').replaceChildren(el('p','muted','Carregando histórico…'));
     $('contact-status').value=chat.status || 'open';$('contact-ai').value=chat.aiMode || 'off';$('contact-labels').value=(chat.labels || []).join(', ');$('notes').replaceChildren();
@@ -1012,7 +1013,7 @@
   $('nav-settings').addEventListener('click',()=>{showView('workspace','nav-settings');showPanel('connection');toggleContact(true);});
   $('refresh-top').addEventListener('click',()=>{notice('');sync(true);});
   $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
-  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);clearConversationMedia();selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);extras()?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
+  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);clearConversationMedia();selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);globalThis.WhatsAppContactMedia?.onSelect?.(null);extras()?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
     try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail,{archived:chat.archived});renderChats();notice(detail.surveyError?'Atendimento salvo. '+detail.surveyError:detail.surveySent?'Atendimento salvo e pesquisa de satisfação enviada.':'Atendimento salvo.',!detail.surveyError);}catch(error) {notice(error.message);}finally {button.disabled=false;}
@@ -1098,6 +1099,7 @@
   globalThis.WhatsAppAccounts?.init?.({api,notice});
   globalThis.WhatsAppAvatars?.init?.({api});
   globalThis.WhatsAppGroups?.init?.({api,notice,render:renderChats});
+  globalThis.WhatsAppContactMedia?.init?.({api,notice,toggleContact,showAttendance:()=>showPanel('attendance'),openMedia:(media,kind)=>globalThis.WhatsAppMedia.open(media,kind)});
   globalThis.WhatsAppFeatures?.init?.({api,notice,openChat:selectChat,getChats:()=>chats});
   globalThis.WhatsAppSchedule?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected,getDraft:()=>({text:$('message-text').value,hasAttachment:!!attachment,revision:editRevision}),onScheduled:(job,snapshot)=>{if(selected?.jid===job.jid && !attachment && editRevision===snapshot.revision && $('message-text').value===snapshot.text) {$('message-text').value='';drafts.delete(selected.jid);editRevision++;pendingSend=null;}}});
   globalThis.WhatsAppTriggers?.init?.({api,notice,getChats:()=>chats,getSelected:()=>selected});

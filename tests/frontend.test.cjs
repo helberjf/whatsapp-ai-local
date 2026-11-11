@@ -76,6 +76,7 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
       output=result || transcriptionSettings;
     }
     else if(url.pathname==='/api/transcriptions') output=await onTranscriptions({jid:url.searchParams.get('jid'),method:options.method||'GET',input});
+    else if(url.pathname==='/api/transcriptions/discover') output={discovered:0};
     else if(url.pathname==='/api/connection') output={state:'connected',reachable:true,exists:true,phone:'5511000000000',instanceName:'teste'};
     else if(url.pathname==='/api/chats') output=chatRecords || [{jid,name:'Ana',unread:0,status:'open',labels:[],notes:[],lastMessage:history.at(-1)||null}];
     else if(url.pathname==='/api/contact') output={status:'open',labels:[],notes:[]};
