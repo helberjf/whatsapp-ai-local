@@ -60,7 +60,10 @@ test('rascunho: a IA prepara a resposta uma vez, com catálogo, base e históric
     assert.equal(env.sent.length,0);
     const call=env.calls[0];
     assert.match(call.system,/Importação de produtos da China \(valor sob consulta\)/);assert.match(call.system,/<contexto>[\s\S]*desembaraço/);
-    assert.deepEqual(call.messages.map(turn=>turn.role),['assistant','user'].slice(1));
+    assert.deepEqual(call.messages.slice(-2),[
+      {role:'assistant',content:'Olá! Como posso ajudar?'},
+      {role:'user',content:'Vocês importam da China?'}
+    ]);
     await env.service.tick();assert.equal(env.calls.length,1,'A mesma mensagem não é processada duas vezes.');
     // Quando alguém responde, o rascunho antigo some.
     newMessage(env,'m2','Enviado por você',true);await env.service.tick();

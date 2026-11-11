@@ -9,15 +9,16 @@ const {createAssistantService}=require('../lib/assistant.cjs');
 const jid='5511998765432@s.whatsapp.net',otherJid='5511888888888@s.whatsapp.net';
 const message=(id,text,fromMe,timestamp)=>({id,jid,text,fromMe,timestamp,type:'text',key:{id,remoteJid:jid,fromMe}});
 
-async function fixture(t,records,{documents=[]}={}) {
+async function fixture(t,records,{documents=[],lastMessage=()=>records.at(-1),onComplete}={}) {
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-assistant-context-'));
   t.after(()=>fs.rm(dir,{recursive:true,force:true}));
   const store=createStore(dir),calls=[],sent=[],reads=[];
-  const client={messages:async(target,page)=>{reads.push({target,page});return {messages:records,pages:1};},chats:async()=>[{jid,lastMessage:records.at(-1)}],sendText:async(...args)=>{sent.push(args);}};
-  const ai={config:async()=>({configured:true}),complete:async options=>{calls.push(options);return 'Podemos continuar a cotação. Qual data você prefere?';}};
+  const client={messages:async(target,page)=>{reads.push({target,page});return {messages:records,pages:1};},chats:async()=>[{jid,lastMessage:lastMessage()}],sendText:async(...args)=>{sent.push(args);}};
+  const ai={config:async()=>({configured:true}),complete:async options=>{calls.push(options);onComplete?.();return 'Podemos continuar a cotação. Qual data você prefere?';}};
   const service=createAssistantService({store,client,ai,loadTexts:async()=>documents,catalogText:async()=>'SERVIÇOS\n- Passagens aéreas (valor sob consulta)'});
   t.after(()=>service.stop());
-  return {store,calls,sent,reads,service,draft:()=>service.handle({method:'POST'},'/api/assistant/draft',null,async()=>({jid}))};
+  return {store,calls,sent,reads,service,draft:()=>service.handle({method:'POST'},'/api/assistant/draft',null,async()=>({jid})),
+    enableAuto:()=>service.handle({method:'PUT'},'/api/assistant',null,async()=>({enabled:true,audience:'all'}))};
 }
 const history=call=>call.messages.filter(turn=>!turn.content.startsWith('Pedido do atendente:'));
 
@@ -91,4 +92,40 @@ test('sugestão manual não torna mensagem enviada elegível para resposta autom
   await f.store.update(data=>{data.assistant={enabled:true,enabledSince:new Date(timestamp-10000).toISOString()};data.contacts[jid]={aiMode:'auto',aiSince:new Date(timestamp-10000).toISOString()};});
   await f.draft();await f.service.tick();
   assert.equal(f.calls.length,1);assert.equal(f.sent.length,0);assert.equal((await f.store.read()).contacts[jid].aiHandled,undefined);
+});
+
+test('automático: mantém a pergunta do atendente que dá sentido à resposta curta do cliente',async t=>{
+  const records=[],f=await fixture(t,records);await f.enableAuto();
+  const timestamp=Date.now()+1000;
+  records.push(message('offer','Quer que eu cote apenas a ida para Lisboa?',true,timestamp-5000),
+    {...message('unknown','Autoria conflitante',false,timestamp-1000),key:{id:'unknown',remoteJid:jid,fromMe:true}},
+    message('yes','Sim.',false,timestamp));
+  await f.service.tick();
+  assert.deepEqual(history(f.calls[0]),[
+    {role:'assistant',content:'Quer que eu cote apenas a ida para Lisboa?'},
+    {role:'user',content:'Sim.'}
+  ]);
+  assert.match(f.calls[0].system,/responda à última fala do cliente/i);
+  assert.equal(f.sent.length,1);
+});
+
+test('automático: um áudio próprio já enviado bloqueia a geração mesmo com resumo atrasado',async t=>{
+  const records=[],f=await fixture(t,records,{lastMessage:()=>records[0]});await f.enableAuto();
+  const timestamp=Date.now()+1000;
+  records.push(message('incoming','Qual é a data?',false,timestamp),
+    {...message('outgoing','',true,timestamp),type:'audio'});
+  await f.service.tick();
+  assert.equal(f.calls.length,0);
+  assert.equal(f.sent.length,0);
+});
+
+test('automático: confere o histórico de novo se o atendente respondeu durante a geração',async t=>{
+  const records=[],f=await fixture(t,records,{lastMessage:()=>records[0],onComplete:()=>{
+    records.push(message('outgoing','Já confirmei a data.',true,records[0].timestamp+1000));
+  }});await f.enableAuto();
+  records.push(message('incoming','Qual é a data?',false,Date.now()+1000));
+  await f.service.tick();
+  assert.equal(f.calls.length,1);
+  assert.equal(f.sent.length,0);
+  assert.equal((await f.store.read()).contacts[jid].aiSent,undefined);
 });
