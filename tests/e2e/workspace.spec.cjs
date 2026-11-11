@@ -202,7 +202,7 @@ test('composer sends dictated text or a view-once audio from the media preview',
   await expect(rows.filter({hasText:'Foto de visualização única'})).toBeVisible();
   await expect(photoOnce).toBeHidden();
 });
-test.beforeEach(async({page,demo})=>{const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item'),()=>JSON.stringify(errors)).toHaveCount(10);expect(errors).toEqual([]);});
+test.beforeEach(async({page,demo})=>{const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.route('**/api/transcriptions/discover',route=>route.fulfill({json:{discovered:0}}));await page.goto(demo.base);await expect(page.locator('#chat-list .chat-item'),()=>JSON.stringify(errors)).toHaveCount(10);expect(errors).toEqual([]);});
 
 test('expõe marca e PWA sem guardar respostas privadas',async({page})=>{
   await expect(page.locator('.brand-logo')).toBeVisible();
