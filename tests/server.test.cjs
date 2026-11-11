@@ -106,6 +106,13 @@ test('consulta as listas personalizadas e abre o histórico de um grupo',async()
   assert.equal(calls.findLast(c=>c.url==='/chat/findMessages/teste').input.where.key.remoteJid,'123@g.us');
   assert.equal((await request('/api/messages?jid=status%40broadcast')).status,422);
 });
+test('apresenta todos os grupos e arquiva somente um identificador de grupo',async()=>{
+  const presentation=await api('/api/group-presentation');
+  assert.deepEqual(presentation,{version:2,pinned:[],normal:['123@g.us','123-456@g.us'],archived:[]});
+  const archived=await api('/api/group-presentation/archive','PATCH',{jid:'123@g.us',archived:true});
+  assert.deepEqual(archived,{version:2,pinned:[],normal:['123-456@g.us'],archived:['123@g.us']});
+  assert.equal((await request('/api/group-presentation/archive','PATCH',{jid,archived:true})).status,422);
+});
 test('histórico preserva paginação do contrato Evolution 2.3.7',async()=>{
   const result=await api('/api/messages?jid='+encodeURIComponent(jid)+'&page=2');
   assert.equal(result.page,2);assert.equal(result.pages,2);assert.equal(result.messages[0].id,'in-2');

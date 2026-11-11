@@ -283,9 +283,10 @@ function createWhatsAppServer(options={}) {
       if(scheduledMatch && req.method==='PATCH' && !scheduledMatch[2]) return json(res,200,await scheduler.update(scheduledMatch[1],await readBody(req)));
       if(scheduledMatch && req.method==='POST' && scheduledMatch[2]) {await readBody(req);return json(res,200,await scheduler.cancel(scheduledMatch[1]));}
       if(req.method==='POST' && route==='/api/contacts/sync') {await readBody(req);return json(res,200,await client.syncContacts(true));}
-      if(route==='/api/group-presentation' && req.method==='GET') return json(res,200,await groupPresentation.reconcile((await client.chats()).filter(chat=>chat.isGroup || groupJid(chat.jid)).map(chat=>chat.jid)));
+      if(route==='/api/group-presentation' && req.method==='GET') return json(res,200,await groupPresentation.reconcile((await client.inboxChats()).filter(chat=>chat.isGroup || groupJid(chat.jid)).map(chat=>chat.jid)));
       if(route==='/api/group-presentation' && req.method==='PUT') return json(res,200,await groupPresentation.reorder(await readBody(req)));
       if(route==='/api/group-presentation/pin' && req.method==='PATCH') {const input=await readBody(req);return json(res,200,await groupPresentation.setPinned(input.jid,input.pinned));}
+      if(route==='/api/group-presentation/archive' && req.method==='PATCH') {const input=await readBody(req);return json(res,200,await groupPresentation.setArchived(input.jid,input.archived));}
       if(req.method==='POST' && route==='/api/forward') {const input=await readBody(req);assertJid(input.sourceJid);assertJid(input.targetJid);return json(res,200,await sendOnce(input,send=>send(),()=>prepareForward(client,input)));}
       if(route==='/api/transcription/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await transcriptions.settings():await transcriptions.saveSettings(await readBody(req)));
       if(req.method==='GET' && route==='/api/transcriptions') return json(res,200,await transcriptions.list(url.searchParams.get('jid')));
