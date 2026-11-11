@@ -106,3 +106,16 @@ details.more{border:1px solid var(--line);border-radius:10px;padding:10px 12px;m
 .ai-health-banner{margin:0 0 14px;padding:11px 15px;border:1px solid #7a4636;border-radius:8px;background:#3a1f19;color:#f6cdbd;font-size:12px;line-height:1.6}.dot.alert{background:#f0805e;box-shadow:0 0 7px #f0805e88}
 
 .transcription-queue-card{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:10px;background:#102b23}.transcription-queue-card h3{margin:0 0 10px;font-size:14px}.transcription-queue-card p{font-size:12px;line-height:1.7}.transcription-queue-card progress{width:100%;height:6px;accent-color:var(--green)}.transcription-queue-card ul{padding-left:18px;font-size:12px;line-height:1.9;overflow-wrap:anywhere}.transcription-queue-card ul:empty{display:none}
+
+/* Resumo compacto e menus nativos legíveis no tema escuro. */
+select{color:#e3efed;background-color:#15252c;color-scheme:dark}
+select option{color:#e3efed;background:#15252c}
+select option:checked{color:#fff;background:#176b56}
+.metrics{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.metric-card{height:48px;padding:7px 10px;gap:8px;border-radius:10px}
+.metric-card>span:nth-child(2){display:flex;align-items:baseline;gap:6px}
+.metric-card strong{display:inline;font-size:18px;line-height:1}
+.metric-card small{display:inline;margin:0;font-size:10px}
+.metric-icon{width:28px;height:28px;border-radius:8px}
+.metric-icon .icon{width:18px;height:18px}
+@media(max-width:900px){.metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}

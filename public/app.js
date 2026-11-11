@@ -61,8 +61,9 @@
     const matching=conversationsForFilter().filter(chat=>(!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
     const filtered=extras()?.arrangeChats?.(matching) || matching;renderGroupsRow();
     const active=chats.filter(chat=>chat.archived!==true && !chat.isGroup),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
-    $('metric-total').textContent=active.length;$('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=active.filter(chat=>chat.status==='closed').length;$('chat-count').textContent=filtered.length;
-    $('filter-total-count').textContent=active.length;$('nav-chat-count').textContent=active.length;$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
+    const unreadMessages=active.reduce((sum,chat)=>sum+Math.max(0,Number(chat.unread)||0),0);document.title=unreadMessages?`(${unreadMessages}) Whats AI`:'Whats AI';
+    $('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=active.filter(chat=>chat.status==='closed').length;
+    $('nav-chat-count').textContent='';$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
     $('filter-all').classList.toggle('active',!listFilter && !status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
     $('filter-all').setAttribute('aria-pressed',String(!listFilter && !status && !$('unread-only').checked));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
     // Listas grandes: só as linhas visíveis vão para a página (o restante vira espaço reservado).
@@ -931,7 +932,7 @@
   function renderDashboard() {
     const cards=document.createDocumentFragment(),activeChats=chats.filter(chat=>!chat.isGroup && chat.archived!==true);
     for(const [label,count,status,unread] of [
-      ['Conversas',activeChats.length,'',false],['Não lidas',activeChats.filter(c=>c.unread>0 || c.markedUnread===true).length,'',true],
+      ['Não lidas',activeChats.filter(c=>c.unread>0 || c.markedUnread===true).length,'',true],
       ['Pendentes',activeChats.filter(c=>c.status==='pending').length,'pending',false],
       ['Concluídas',activeChats.filter(c=>c.status==='closed').length,'closed',false]]) {
       const card=el('button','panel dashboard-stat');card.type='button';
@@ -997,7 +998,6 @@
   $('nav-conversations').addEventListener('click',()=>{applyFilter();$('search').focus();});
   $('nav-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('nav-closed').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
-  $('metric-total-button').addEventListener('click',()=>applyFilter('',false,'nav-conversations'));
   $('metric-unread-button').addEventListener('click',()=>applyFilter('',true));
   $('metric-pending-button').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));

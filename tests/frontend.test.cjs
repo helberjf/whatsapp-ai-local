@@ -58,7 +58,7 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
   let history=historyRecords || Array.from({length:count},(_,index)=>message(index+1));
   let transcriptionSettings={defaultProvider:'whisper',whisperModel:'base',language:'pt',aiConfigured,aiModel:'gpt-transcribe'};
   const get=id=>{if(!nodes.has(id)) nodes.set(id,element());return nodes.get(id);};
-  const document={
+  const document={title:'Whats AI',
     getElementById:get,querySelector:()=>({content:'test-session'}),querySelectorAll:()=>[],
     createElement:element,createElementNS:()=>element('svg'),createDocumentFragment:()=>element('fragment',true),
     addEventListener(){},visibilityState:'visible'
@@ -120,7 +120,7 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
   await get('chat-list').children[0].emit('click');
   assert.equal(get('notice').textContent,'','A seleção da conversa não deve falhar.');
   return {
-    get,requests,copied,createdUrls,revokedUrls,
+    get,requests,copied,createdUrls,revokedUrls,document,
     appendRecords(records) {history.push(...records);},
     intersectMedia(id,visible=true) {for(const observer of observers) for(const target of observer.targets) if(target.dataset.mediaId===id) observer.callback([{target,isIntersecting:visible}]);},
     appendMessages(amount) {
@@ -136,6 +136,17 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
     }
   };
 }
+
+test('título mostra mensagens não lidas e a interface não mostra total de conversas',async()=>{
+  const other='5511888888888@s.whatsapp.net';
+  const browser=await createBrowser({chatRecords:[
+    {jid,name:'Ana',unread:2,status:'open',labels:[],notes:[],lastMessage:message(2)},
+    {jid:other,name:'Bia',unread:3,status:'open',labels:[],notes:[],lastMessage:{...message(3),jid:other,key:{...message(3).key,remoteJid:other}}}
+  ]});
+  assert.equal(browser.document.title,'(5) Whats AI');
+  const html=fs.readFileSync(path.join(__dirname,'..','public','index.html'),'utf8');
+  assert.doesNotMatch(html,/id="metric-total-button"|id="filter-total-count"|id="chat-count"/);
+});
 
 test('links HTTP ficam clicáveis sem executar HTML ou protocolos de script',async()=>{
   const browser=await createBrowser({historyRecords:[{...message(1),text:'Veja https://example.com/catalogo?q=1 e www.example.org. <script>alert(1)</script> javascript:alert(1)'}]});
@@ -327,7 +338,7 @@ test('confirmar envio não apaga o próximo rascunho digitado durante a requisi�
   if(canEdit) assert.equal(editor.value,nextDraft,'A confirmação do envio anterior apagou o novo rascunho.');
 });
 
-test('dashboard mostra quatro contagens reais e navegação filtra os atendimentos',async()=>{
+test('dashboard omite total de conversas e mostra as contagens acionáveis',async()=>{
   const chats=[
     {jid,name:'Ana',unread:0,status:'open',labels:[],lastMessage:null},
     {jid:'5511998765433@s.whatsapp.net',name:'Bruno',unread:2,status:'pending',labels:['Retornar'],lastMessage:null},
@@ -335,7 +346,6 @@ test('dashboard mostra quatro contagens reais e navegação filtra os atendiment
     {jid:'5511998765435@s.whatsapp.net',name:'Daniel',unread:0,status:'open',labels:[],lastMessage:null}
   ];
   const browser=await createBrowser({chatRecords:chats});
-  assert.equal(browser.get('metric-total').textContent,'4');
   assert.equal(browser.get('metric-unread').textContent,'2');
   assert.equal(browser.get('metric-pending').textContent,'1');
   assert.equal(browser.get('metric-closed').textContent,'1');
@@ -348,7 +358,7 @@ test('dashboard mostra quatro contagens reais e navegação filtra os atendiment
   await browser.get('nav-overview').emit('click');
   assert.equal(browser.get('page-dashboard').hidden,false);
   assert.equal(browser.get('workspace').hidden,true);
-  assert.deepEqual(browser.get('dashboard-stats').children.map(card=>card.children[1].textContent),['4','2','1','1']);
+  assert.deepEqual(browser.get('dashboard-stats').children.map(card=>card.children[1].textContent),['2','1','1']);
   assert.equal(browser.get('dashboard-recent').children.length,4);
   assert.equal(browser.get('dashboard-attention-count').textContent,'1');
   assert.match(browser.get('dashboard-attention').textContent,/Bruno/);
@@ -361,7 +371,7 @@ test('dashboard mostra quatro contagens reais e navegação filtra os atendiment
   await browser.get('dashboard-stats').children[0].emit('click');
   assert.equal(browser.get('page-dashboard').hidden,true);
   assert.equal(browser.get('workspace').hidden,false);
-  assert.equal(browser.get('chat-list').children.length,4);
+  assert.equal(browser.get('chat-list').children.length,2);
 });
 
 test('resposta rápida do painel insere no rascunho sem enviar a mensagem',async()=>{
