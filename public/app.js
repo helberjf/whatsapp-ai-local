@@ -364,7 +364,7 @@
     copy.addEventListener('click',async()=>{const text=messageCopyText(message,jid);if(!text) return;menu.open=false;try {await navigator.clipboard.writeText(text);notice('Texto copiado.',true);}catch {notice('Não foi possível copiar. Selecione o texto da mensagem para copiar.');}});
     options.append(forward,copy);
     if(message.type==='audio' && !message.deleted && !message.viewOnce) {
-      const priority=el('button','message-prioritize-transcription',jid.endsWith('@g.us')?'Transcrever áudio':'Transcrever / priorizar');priority.type='button';
+      const priority=el('button','message-prioritize-transcription',jid.endsWith('@g.us')?'Transcrever áudio':'Priorizar transcrição');priority.type='button';
       priority.addEventListener('click',async()=>{
         if(priority.disabled) return;priority.disabled=true;menu.open=false;
         try {
