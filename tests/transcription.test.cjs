@@ -29,6 +29,15 @@ test('prioridade move um áudio pendente para o início sem interromper nem dupl
   await service.enqueue({jid,messageId:'third',priority:true});await service.idle();assert.deepEqual(order,['first','third','second']);
   await assert.rejects(service.enqueue({jid,messageId:'invalid',priority:'yes'}),{status:422});
 });
+test('queda temporária do banco ao registrar uma falha não derruba a fila nem o servidor',async t=>{
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'wa-transcription-db-drop-'));
+  t.after(async()=>{assert.equal(path.dirname(directory),os.tmpdir());await fs.rm(directory,{recursive:true,force:true});});
+  const base=createStore(directory);let failNextUpdate=false;
+  const store={read:(...args)=>base.read(...args),update:async fn=>{if(failNextUpdate) {failNextUpdate=false;throw new Error('Connection terminated unexpectedly');}return base.update(fn);}};
+  const service=createTranscriptionService({store,mediaLoader:async()=>{failNextUpdate=true;throw new Error('download indisponível');},whisperEngine:async()=>({text:'não usado'})});
+  await service.enqueue({jid,messageId:'audio-db-drop'});
+  await assert.doesNotReject(service.idle());
+});
 async function fixture(t,options={}) {
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'wa-transcription-test-'));
   let credentials;
