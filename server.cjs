@@ -323,8 +323,26 @@ function createWhatsAppServer(options={}) {
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
       }
+      if(route==='/api/local-lists' && req.method==='GET') return json(res,200,(await store.read()).localLists || []);
+      if(route==='/api/local-lists' && req.method==='POST') {
+        const input=await readBody(req);
+        if(typeof input.name!=='string' || !input.name.trim() || input.name.trim().length>60 || !Array.isArray(input.jids) || input.jids.length>5000) throw new ApiError('Informe um nome de até 60 caracteres e as conversas da lista.',422);
+        const jids=[...new Set(input.jids.map(assertConversationJid))];
+        return json(res,200,await store.update(data=>{
+          data.localLists ||= [];
+          const existing=input.id?data.localLists.find(list=>list.id===input.id):null;
+          if(input.id && !existing) throw new ApiError('Lista não encontrada.',404);
+          if(!existing && data.localLists.length>=100) throw new ApiError('Limite de 100 listas atingido.',422);
+          const list=existing || {id:'local-'+randomUUID()};Object.assign(list,{name:input.name.trim(),jids,local:true});
+          if(!existing) data.localLists.push(list);return list;
+        }));
+      }
+      if(route==='/api/local-lists' && req.method==='DELETE') {
+        const {id}=await readBody(req);await store.update(data=>{data.localLists=(data.localLists || []).filter(list=>list.id!==id);});return json(res,200,{removed:true});
+      }
       if(req.method==='GET' && route==='/api/chat-lists') {
-        const [lists,book]=await Promise.all([client.chatLists(),client.contactsList()]);
+        const [remote,book,data]=await Promise.all([client.chatLists().catch(()=>[]),client.contactsList().catch(()=>[]),store.read()]);
+        const lists=[...remote,...(data.localLists || [])];
         const members=new Set(lists.flatMap(list=>list.jids));
         const contacts=book.filter(contact=>[contact.jid,...contact.aliasJids].some(jid=>members.has(jid)));
         return json(res,200,{lists,contacts});

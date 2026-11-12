@@ -119,6 +119,44 @@
     } catch {}
     finally {listsPending=false;listsRefreshAt=Date.now()+60_000;}
   }
+  // Listas criadas na central pertencem à conta selecionada e não apagam conversas.
+  const listsButton=el('button','archived-row','Listas');listsButton.type='button';
+  $('archived-row').after(listsButton);
+  const listsDialog=el('dialog',''),listsBody=el('div','');
+  const listsClose=el('button','','Fechar');listsClose.type='button';listsClose.onclick=()=>listsDialog.close();
+  listsDialog.append(listsBody,listsClose);document.body.append(listsDialog);
+  async function showLists() {
+    listsBody.replaceChildren(el('h2','','Listas'));
+    if(!listsDialog.open) listsDialog.showModal();
+    try {
+      const local=await api('/local-lists');
+      const create=el('button','','Criar lista');create.onclick=()=>editList();listsBody.append(create);
+      if(!local.length) listsBody.append(el('p','','Crie uma lista para organizar contatos e grupos.'));
+      for(const list of local) {
+        const row=el('div',''),open=el('button','',list.name),edit=el('button','','Editar'),remove=el('button','','Excluir lista');
+        open.onclick=async()=>{await syncChatLists(true);listsDialog.close();applyFilter('',false,'nav-conversations','list:'+list.id);};
+        edit.onclick=()=>editList(list);
+        remove.onclick=async()=>{if(!confirm('Excluir esta lista? As conversas serão mantidas.')) return;try {await api('/local-lists','DELETE',{id:list.id});await syncChatLists(true);await showLists();}catch(error){notice(error.message);}};
+        row.append(open,edit,remove);listsBody.append(row);
+      }
+    }catch(error){listsBody.append(el('p','',error.message));}
+  }
+  function editList(list={name:'',jids:[]}) {
+    const name=el('input',''),search=el('input',''),members=el('div',''),save=el('button','','Salvar lista'),back=el('button','','Voltar'),selectedIds=new Set(list.jids);
+    name.value=list.name;name.maxLength=60;name.placeholder='Nome da lista';name.setAttribute('aria-label','Nome da lista');
+    search.placeholder='Buscar contato ou grupo';search.setAttribute('aria-label','Buscar contato ou grupo');
+    const candidates=new Map([...chats,...listContacts].map(chat=>[chat.jid,chat]));
+    for(const jid of list.jids) if(!candidates.has(jid)) candidates.set(jid,{jid,name:jid});
+    const draw=()=>{members.replaceChildren();for(const chat of candidates.values()) {
+      if(!String(chat.name).toLocaleLowerCase().includes(search.value.toLocaleLowerCase())) continue;
+      const label=el('label',''),check=el('input','');check.type='checkbox';check.checked=selectedIds.has(chat.jid);check.onchange=()=>check.checked?selectedIds.add(chat.jid):selectedIds.delete(chat.jid);
+      label.append(check,document.createTextNode(chat.name));members.append(label,document.createElement('br'));
+    }};
+    search.oninput=draw;back.onclick=showLists;
+    save.onclick=async()=>{save.disabled=true;try {await api('/local-lists','POST',{...(list.id?{id:list.id}:{}),name:name.value,jids:[...selectedIds]});await syncChatLists(true);await showLists();}catch(error){notice(error.message);}finally{save.disabled=false;}};
+    listsBody.replaceChildren(el('h2','',list.id?'Editar lista':'Criar lista'),name,search,members,save,back);draw();
+  }
+  listsButton.onclick=showLists;
   function renderChatWindow() {
     const list=$('chat-list'),rows=virtualRows;if(!rows) return;
     const height=rowHeight || 76,top=list.scrollTop || 0,view=list.clientHeight || 900;

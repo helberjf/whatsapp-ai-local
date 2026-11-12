@@ -4,6 +4,21 @@ const {createDemo,wave}=require('../../scripts/demo.cjs');
 const test=base.extend({demo:async({},use)=>{const demo=await createDemo({port:0});try {await use(demo);}finally {await demo.close();}}});
 const screenshotDir=path.join(__dirname,'..','..','docs','screenshots');
 const capturePath=name=>process.env.WHATSAPP_CAPTURE_DOCS==='1'?path.join(screenshotDir,name):test.info().outputPath(name);
+test('listas locais criam, persistem, filtram e excluem sem apagar conversas',async({page})=>{
+  await page.getByRole('button',{name:'Listas',exact:true}).click();
+  await page.getByRole('button',{name:'Criar lista',exact:true}).click();
+  await page.getByRole('textbox',{name:'Nome da lista',exact:true}).fill('Clientes especiais');
+  await page.getByRole('checkbox',{name:'Alex Morgan',exact:true}).check();
+  await page.getByRole('button',{name:'Salvar lista'}).click();
+  await page.getByRole('button',{name:'Clientes especiais',exact:true}).click();
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);
+  await page.reload();
+  await page.getByRole('button',{name:'Listas',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Clientes especiais',exact:true})).toBeVisible();
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'Excluir lista',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Clientes especiais',exact:true})).toHaveCount(0);
+});
 async function openChat(page) {await page.locator('.chat-item').filter({hasText:'Alex Morgan'}).click();await expect(page.locator('#conversation-content')).toBeVisible();}
 
 test('audio menu prioritizes transcription and the queue card updates without resetting settings',async({page})=>{
