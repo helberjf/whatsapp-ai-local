@@ -134,6 +134,25 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
   function expirationFor(service,jid) {observe(service);return individual(jid)?timer(service,jid)?.expiration:undefined;}
   function serviceFor(controller,request) {return controller?.waMonitor?.waInstances?.[request.params?.instanceName];}
   const fail=(response,status,message)=>response.status(status).json({error:message});
+  const lastHistoryRequest=new WeakMap();
+  function historyRecoveryHandler(controller) {return async(request,response)=>{
+    const jid=request.body?.jid;
+    if(!individual(jid)) return fail(response,422,'Escolha uma conversa individual válida.');
+    const service=serviceFor(controller,request),instanceId=instanceKey(service);
+    if(!instanceId || typeof service.client?.fetchMessageHistory!=='function') return fail(response,503,'O WhatsApp precisa estar conectado.');
+    const now=Date.now();
+    if(now-(lastHistoryRequest.get(service) || 0)<30_000) return fail(response,429,'Aguarde a resposta do celular antes de pedir outro histórico.');
+    lastHistoryRequest.set(service,now);
+    try {
+      const saved=await service.prismaRepository.message.findFirst({
+        where:{instanceId,key:{path:['remoteJid'],equals:jid}},
+        orderBy:{messageTimestamp:'desc'},select:{key:true,messageTimestamp:true}
+      });
+      if(!saved?.key?.id || typeof saved.key.fromMe!=='boolean' || !Number.isSafeInteger(saved.messageTimestamp)) return fail(response,404,'Não há mensagem salva para iniciar a busca.');
+      await service.client.fetchMessageHistory(50,saved.key,saved.messageTimestamp*1000);
+      return response.status(202).json({requested:true});
+    } catch {return fail(response,502,'Não foi possível solicitar o histórico ao celular.');}
+  };}
   function viewOnceHandler(controller) {return async(request,response)=>{
     const {number,mediatype,media,mimetype,fileName,caption,quoted}=request.body || {};
     if(!individual(number) ||
@@ -321,7 +340,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
         error:missingKey?'O WhatsApp ainda não enviou as chaves para ler as arquivadas deste aparelho. Deixe conectado alguns minutos e tente de novo.':'O WhatsApp não respondeu à leitura das arquivadas.'});
     }
   };}
-  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,groupsHandler,listsHandler,observe,rememberArchive,viewOnceHandler};
+  return {expirationFor,capabilityHandler,ephemeralHandler,archivedHandler,archiveSnapshotHandler,archiveSnapshot,groupsHandler,listsHandler,observe,rememberArchive,viewOnceHandler,historyRecoveryHandler};
 }
 function patchBundle(source,version) {
   if(version!=='2.3.7') throw new Error('Unsupported Evolution version; expected 2.3.7.');
@@ -336,7 +355,8 @@ function patchBundle(source,version) {
   if([route,send,events,media,upsertStart,upsertEnd].some(anchor=>source.split(anchor).length!==2)) throw new Error('Evolution extension patch anchors must each occur exactly once.');
   if(source.split(historyStatus).length!==3) throw new Error('Evolution history status anchors changed.');
   const extension='require("/evolution/local/evolution-extensions.cjs")';
-  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).get(this.routerPath("localGroups"),...e,${extension}.groupsHandler(Y)).get(this.routerPath("localLists"),...e,${extension}.listsHandler(Y)).post(this.routerPath("localArchivedSnapshot"),...e,${extension}.archiveSnapshotHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y)).post(this.routerPath("sendViewOnce"),...e,${extension}.viewOnceHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`).replace(media,`if(${extension}.isViewOnce(n))throw"Mídia de visualização única";`+media);
+  const patched=source.replace(route,`.get(this.routerPath("localCapabilities"),...e,${extension}.capabilityHandler(Y)).get(this.routerPath("localArchived"),...e,${extension}.archivedHandler(Y)).get(this.routerPath("localGroups"),...e,${extension}.groupsHandler(Y)).get(this.routerPath("localLists"),...e,${extension}.listsHandler(Y)).post(this.routerPath("localArchivedSnapshot"),...e,${extension}.archiveSnapshotHandler(Y)).post(this.routerPath("localHistoryRecovery"),...e,${extension}.historyRecoveryHandler(Y)).post(this.routerPath("updateEphemeral"),...e,${extension}.ephemeralHandler(Y)).post(this.routerPath("sendViewOnce"),...e,${extension}.viewOnceHandler(Y))`+route).replace(send,`l=await this.sendMessage(r,t,u,a,c,null,${extension}.expirationFor(this,r),m)`).replace(events,`eventHandler(){${extension}.observe(this);this.client.ev.process(`).replace(media,`if(${extension}.isViewOnce(n))throw"Mídia de visualização única";`+media)
+    .replace('console.log("received on-demand history sync, messages=",e)','console.log("received on-demand history sync, count=",e.length)');
   // Um erro ao gravar uma mensagem não pode descartar as seguintes no mesmo lote do WhatsApp.
   const withHistoryStatus=patched.replaceAll(historyStatus,'source:!0,contextInfo:!0,status:!0,MessageUpdate:{select:{status:!0}}')
     .replace(upsertStart,'"messages.upsert":async({messages:e,type:t,requestId:o},i)=>{for(let n of e){try{')

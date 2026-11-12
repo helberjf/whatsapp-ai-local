@@ -3,6 +3,23 @@ const assert=require('node:assert/strict');
 const {createEvolutionClient,ApiError,normalizeMessage}=require('../lib/evolution.cjs');
 const jid='5511998765432@s.whatsapp.net',other='5521987654321@s.whatsapp.net',lid='123456789012345@lid';
 const key={id:'original',remoteJid:jid,fromMe:true};
+test('history recovery uses the latest saved message from the requested account as its anchor',async()=>{
+  const {createExtension}=require('../infra/evolution-extensions.cjs');
+  const requests=[];
+  const service={instanceId:'account-one',prismaRepository:{message:{findFirst:async query=>{
+    assert.deepEqual(query.where,{instanceId:'account-one',key:{path:['remoteJid'],equals:jid}});
+    assert.deepEqual(query.orderBy,{messageTimestamp:'desc'});
+    return {key,messageTimestamp:1793200000};
+  }}},client:{fetchMessageHistory:async (...args)=>{requests.push(args);return 'request-id';}}};
+  const handler=createExtension().historyRecoveryHandler({waMonitor:{waInstances:{test:service}}});
+  const response={status(code){this.code=code;return this;},json(value){this.value=value;return this;}};
+  await handler({params:{instanceName:'test'},body:{jid}},response);
+  assert.equal(response.code,202);
+  assert.deepEqual(requests,[[50,key,1793200000000]]);
+  await handler({params:{instanceName:'test'},body:{jid}},response);
+  assert.equal(response.code,429);
+  assert.equal(requests.length,1);
+});
 function fixture(overrides={}) {
   const state={contacts:[],messages:[{key,message:{conversation:'Original'},messageTimestamp:1793200000}],profile:{wuid:jid,name:'Profile',status:'About'},business:{isBusiness:false},capabilities:{extensionVersion:0,disappearingMessages:false},timerResponse:{success:true,jid,expiration:86400,updatedAt:1793200000000,source:'central'},deleteResponse:{key:{id:'revoke',remoteJid:jid,fromMe:true},message:{protocolMessage:{type:0,key}}},pollResponse:{key:{id:'poll',remoteJid:jid,fromMe:true},message:{pollCreationMessageV3:{name:'Where?',options:[{optionName:'Here'},{optionName:'There'}],selectableOptionsCount:1}}},...overrides,calls:[]};
   const client=createEvolutionClient({apiUrl:'http://127.0.0.1:8767',apiKey:'test-secret-never-return',instanceName:'test'},async(url,options)=>{
