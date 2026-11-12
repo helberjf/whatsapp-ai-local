@@ -361,18 +361,41 @@ function patchBaileysSocket(source,version) {
   const done=`    ws.on('CB:ib,,offline', (node) => {
         const child = getBinaryNodeChild(node, 'offline');`;
   if([preview,done].some(anchor=>source.split(anchor).length!==2)) throw new Error('Baileys offline patch anchors must each occur exactly once.');
-  const patched=source.replace(preview,`    let offlinePending=false,offlineIdle=null;
-    const requestOfflineBatch=()=>sendNode({tag:'ib',attrs:{},content:[{tag:'offline_batch',attrs:{count:'100'}}]});
-    const scheduleOfflineBatch=()=>{clearTimeout(offlineIdle);if(!offlinePending) return;offlineIdle=setTimeout(()=>{if(offlinePending) requestOfflineBatch().catch(error=>logger.warn({error},'offline batch request failed'));},${OFFLINE_BATCH_IDLE_MS});};
+  const patched=source.replace(preview,`    let offlinePending=false,offlineIdle=null,offlineWritePending=false;
+    const requestOfflineBatch=async()=>{
+        if(closed || !offlinePending || offlineWritePending) return;
+        offlineWritePending=true;
+        try {
+            await sendNode({tag:'ib',attrs:{},content:[{tag:'offline_batch',attrs:{count:'100'}}]});
+        } catch(error) {
+            logger.warn({error},'offline batch request failed');
+        } finally {
+            offlineWritePending=false;
+            if(offlinePending && offlineIdle===null) scheduleOfflineBatch(30000);
+        }
+    };
+    const scheduleOfflineBatch=(delay=${OFFLINE_BATCH_IDLE_MS})=>{
+        clearTimeout(offlineIdle);
+        if(closed || !offlinePending) return;
+        offlineIdle=setTimeout(()=>{
+            offlineIdle=null;
+            void requestOfflineBatch();
+        },delay);
+    };
     for(const tag of ['message','notification','receipt','call']) ws.on('CB:'+tag+',offline',()=>{if(offlinePending) scheduleOfflineBatch();});
-    ws.on('close',()=>{offlinePending=false;clearTimeout(offlineIdle);});
+    const stopOfflineBatch=()=>{
+        offlinePending=false;
+        clearTimeout(offlineIdle);
+        offlineIdle=null;
+    };
+    ws.on('close',stopOfflineBatch);
     ws.on('CB:ib,,offline_preview', async (node) => {
+        if(closed) return;
         logger.info('offline preview received', JSON.stringify(node));
         offlinePending=true;
         await requestOfflineBatch();
-        scheduleOfflineBatch();
     });`).replace(done,`    ws.on('CB:ib,,offline', (node) => {
-        offlinePending=false;clearTimeout(offlineIdle);
+        stopOfflineBatch();
         const child = getBinaryNodeChild(node, 'offline');`);
   // socket.js é ESM: valida a sintaxe sem executar o módulo.
   const check=require('node:child_process').spawnSync(process.execPath,['--input-type=module','--check'],{input:patched,encoding:'utf8'});

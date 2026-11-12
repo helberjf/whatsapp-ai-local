@@ -183,10 +183,53 @@ test('native timers follow explicit canonical JIDs across LID sends and subseque
 test('bundle patch refuses unknown Evolution versions and content hashes',()=>{
   const {patchBundle}=require('../infra/evolution-extensions.cjs');assert.throws(()=>patchBundle('untrusted','2.3.8'),/versão|version/i);assert.throws(()=>patchBundle('untrusted','2.3.7'),/hash/i);
 });
-test('Baileys patch keeps requesting offline batches until the server reports the backlog is done',()=>{
+test('Baileys patch keeps requesting offline batches until the server reports the backlog is done',async()=>{
   const {patchBaileysSocket}=require('../infra/evolution-extensions.cjs');
   assert.throws(()=>patchBaileysSocket('untrusted','7.0.0'),/version/i);assert.throws(()=>patchBaileysSocket('untrusted','7.0.0-rc.9'),/hash/i);
   const original=process.env.BAILEYS_SOCKET_FIXTURE;if(!original) return;
   const patched=patchBaileysSocket(require('node:fs').readFileSync(original,'utf8'),'7.0.0-rc.9');
-  assert.match(patched,/offlinePending=true;\s*await requestOfflineBatch\(\);/);assert.match(patched,/'CB:'\+tag\+',offline'/);assert.match(patched,/CB:ib,,offline', \(node\) => \{\s*offlinePending=false;/);
+  const {EventEmitter}=require('node:events'),{runInNewContext}=require('node:vm');
+  const ws=new EventEmitter(),requests=[],timers=new Map();
+  let nextTimer=0,fail=true,writeGate;
+  const start=patched.indexOf('let offlinePending=false'),end=patched.indexOf("    ws.on('CB:ib,,edge_routing'",start);
+  assert.ok(start>=0 && end>start);
+  const finished=patched.match(/ws\.on\('CB:ib,,offline', \(node\) => \{\s*(stopOfflineBatch\(\);)/);
+  assert.ok(finished);
+  const socket={
+    ws,closed:false,logger:{info(){},warn(){}},
+    sendNode:async node=>{requests.push(node.content[0].tag);if(fail) throw Error('socket write failed');await writeGate;},
+    setTimeout:(callback,delay)=>{timers.set(++nextTimer,{callback,delay});return nextTimer;},
+    clearTimeout:id=>timers.delete(id)
+  };
+  runInNewContext(patched.slice(start,end)+`ws.on('CB:ib,,offline',()=>{${finished[1]}});`,socket);
+  await ws.listeners('CB:ib,,offline_preview')[0]({});
+  assert.deepEqual(requests,['offline_batch']);
+  const advance=async expectedDelay=>{
+    assert.equal(timers.size,1);
+    const [id,{callback,delay}]=timers.entries().next().value;
+    assert.equal(delay,expectedDelay);timers.delete(id);callback();
+    await new Promise(resolve=>setImmediate(resolve));
+  };
+  fail=false;
+  await advance(30_000);
+  await advance(30_000);
+  assert.equal(requests.length,3,'a successful write without a reply must still be retried');
+  let finishWrite;
+  writeGate=new Promise(resolve=>{finishWrite=resolve;});
+  await advance(30_000);
+  ws.emit('CB:message,offline');
+  finishWrite();
+  await new Promise(resolve=>setImmediate(resolve));
+  await advance(1500);
+  assert.equal(requests.length,5);
+  ws.emit('CB:ib,,offline');
+  assert.equal(timers.size,0,'the final offline notification cancels the retry');
+  await ws.listeners('CB:ib,,offline_preview')[0]({});
+  const beforeClose=requests.length;
+  // Baileys can close internally after removing the websocket's close listeners.
+  ws.removeAllListeners('close');
+  socket.closed=true;
+  await advance(30_000);
+  assert.equal(requests.length,beforeClose);
+  assert.equal(timers.size,0);
 });
