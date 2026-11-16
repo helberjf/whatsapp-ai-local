@@ -207,14 +207,21 @@ test('imagem e vídeo anexados mostram prévia local e liberam URLs ao substitui
   await browser.get('remove-attachment').emit('click');assert.ok(browser.revokedUrls.includes(videoUrl));assert.equal(preview.hidden,true);assert.equal(preview.children.length,0);
 });
 
-test('menu de anexos envia mídia para o grupo aberto',async()=>{
+test('menu de anexos envia arquivos para o grupo aberto e mantém o microfone desativado',async()=>{
   class Reader {readAsDataURL(){this.result='data:image/png;base64,aGVsbG8=';this.onload();}}
   const group='123-456@g.us',browser=await createBrowser({withMedia:true,FileReader:Reader,chatRecords:[{jid:group,name:'Grupo da família',isGroup:true,unread:0,status:'open',labels:[]}]});
   browser.get('chat-list-filter').value='groups';await browser.get('chat-list-filter').emit('change');await browser.selectChat(0);
+  assert.equal(browser.get('record-audio').disabled,true,'Gravação pelo microfone continua exclusiva de conversas individuais.');
   browser.get('attachment').files=[new File(['foto'],'foto.png',{type:'image/png'})];await browser.get('attachment').emit('change');
   assert.equal(browser.get('attachment-preview').children.length,1,'O grupo deve receber a mesma prévia de anexo.');
   await browser.get('composer').emit('submit');
-  const request=browser.requests.find(item=>item.path==='/api/send-media');assert.ok(request);assert.equal(request.input.jid,group);
+  browser.get('attachment').files=[new File(['áudio'],'audio.ogg',{type:'audio/ogg'})];await browser.get('attachment').emit('change');await browser.get('composer').emit('submit');
+  await browser.get('attach-document').emit('click');browser.get('attachment').files=[new File(['pdf'],'arquivo.pdf',{type:'application/pdf'})];await browser.get('attachment').emit('change');await browser.get('composer').emit('submit');
+  browser.get('sticker-file').files=[new File(['sticker'],'figurinha.webp',{type:'image/webp'})];await browser.get('sticker-file').emit('change');await browser.get('composer').emit('submit');
+  const requests=browser.requests.filter(item=>['/api/send-media','/api/send-sticker'].includes(item.path));
+  assert.deepEqual(requests.map(item=>[item.path,item.input.jid,item.input.mediaType]),[
+    ['/api/send-media',group,'image'],['/api/send-media',group,'audio'],['/api/send-media',group,'document'],['/api/send-sticker',group,'document']
+  ]);
 });
 
 test('trocar de conversa ou enviar libera a prévia local do anexo',async()=>{
