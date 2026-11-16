@@ -57,6 +57,29 @@ test('conector: cita com a chave e o conteúdo reais, envia voz como PTT e valid
   await assert.rejects(client.sendContact(jid,{fullName:'X;Y',phone:'11988887777'}),{status:422});
 });
 
+test('conector envia opções do menu para grupos e confirma o destinatário',async()=>{
+  const group='123-456@g.us',quoted={key:{id:'gm1',remoteJid:group,fromMe:false},message:{conversation:'Mensagem do grupo'}};
+  const sent=(id,message)=>({key:{id,remoteJid:group,fromMe:true},message});
+  const {calls,fetchImpl}=connector({
+    '/findMessages/':input=>({messages:{records:input.where?.key?.id==='gm1'?[quoted]:[]}}),
+    '/sendMedia/':sent('media',{documentMessage:{fileName:'arquivo.txt',mimetype:'text/plain'}}),
+    '/sendSticker/':sent('sticker',{stickerMessage:{mimetype:'image/webp'}}),
+    '/sendLocation/':sent('location',{locationMessage:{degreesLatitude:-23.5,degreesLongitude:-46.6}}),
+    '/sendContact/':sent('contact',{contactMessage:{displayName:'Carla'}}),
+    '/sendViewOnce/':sent('once',{viewOnceMessageV2Extension:{message:{audioMessage:{ptt:true,viewOnce:true}}}})
+  });
+  const client=createEvolutionClient(config,fetchImpl),number=()=>calls.at(-1).input.number;
+  await client.sendMedia(group,{mediaType:'document',base64:'aGVsbG8=',mimeType:'text/plain',fileName:'arquivo.txt',quotedId:'gm1'});
+  assert.equal(number(),group);assert.equal(calls.at(-1).input.quoted.key.remoteJid,group);
+  await client.sendSticker(group,{base64:'aGVsbG8='});assert.equal(number(),group);
+  await client.sendLocation(group,{latitude:-23.5,longitude:-46.6});assert.equal(number(),group);
+  await client.sendContact(group,{fullName:'Carla',phone:'11988887777'});assert.equal(number(),group);
+  await client.sendVoice(group,{base64:'T2dnUw==',viewOnce:true});assert.equal(number(),group);
+  await assert.rejects(client.sendContact('status@broadcast',{fullName:'Carla',phone:'11988887777'}),{status:422});
+  const wrong=connector({'/sendContact/':{key:{id:'wrong',remoteJid:'outro-grupo@g.us',fromMe:true},message:{contactMessage:{displayName:'Carla'}}}});
+  await assert.rejects(createEvolutionClient(config,wrong.fetchImpl).sendContact(group,{fullName:'Carla',phone:'11988887777'}),/não confirmou/);
+});
+
 test('conector: reação, edição dentro de 15 minutos e confirmação de operações nativas',async()=>{
   const records=[original('mine',{conversation:'Olá'}),original('old',{conversation:'Antigo'},true,{messageTimestamp:Math.floor(Date.now()/1000)-3600}),original('theirs',{conversation:'Oi'},false)];
   let archived={chatId:jid,archived:true};
@@ -130,6 +153,26 @@ test('rotas: responder, reagir, editar, favoritas e presença usam envios idempo
   assert.equal((await call('/api/chat-preferences','PUT',{shareTyping:false})).body.shareTyping,false);
   const before=calls.length;assert.equal((await call('/api/presence','POST',{jid,presence:'composing'})).body.skipped,true);assert.equal(calls.length,before);
   assert.equal((await call('/api/presence','POST',{jid,presence:'online'})).status,422);
+});
+
+test('rotas enviam opções do menu para grupos e deduplicam o pedido',async t=>{
+  const group='123-456@g.us',sent=(id,message)=>({key:{id,remoteJid:group,fromMe:true},message});
+  const {call,calls}=await serverFixture(t,{
+    '/sendMedia/':sent('media',{documentMessage:{fileName:'arquivo.txt',mimetype:'text/plain'}}),
+    '/sendSticker/':sent('sticker',{stickerMessage:{mimetype:'image/webp'}}),
+    '/sendLocation/':sent('location',{locationMessage:{degreesLatitude:-23.5,degreesLongitude:-46.6}}),
+    '/sendContact/':sent('contact',{contactMessage:{displayName:'Carla'}}),
+    '/sendViewOnce/':sent('once',{viewOnceMessageV2Extension:{message:{audioMessage:{ptt:true,viewOnce:true}}}})
+  });
+  const media={jid:group,mediaType:'document',base64:'aGVsbG8=',fileName:'arquivo.txt',mimeType:'text/plain',requestId:'group-media'};
+  assert.equal((await call('/api/send-media','POST',media)).status,200);
+  assert.equal((await call('/api/send-media','POST',media)).status,200);
+  assert.equal(calls.filter(item=>item.route.includes('/sendMedia/')).length,1);
+  assert.equal((await call('/api/send-sticker','POST',{jid:group,base64:'iVBORw0KGgo=',mimeType:'image/png',requestId:'group-sticker'})).status,200);
+  assert.equal((await call('/api/send-location','POST',{jid:group,latitude:-23.5,longitude:-46.6,requestId:'group-location'})).status,200);
+  assert.equal((await call('/api/send-contact','POST',{jid:group,fullName:'Carla',phone:'11988887777',requestId:'group-contact'})).status,200);
+  assert.equal((await call('/api/send-voice','POST',{jid:group,base64:'T2dnUw==',mimeType:'audio/ogg',viewOnce:true,requestId:'group-audio-once'})).status,200);
+  assert.equal((await call('/api/send-contact','POST',{jid:'status@broadcast',fullName:'Carla',phone:'11988887777',requestId:'invalid-group-contact'})).status,422);
 });
 
 test('rotas: voz gravada vira PTT e perfil/privacidade validam antes de chamar o conector',async t=>{

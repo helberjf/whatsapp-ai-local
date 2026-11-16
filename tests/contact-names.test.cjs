@@ -126,7 +126,8 @@ test('sends a sticker through the supported Evolution route and normalizes its r
   assert.deepEqual(state.calls[0],{route:'/message/sendSticker/test',method:'POST',input:{number:phone,sticker:'c3RpY2tlcg=='}});
 });
 
-test('sticker send requires a direct conversation and connector confirmation',async()=>{
-  const {client,state}=fixture();await assert.rejects(client.sendSticker('123@g.us',{base64:'c3RpY2tlcg=='}),{status:422});
+test('sticker send accepts groups and requires connector confirmation',async()=>{
+  const group='123@g.us',{client,state}=fixture();state.stickerResponse={key:{id:'group-sticker',remoteJid:group,fromMe:true},message:{stickerMessage:{mimetype:'image/webp'}}};
+  assert.equal((await client.sendSticker(group,{base64:'c3RpY2tlcg=='})).jid,group);assert.equal(state.calls.at(-1).input.number,group);
   state.stickerResponse={};await assert.rejects(client.sendSticker(phone,{base64:'c3RpY2tlcg=='}),{status:502});
 });

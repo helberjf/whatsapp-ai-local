@@ -274,7 +274,7 @@ function createWhatsAppServer(options={}) {
       if(route==='/api/messages/delete' && req.method==='POST') {const input=await readBody(req),jid=assertJid(input.jid),id=textField(input.messageId,200,'Mensagem');return json(res,200,await sendOnce(input,()=>client.deleteMessage(jid,id)));}
       if(route==='/api/messages/disappearing' && req.method==='POST') {const input=await readBody(req);return json(res,200,await client.disappearingMessages(assertJid(input.jid),input.expiration));}
       if(route==='/api/send-sticker' && req.method==='POST') {
-        const input=await readBody(req),jid=assertJid(input.jid),mime=input.mimeType;
+        const input=await readBody(req),jid=assertConversationJid(input.jid),mime=input.mimeType;
         if(!['image/webp','image/png','image/jpeg'].includes(mime) || typeof input.base64!=='string' || (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64) || input.base64.length%4!==0)) throw new ApiError('Envie uma figurinha WEBP, PNG ou JPG de até 1 MB.',422);
         const bytes=Buffer.from(input.base64,'base64'),valid=bytes.length>0 && bytes.length<=1024*1024 && (mime==='image/webp'?bytes.toString('ascii',0,4)==='RIFF' && bytes.toString('ascii',8,12)==='WEBP':mime==='image/png'?bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):bytes[0]===255 && bytes[1]===216 && bytes[2]===255);
         if(!valid || input.caption) throw new ApiError('Figurinha inválida. Envie WEBP, PNG ou JPG de até 1 MB e sem legenda.',422);
@@ -416,7 +416,7 @@ function createWhatsAppServer(options={}) {
         return json(res,200,await sendOnce(input,()=>client.sendText(jid,text,{allowGroup,quotedId})));
       }
       if(req.method==='POST' && route==='/api/send-media') {
-        const input=await readBody(req),jid=assertJid(input.jid);
+        const input=await readBody(req),jid=assertConversationJid(input.jid);
         if(!['image','video','audio','document'].includes(input.mediaType) || typeof input.base64!=='string' || (!/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64) || input.base64.length%4!==0) || !input.base64 || Buffer.byteLength(input.base64,'base64')>10*1024*1024) throw new ApiError('Anexo inválido. Envie um arquivo de até 10 MB.',422);
         textField(input.fileName,200,'Nome do arquivo');if(typeof input.mimeType!=='string' || !/^[\w.+-]+\/[\w.+-]+$/.test(input.mimeType) || (input.caption!==undefined && (typeof input.caption!=='string' || input.caption.length>4000))) throw new ApiError('Tipo ou legenda do arquivo inválido.',422);
         const quotedId=quoteId(input.quotedId),viewOnce=optionalSendFlag(input.viewOnce);
