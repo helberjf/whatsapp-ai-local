@@ -1,0 +1,38 @@
+{
+  "U03": {
+    "pass": true,
+    "note": "Revisão: correta; 'sob consulta', sem preço."
+  },
+  "U11": {
+    "pass": true,
+    "note": "Revisão: correta; disse que não tira visto e indicou os canais oficiais (o critério automático casou 'tiramos' dentro de 'não tiramos')."
+  },
+  "U02": {
+    "pass": false,
+    "note": "Revisão: afirmou 'não temos uma loja física', o que não está na base. Sem número, a trava não detecta."
+  },
+  "D06": {
+    "pass": false,
+    "note": "Revisão: inventou cupons na 'seção de promoções' e por e-mail."
+  },
+  "E03": {
+    "pass": false,
+    "note": "Revisão: afirmou que a empresa aceita Pix; a base não diz."
+  },
+  "E05": {
+    "pass": false,
+    "note": "Revisão: afirmou a exigência da Anatel como regra; a base diz que alguns produtos exigem e que isso é verificado."
+  },
+  "P07": {
+    "pass": false,
+    "note": "Revisão: acrescentou que voos nacionais têm mais flexibilidade, o que não está na base."
+  },
+  "P01": {
+    "pass": true,
+    "note": "Revisão: correta; disse pontos em vez de milhas."
+  },
+  "P02": {
+    "pass": true,
+    "note": "Revisão: correta; disse que dá para pedir uma peça de teste."
+  }
+}

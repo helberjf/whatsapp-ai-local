@@ -220,7 +220,7 @@ Vectors are generated in the background and saved per document in `data/central.
 | Anthropic | No embedding API: `bge-m3` through local Ollama |
 | Compatible endpoint | Set **Modelo de embeddings** in **Assistente de IA** |
 
-Set **Modelo de embeddings** to another model, or to `off` to keep keyword-only retrieval. If the model is missing, a document is still being indexed, or the provider fails, those searches fall back to BM25, the knowledge page shows the reason, and indexing retries after five minutes. Without an AI provider, the application can still show the matching source passages.
+Set **Modelo de embeddings** to another model, or to `off` to keep keyword-only retrieval. If the model is missing, a document is still being indexed, or the provider fails, those searches fall back to BM25, the knowledge page shows the reason, and indexing retries after five minutes. A question whose embedding request fails is retried once immediately; if it fails again, that question uses keywords and embedding search resumes after 30 seconds, so one slow request does not disable it for minutes. Without an AI provider, the application can still show the matching source passages.
 
 In **Assistente de IA**, select **Ollama (local)** and click **Ligar IA local** to start the installed runtime in the background and load the chosen model. The status changes to **Pronta para usar** after the model is confirmed in memory. This selects the local provider without changing automatic-reply switches. The button uses loopback only, never downloads missing models automatically, and shows an installation message if Ollama or the model is missing. If the GPU has insufficient memory, select **Usar CPU** and start again. This saves the CPU preference for subsequent Ollama answers; CPU inference may be slower.
 
@@ -239,6 +239,12 @@ Each retrieved passage gets a confidence level. **High** means both searches agr
 | Flexível | All levels, up to 6, with a lower semantic cutoff | Allows greetings and general questions while instructing the AI to ground business facts in the base. |
 
 The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct; prompt instructions do not guarantee factual answers.
+
+### Output guard
+
+Small models sometimes ignore the instruction to use only the context. Before an AI answer is shown, drafted or sent, the central checks it ([`lib/answer-guard.cjs`](lib/answer-guard.cjs)): every price, deadline, opening hour, percentage, instalment, phone number, document number and street address in the answer must appear in what was sent to the AI (catalog, retrieved passages, conversation and rules), and the answer must not copy the internal rules or prompt markers. An answer that fails is withheld and handled as a request for an operator; the assistant activity log records why. The guard works on these patterns only: it cannot detect an invented statement that carries no such data, such as a wrong visa requirement.
+
+[`docs/rag.md`](docs/rag.md) describes the retrieval pipeline end to end, the evaluation of 11 November 2026 with its measured results and limits, and how to repeat it.
 
 ### Robot suggestions from your business
 
@@ -369,7 +375,7 @@ Use `npm run test:e2e:rag` for the focused RAG browser suite. See [`docs/testing
 - Scheduling is local and text-only. Sleep, network outages, WhatsApp disconnection, or stopped services affect delivery.
 - Native delete, poll, sticker, profile, and disappearing-message operations depend on WhatsApp and connector support. Unsupported or unconfirmed operations return an error instead of fabricated success.
 - PostgreSQL holds durable central state; reply workers still assume a single application server process. Duplicate-reply protection relies on that.
-- Cloud AI answers and imported catalog suggestions require review appropriate to the task. Hybrid retrieval can still miss relevant information; when embeddings are unavailable or disabled, keyword-only fallback is more sensitive to wording.
+- AI answers and imported catalog suggestions require review appropriate to the task. In the evaluation described in [`docs/rag.md`](docs/rag.md), the local model invented business facts and added unsupported statements; the output guard withholds invented prices, deadlines, hours and addresses, not every unsupported sentence. Hybrid retrieval can still miss relevant information; when embeddings are unavailable or disabled, keyword-only fallback is more sensitive to wording.
 - AI credentials are bound to the Windows user and machine. Re-enter keys after moving to another account or computer; a database copy alone cannot restore access.
 
 For local diagnostics:

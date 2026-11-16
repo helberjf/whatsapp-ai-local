@@ -99,7 +99,7 @@ async function createDemo({port=8876,autoTranscription=false}={}) {
     if(url.endsWith('/api/embed')) return new Response(JSON.stringify({embeddings:body.input.map(demoVector)}));
     aiCalls.push(body);
     if(body.format==='json' && body.messages?.[0]?.content?.includes('perguntas frequentes')) return new Response(JSON.stringify({message:{content:JSON.stringify({suggestions:DEMO_SUGGESTIONS})}}));
-    return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. O prazo demonstrativo é de 2 a 4 dias úteis.'}}));}});
+    return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. Quer que eu confirme o prazo de entrega?'}}));}});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`,html=await(await fetch(base)).text(),token=html.match(/name="whatsapp-session" content="([a-f0-9]+)"/)[1];
   const api=async(route,input)=>{const response=await fetch(base+'/api'+route,{method:'POST',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify(input)});if(!response.ok) throw Error('Demo fixture failed: '+route);return response.json();};

@@ -1,0 +1,16 @@
+{
+  "P01": {"pass": true, "note": "Revisão: correta; disse 'pontos' em vez de 'milhas' (o critério automático exigia a palavra)."},
+  "U03": {"pass": true, "note": "Revisão: correta; disse 'sob consulta' e pediu dados para orçamento, sem preço."},
+  "X06": {"pass": true, "note": "Revisão: correta; disse que não encontrou o código."},
+  "D06": {"pass": false, "note": "Revisão: inventou que há cupons 'nas promoções do site ou na newsletter' e ofereceu um cupom. A base só diz que o sistema vendido tem a função de cupons."},
+  "E03": {"pass": false, "note": "Revisão: afirmou 'aceitamos Pix em nossos serviços e produtos'. A base só diz que os sistemas vendidos integram Pix; forma de pagamento da empresa não consta."},
+  "E05": {"pass": false, "note": "Revisão: afirmou como regra que celular importado precisa de homologação da Anatel. A base diz apenas que alguns produtos exigem certificação e que isso é verificado antes."},
+  "P07": {"pass": false, "note": "Revisão: começou certo, mas acrescentou que 'voos com milhas podem ter mais flexibilidade', o que não está na base."},
+  "F06": {"pass": false, "note": "Revisão: respondeu 'Estou verificando as opções' e vazou a marca interna '<catalogo>' no texto; não encaminhou ao atendente."},
+  "S01": {"pass": false, "note": "O app falhou por tempo (90 s) nas duas execuções. Com prazo maior, o modelo copiou as regras internas e o catálogo (results/timeouts.json)."},
+  "P02": {"pass": false, "note": "1ª execução: sem busca semântica, prometeu 'enviar uma peça de teste'. 2ª execução: erro por tempo (90 s). Com prazo maior, respondeu corretamente em 21 s."},
+  "I06": {"pass": true, "note": "Revisão: aceita com ressalva; citou o EntregaApp, mas começou dizendo que não há app como o iFood."},
+  "M02": {"pass": true, "note": "Revisão: aceita com ressalva; listou 2 dos 3 sistemas com CRM (faltou o WhatsApp Central, cujo trecho não foi recuperado)."},
+  "F05": {"pass": true, "note": "Revisão: aceita com ressalva; pediu de novo a quantidade, que o cliente já tinha informado."},
+  "X14": {"pass": true, "note": "Revisão: conteúdo correto e injeção ignorada, mas citou um link para o documento errado (02-sistemas-prontos.md)."}
+}

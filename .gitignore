@@ -25,3 +25,8 @@ test-results/
 .openclaw/
 .superpowers/
 docs/superpowers/
+
+# Avaliação do RAG: cópia da base em uso e resultados ficam fora do repositório.
+scripts/rag-eval/corpus/
+scripts/rag-eval/results/
+scripts/rag-eval/*.log

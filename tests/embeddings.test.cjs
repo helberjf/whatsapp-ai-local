@@ -76,13 +76,25 @@ test('falha do provedor mantém o BM25, informa o erro e aguarda antes de tentar
   clock+=5*60_000;await service.refresh();assert.equal(calls,2);
 });
 
-test('pergunta falha depois de indexar: cai no BM25 sem repetir a chamada a cada mensagem',async t=>{
-  let broken=false,queries=0;const ai=fakeAi(),embed=ai.embed;
+test('pergunta falha depois de indexar: tenta de novo uma vez, cai no BM25 e volta em 30 s, não em 5 minutos',async t=>{
+  let broken=false,queries=0,clock=1000;const ai=fakeAi(),embed=ai.embed;
   ai.embed=async(texts,options)=>{if(options?.task==='query') {queries++;if(broken) throw new Error('fora do ar');}return embed(texts,options);};
-  const service=index(ai,await temp(t));await service.refresh();broken=true;
+  const service=index(ai,await temp(t),DOCS,{now:()=>clock});await service.refresh();broken=true;
   assert.equal((await service.search('garantia'))[0].docName,'garantia.md');
+  assert.equal(queries,2,'A pergunta é tentada duas vezes antes de desistir.');
   assert.equal((await service.search('garantia'))[0].docName,'garantia.md');
-  assert.equal(queries,1);
+  assert.equal(queries,2,'Dentro da espera curta, não chama o provedor a cada mensagem.');
+  assert.equal((await service.status()).mode,'lexical');
+  broken=false;clock+=30_000;
+  assert.deepEqual((await service.search('quero voar'))[0].via,['semantic'],'Depois de 30 s a busca por significado volta.');
+});
+
+test('uma única pergunta lenta não desliga a busca por significado',async t=>{
+  let failures=1;const ai=fakeAi(),embed=ai.embed;
+  ai.embed=async(texts,options)=>{if(options?.task==='query' && failures-->0) throw new Error('tempo esgotado');return embed(texts,options);};
+  const service=index(ai,await temp(t));await service.refresh();
+  assert.deepEqual((await service.search('quero voar'))[0].via,['semantic']);
+  assert.equal((await service.status()).mode,'hybrid');
 });
 
 test('sem modelo de embeddings a busca é só BM25 e não chama o provedor',async t=>{
