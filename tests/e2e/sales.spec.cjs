@@ -36,6 +36,9 @@ test('qualificação, agenda, Pix e contrato ficam salvos e o código de teste �
   await page.getByLabel('Deixar a IA agendar').check();
   await page.getByLabel('O que será agendado').fill('uma reunião de apresentação');
   await page.getByLabel('Duração').selectOption('60');
+  // Lembrete: 1 hora antes já vem marcado; aqui também 1 dia antes.
+  await expect(page.getByLabel('1 hora antes')).toBeChecked();await expect(page.getByLabel('1 dia antes')).not.toBeChecked();
+  await page.getByLabel('1 dia antes').check();
   await page.getByLabel('Instruções enviadas na confirmação (opcional)').fill('A reunião será por vídeo.');
   await page.getByLabel('Deixar a IA enviar o Pix').check();
   await fillPix(page);
@@ -53,6 +56,7 @@ test('qualificação, agenda, Pix e contrato ficam salvos e o código de teste �
   await expect(page.getByLabel('Deixar a IA agendar')).toBeChecked();
   await expect(page.getByLabel('O que será agendado')).toHaveValue('uma reunião de apresentação');
   await expect(page.getByLabel('Duração')).toHaveValue('60');
+  await expect(page.getByLabel('1 dia antes')).toBeChecked();await expect(page.getByLabel('1 hora antes')).toBeChecked();await expect(page.getByLabel('15 minutos antes')).not.toBeChecked();
   await expect(page.getByLabel('Chave Pix')).toHaveValue('vendas@exemplo.com');
   await expect(page.getByLabel('Deixar a IA enviar o contrato')).toBeChecked();
   await expect(page.locator('#sales-contract-current')).toContainText('contrato.pdf');

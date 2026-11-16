@@ -5,7 +5,8 @@
   const {$,el,api}=C;
   const DAYS=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
   const KEY_HINTS={cpf:'Somente os 11 números do CPF.',cnpj:'Somente os 14 números do CNPJ.',email:'O e-mail cadastrado como chave.',phone:'Celular com DDD, por exemplo (11) 99999-8888.',random:'Chave aleatória, no formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.'};
-  const ACTIONS={lead:'Lead qualificado',meeting:'Reunião agendada',pix:'Pix',contract:'Contrato',cancelled:'Cancelado',error:'Atenção'};
+  const REMINDERS=[1440,120,60,15];
+  const ACTIONS={lead:'Lead qualificado',meeting:'Reunião agendada',reminder:'Lembrete',pix:'Pix',contract:'Contrato',cancelled:'Cancelado',error:'Atenção'};
   let sales=null,contractFile,busy=false;
   const status=(text,error=false)=>{$('sales-status').textContent=text;$('sales-status').classList.toggle('error',error);};
   for(const [index,name] of DAYS.entries()) {const label=el('label','sales-day'),box=el('input');box.type='checkbox';box.id='sales-day-'+index;label.append(box,el('span','',name));$('sales-days').append(label);}
@@ -27,7 +28,7 @@
         if(!confirm('Cancelar este compromisso? O cliente não é avisado automaticamente.')) return;
         try {sales=await api('/sales/appointments?id='+encodeURIComponent(item.id),'DELETE');renderLists();status('Compromisso cancelado. Avise o cliente.');}catch(error) {status(error.message,true);}
       });
-      row.append(el('strong','',item.label),el('span','',chat?.name || item.name || 'Contato'),cancel);list.append(row);
+      row.append(el('strong','',item.label),el('span','',(chat?.name || item.name || 'Contato')+(item.reminded?.length?' · lembrete enviado':'')),cancel);list.append(row);
     }
     if(!sales.appointments.length) list.append(el('li','muted','Nenhum compromisso marcado.'));
     $('sales-appointments').replaceChildren(list);
@@ -42,6 +43,7 @@
     const agenda=sales.agenda;$('sales-agenda').checked=agenda.enabled;$('sales-agenda-subject').value=agenda.subject;$('sales-agenda-start').value=agenda.start;$('sales-agenda-end').value=agenda.end;
     $('sales-agenda-slot').value=String(agenda.slotMinutes);$('sales-agenda-horizon').value=String(agenda.horizonDays);$('sales-agenda-note').value=agenda.note;
     DAYS.forEach((name,index)=>{$('sales-day-'+index).checked=agenda.days.includes(index);});
+    for(const minutes of REMINDERS) $('sales-reminder-'+minutes).checked=(agenda.reminders || []).includes(minutes);
     const pix=sales.pix;$('sales-pix').checked=pix.enabled;$('sales-pix-type').value=pix.keyType;$('sales-pix-key').value=pix.key;$('sales-pix-name').value=pix.name;$('sales-pix-city').value=pix.city;$('sales-pix-description').value=pix.description;
     $('sales-pix-key-hint').textContent=KEY_HINTS[pix.keyType];
     const contract=sales.contract;$('sales-contract').checked=contract.enabled;$('sales-contract-message').value=contract.message;$('sales-contract-link').value=contract.link;
@@ -54,7 +56,7 @@
   function collect() {
     return {
       qualify:{enabled:$('sales-qualify').checked},
-      agenda:{enabled:$('sales-agenda').checked,subject:$('sales-agenda-subject').value,days:DAYS.map((name,index)=>index).filter(index=>$('sales-day-'+index).checked),start:$('sales-agenda-start').value,end:$('sales-agenda-end').value,slotMinutes:Number($('sales-agenda-slot').value),horizonDays:Number($('sales-agenda-horizon').value),note:$('sales-agenda-note').value},
+      agenda:{enabled:$('sales-agenda').checked,subject:$('sales-agenda-subject').value,days:DAYS.map((name,index)=>index).filter(index=>$('sales-day-'+index).checked),start:$('sales-agenda-start').value,end:$('sales-agenda-end').value,slotMinutes:Number($('sales-agenda-slot').value),horizonDays:Number($('sales-agenda-horizon').value),note:$('sales-agenda-note').value,reminders:REMINDERS.filter(minutes=>$('sales-reminder-'+minutes).checked)},
       pix:{enabled:$('sales-pix').checked,keyType:$('sales-pix-type').value,key:$('sales-pix-key').value,name:$('sales-pix-name').value,city:$('sales-pix-city').value,description:$('sales-pix-description').value},
       contract:{enabled:$('sales-contract').checked,message:$('sales-contract-message').value,link:$('sales-contract-link').value.trim(),...(contractFile===undefined?{}:{file:contractFile})}
     };

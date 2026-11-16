@@ -15,3 +15,5 @@
 .sales-save-bar .form-status{margin:0;flex:1;min-width:200px}
 .form-status.error{color:#ffb9ae}
 @media(max-width:900px){.sales-grid{grid-template-columns:1fr}}
+.sales-reminders{display:flex;flex-wrap:wrap;gap:6px 16px;margin:6px 0 12px}
+.sales-reminders .check{margin:0;font-size:12px}

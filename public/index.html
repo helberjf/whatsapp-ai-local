@@ -281,13 +281,14 @@
             <label class="switch"><input id="sales-qualify" type="checkbox"><span>Qualificar leads e atualizar o CRM automaticamente</span></label>
           </section>
           <section class="panel pad" aria-labelledby="sales-agenda-title"><h2 id="sales-agenda-title"><svg class="icon green-ink" aria-hidden="true"><use href="#i-clock"/></svg> Agenda de reuniões</h2>
-            <p class="muted">A IA oferece apenas horários livres, com pelo menos 2 horas de antecedência, e confirma o que o cliente escolher. Cada contato tem um compromisso por vez: escolher outro horário remarca.</p>
+            <p class="muted">A IA oferece apenas horários livres, com pelo menos 2 horas de antecedência, e confirma o que o cliente escolher e manda o lembrete antes do horário. Cada contato tem um compromisso por vez: escolher outro horário remarca.</p>
             <label class="switch"><input id="sales-agenda" type="checkbox"><span>Deixar a IA agendar</span></label>
             <label class="field">O que será agendado<input id="sales-agenda-subject" type="text" maxlength="80" placeholder="uma reunião de apresentação"></label>
             <span class="field">Dias de atendimento</span><div id="sales-days" class="sales-days"></div>
             <div class="field-row"><label class="field">Das<input id="sales-agenda-start" type="time"></label><label class="field">Até<input id="sales-agenda-end" type="time"></label></div>
             <div class="field-row"><label class="field">Duração<select id="sales-agenda-slot"><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">1 hora</option><option value="90">1 hora e meia</option><option value="120">2 horas</option></select></label><label class="field">Oferecer horários para os próximos (dias)<input id="sales-agenda-horizon" type="number" min="1" max="30" step="1"></label></div>
             <label class="field">Instruções enviadas na confirmação (opcional)<textarea id="sales-agenda-note" rows="2" maxlength="500" placeholder="Ex.: A reunião será por vídeo: https://…"></textarea></label>
+            <span class="field">Lembrete ao cliente antes do horário</span><div class="sales-reminders"><label class="check"><input id="sales-reminder-1440" type="checkbox"> 1 dia antes</label><label class="check"><input id="sales-reminder-120" type="checkbox"> 2 horas antes</label><label class="check"><input id="sales-reminder-60" type="checkbox"> 1 hora antes</label><label class="check"><input id="sales-reminder-15" type="checkbox"> 15 minutos antes</label></div>
             <p id="sales-next-slots" class="muted small"></p>
             <h3 class="sources-title">Compromissos marcados</h3><ul id="sales-appointments" class="log-list"></ul>
           </section>

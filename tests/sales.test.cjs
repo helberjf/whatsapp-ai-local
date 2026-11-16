@@ -94,6 +94,44 @@ test('envio manual de Pix e contrato pelo atendente',async t=>{
   await assert.rejects(call('/api/sales/send',{jid:'grupo@g.us',kind:'pix'}),error=>error.status===422);
 });
 
+test('lembrete sai uma única vez antes do horário e respeita cancelamento, pausa e marcação em cima da hora',async t=>{
+  const f=await fixture(t),other='5511911112222@s.whatsapp.net',late='5511933334444@s.whatsapp.net',paused='5511955556666@s.whatsapp.net',book=async(to,value)=>f.sales.execute(to,(await f.sales.plan(to,[{kind:'agendar',value}])).steps);
+  await assert.rejects(f.sales.save({agenda:{reminders:[7]}}),error=>error.status===422);
+  const saved=await f.sales.save({agenda:{enabled:true,subject:'uma reunião de apresentação',slotMinutes:60,note:'Link: https://meet.example/sala',reminders:[60,1440]}});
+  assert.deepEqual(saved.agenda.reminders,[1440,60]);
+  // Terça 17/11: 14:00 (lembretes de 1 dia e de 1 hora), 15:00 (será cancelado) e 16:00 (contato com automações pausadas).
+  await book(jid,'2026-11-17 14:00');await book(other,'2026-11-17 15:00');await book(paused,'2026-11-17 16:00');
+  await f.store.update(data=>{data.contacts[paused].automationPaused=true;});
+  const cancelled=(await f.sales.view()).appointments.find(item=>item.jid===other);
+  await f.sales.handle({method:'DELETE'},'/api/sales/appointments',new URL('http://x/?id='+cancelled.id));
+  f.sent.length=0;await f.sales.tick();assert.equal(f.sent.length,0);
+  // Segunda 14:00: falta 1 dia para a reunião das 14:00.
+  f.advance(4*3600_000);await f.sales.tick();await f.sales.tick();
+  assert.deepEqual(f.sent,[{type:'text',to:jid,text:'Olá! Passando para lembrar do nosso compromisso: uma reunião de apresentação, terça-feira, 17/11 às 14:00.\nLink: https://meet.example/sala'}]);
+  // Terça 13:10: sai o lembrete de 1 hora das 14:00. Quem marca agora para as 17:00 não recebe o aviso de 1 dia, cujo momento já passou.
+  f.advance(23*3600_000+10*60_000);f.sent.length=0;
+  await book(late,'2026-11-17 17:00');assert.equal((await f.sales.view()).appointments.some(item=>item.jid===late),true);f.sent.length=0;
+  await f.sales.tick();
+  assert.deepEqual(f.sent.map(item=>item.to),[jid]);
+  // Terça 16:05: o das 17:00 recebe o aviso de 1 hora; o contato pausado (16:00) nunca recebeu.
+  f.advance(175*60_000);f.sent.length=0;await f.sales.tick();
+  assert.deepEqual(f.sent.map(item=>item.to),[late]);
+  f.advance(2*3600_000);f.sent.length=0;await f.sales.tick();assert.equal(f.sent.length,0);
+  assert.equal((await f.sales.view()).log.filter(entry=>entry.action==='reminder').length,3);
+});
+test('central parada: ao voltar sai um só lembrete, e nenhum depois do horário',async t=>{
+  const f=await fixture(t);await f.sales.save({agenda:{enabled:true,slotMinutes:60,reminders:[1440,60]}});
+  await f.sales.execute(jid,(await f.sales.plan(jid,[{kind:'agendar',value:'2026-11-18 10:00'}])).steps);f.sent.length=0;
+  f.advance(46*3600_000+30*60_000);await f.sales.tick();await f.sales.tick();
+  assert.equal(f.sent.length,1);assert.match(f.sent[0].text,/quarta-feira, 18\/11 às 10:00/);
+  const g=await fixture(t);await g.sales.save({agenda:{enabled:true,slotMinutes:60}});
+  await g.sales.execute(jid,(await g.sales.plan(jid,[{kind:'agendar',value:'2026-11-18 10:00'}])).steps);g.sent.length=0;
+  g.advance(48*3600_000);await g.sales.tick();assert.equal(g.sent.length,0);
+  const off=await fixture(t);await off.sales.save({agenda:{enabled:true,slotMinutes:60,reminders:[]}});
+  await off.sales.execute(jid,(await off.sales.plan(jid,[{kind:'agendar',value:'2026-11-18 10:00'}])).steps);off.sent.length=0;
+  off.advance(46*3600_000+30*60_000);await off.sales.tick();assert.equal(off.sent.length,0);
+});
+
 // ---------- IA + vendas ----------
 async function assistantFixture(t,reply,{mode='auto'}={}) {
   const f=await fixture(t),last={id:'m1',jid,timestamp:START+1000,type:'text',text:'Quero fechar o logo',fromMe:false,key:{id:'m1',remoteJid:jid,fromMe:false}};

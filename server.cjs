@@ -167,7 +167,7 @@ function createWhatsAppServer(options={}) {
       if(stopped) return Promise.resolve();
       if(replyTick) {pollAgain=true;return replyTick;}
       lastPoll=Date.now();
-      replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
+      replyTick=(async()=>{await voice.tick();await triggers.tick({wait:false});await automation.tick({wait:false});await assistant.tick({wait:false});await team.tick();await sales.tick();})().catch(()=>{}).finally(()=>{replyTick=null;if(pollAgain) {pollAgain=false;pollReplies();}});
       return replyTick;
     };
     // Com eventos chegando, a consulta periódica vira reserva (a cada 15 s); cada mensagem nova dispara o ciclo na hora.
@@ -185,7 +185,7 @@ function createWhatsAppServer(options={}) {
     };
     const stop=()=>{stopped=true;clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();};
     // Ao fechar, espera o ciclo em andamento e as transcrições: nada grava depois que o PostgreSQL fecha.
-    const idle=async()=>{if(replyTick) await replyTick;await Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),transcriptions.idle()]);};
+    const idle=async()=>{if(replyTick) await replyTick;await Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),sales.idle(),transcriptions.idle()]);};
     return {account,client,store,rules,transcriptions,voice,assistant,sales,avatars,crm,automation,groupPresentation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
   }
   const runtimes=new Map(accounts.list().map(account=>[account.id,createAccountRuntime(account)]));
