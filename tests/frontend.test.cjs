@@ -30,6 +30,7 @@ function element(tag='div',fragment=false) {
     set textContent(value) {ownText=String(value);this.children=[];},
     get firstElementChild() {return this.children[0];},
     append(...children) {for(const child of children) this.children.push(...(child.fragment?child.children:[child]));},
+    after(...children) {this.afterNodes=[...(this.afterNodes || []),...children];},
     replaceChildren(...children) {ownText='';this.children=[];this.append(...children);},
     addEventListener(type,listener) {
       if(!listeners.has(type)) listeners.set(type,[]);
@@ -58,7 +59,7 @@ async function createBrowser({count=0,onSend=async()=>{},onDelete=async()=>({del
   let history=historyRecords || Array.from({length:count},(_,index)=>message(index+1));
   let transcriptionSettings={defaultProvider:'whisper',whisperModel:'base',language:'pt',aiConfigured,aiModel:'gpt-transcribe'};
   const get=id=>{if(!nodes.has(id)) nodes.set(id,element());return nodes.get(id);};
-  const document={title:'Whats AI',
+  const document={title:'Whats AI',body:element('body'),
     getElementById:get,querySelector:()=>({content:'test-session'}),querySelectorAll:()=>[],
     createElement:element,createElementNS:()=>element('svg'),createDocumentFragment:()=>element('fragment',true),
     addEventListener(){},visibilityState:'visible'
@@ -204,6 +205,16 @@ test('imagem e vídeo anexados mostram prévia local e liberam URLs ao substitui
   preview=browser.get('attachment-preview');assert.equal(preview.firstElementChild.tagName,'VIDEO');assert.equal(preview.firstElementChild.controls,true);assert.equal(preview.firstElementChild.preload,'metadata');assert.notEqual(preview.firstElementChild.autoplay,true);
   const videoUrl=preview.firstElementChild.src;assert.ok(browser.revokedUrls.includes(imageUrl));assert.equal(browser.requests.some(req=>req.path==='/api/send-media'),false);
   await browser.get('remove-attachment').emit('click');assert.ok(browser.revokedUrls.includes(videoUrl));assert.equal(preview.hidden,true);assert.equal(preview.children.length,0);
+});
+
+test('menu de anexos envia mídia para o grupo aberto',async()=>{
+  class Reader {readAsDataURL(){this.result='data:image/png;base64,aGVsbG8=';this.onload();}}
+  const group='123-456@g.us',browser=await createBrowser({withMedia:true,FileReader:Reader,chatRecords:[{jid:group,name:'Grupo da família',isGroup:true,unread:0,status:'open',labels:[]}]});
+  browser.get('chat-list-filter').value='groups';await browser.get('chat-list-filter').emit('change');await browser.selectChat(0);
+  browser.get('attachment').files=[new File(['foto'],'foto.png',{type:'image/png'})];await browser.get('attachment').emit('change');
+  assert.equal(browser.get('attachment-preview').children.length,1,'O grupo deve receber a mesma prévia de anexo.');
+  await browser.get('composer').emit('submit');
+  const request=browser.requests.find(item=>item.path==='/api/send-media');assert.ok(request);assert.equal(request.input.jid,group);
 });
 
 test('trocar de conversa ou enviar libera a prévia local do anexo',async()=>{

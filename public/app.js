@@ -844,7 +844,6 @@
   $('message-text').addEventListener('input',()=>{editRevision++;pendingSend=null;if(selected && !selected.isGroup) extras()?.onTyping?.(selected.jid);});
   $('message-text').addEventListener('keydown',event=>{if(event.key==='Enter' && !event.shiftKey && !event.altKey && !event.isComposing && event.keyCode!==229 && !event.repeat) {event.preventDefault();$('composer').requestSubmit();}});
   function setAttachment(file,kind=null,viewOnce=false) {
-    if(selected?.isGroup) return;
     if(sending) return;
     editRevision++;pendingSend=null;
     if(file?.size>10*1024*1024) {notice('Escolha um arquivo de até 10 MB.');$('attachment').value='';return;}
