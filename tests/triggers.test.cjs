@@ -121,3 +121,24 @@ test('gatilho de primeiro contato aceita lote inicial e reserva a entrada em tod
   const f=await fixture(t),alias='123456789012345@lid';await f.service.saveSettings({enabled:true,rules:[{...keyword,type:'first_contact'}]});f.advance(1000);f.receive('first');f.advance(1000);const message=f.receive('second');f.chats([{jid,aliasJids:[alias],lastMessage:message}]);await f.service.tick();assert.equal(f.sent.length,1);
   const {claimKey}=require('../lib/triggers.cjs');assert.equal((await f.store.read()).replyClaims[claimKey(alias,message.id)].owner,'triggers');
 });
+test('áudio de boas-vindas sai como mensagem de voz, com "gravando" pelo tempo do áudio',async t=>{
+  const f=await fixture(t),voices=[];f.client.sendVoice=async(to,input)=>{voices.push({to,...input});return {id:'voice-'+voices.length};};
+  const audio={type:'audio',base64:'aGk=',mimeType:'audio/mpeg',fileName:'boas-vindas.mp3'},welcome={id:'welcome',name:'Boas-vindas',type:'first_contact',messages:[{...audio,voice:true,durationSeconds:12.34},{...audio,voice:true},{...audio,voice:false}]};
+  for(const messages of [[{...audio,voice:'yes'}],[{...audio,voice:true,durationSeconds:-1}],[{type:'image',base64:'aGk=',mimeType:'image/png',fileName:'a.png',voice:true}]]) await assert.rejects(f.service.saveSettings({rules:[{...welcome,messages}]}),error=>error.status===422);
+  const saved=await f.service.saveSettings({enabled:true,rules:[welcome]});
+  assert.deepEqual(saved.rules[0].messages.map(message=>[message.voice,message.durationSeconds]),[[true,12.3],[true,undefined],[undefined,undefined]]);
+  f.advance(1000);f.receive('first',{type:'audio',text:undefined});await f.service.tick();
+  assert.deepEqual(voices,[{to:jid,base64:'aGk=',delay:12300},{to:jid,base64:'aGk=',delay:4000}]);
+  assert.deepEqual(f.sent.map(item=>[item.type,item.mediaType]),[['media','audio']]);
+  assert.equal((await f.service.executions())[0].status,'sent');
+});
+test('mensagem de voz respeita o "digitando…" desligado e não vira arquivo se o conector não gravar voz',async t=>{
+  const f=await fixture(t),rule={id:'welcome',name:'Boas-vindas',type:'first_contact',messages:[{type:'audio',base64:'aGk=',mimeType:'audio/ogg',fileName:'oi.ogg',voice:true,durationSeconds:8}]};
+  await f.service.saveSettings({enabled:true,rules:[rule]});f.advance(1000);f.receive('no-voice');await f.service.tick();
+  assert.equal(f.sent.length,0);assert.equal((await f.service.executions())[0].status,'uncertain');
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-triggers-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const store=createStore(dir),delays=[];let clock=Date.parse('2026-10-29T12:00:00Z');const message=incoming('quiet',clock+1000);
+  let arrived=false;const client={chats:async()=>arrived?[{jid,lastMessage:message}]:[],messages:async()=>({messages:[message],pages:1}),sendVoice:async(to,input)=>{delays.push(input.delay);return {id:'voice'};}};
+  const quiet=createTriggerService({store,client,now:()=>clock,humanizer:{plan:async()=>({waitMs:0,typingMs:0}),sleep:async()=>{},settings:async()=>({typing:false})}});t.after(()=>quiet.stop());
+  await quiet.saveSettings({enabled:true,rules:[rule]});clock+=1000;arrived=true;await quiet.tick();assert.deepEqual(delays,[0]);
+});

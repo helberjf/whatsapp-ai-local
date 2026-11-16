@@ -55,7 +55,7 @@
     settings.rules.forEach((rule,index)=>{
       const card=node('article','trigger-rule'+(rule.enabled?'':' is-off')),top=node('div','trigger-rule-top'),title=node('div','trigger-rule-title');
       title.append(node('strong','',rule.name),node('small','',TYPES[rule.type] || rule.type));const state=node('span','trigger-badge',rule.enabled?'Ativo':'Pausado');state.dataset.enabled=String(rule.enabled);top.append(title,state);
-      const response=rule.messages.map(message=>message.type==='text'?message.text:message.type==='poll'?'Enquete: '+message.name:message.type==='audio'?'Áudio: '+message.fileName:'Anexo: '+message.fileName).join(' · ');
+      const response=rule.messages.map(message=>message.type==='text'?message.text:message.type==='poll'?'Enquete: '+message.name:message.type==='audio'?(message.voice?'Mensagem de voz: ':'Áudio: ')+message.fileName:'Anexo: '+message.fileName).join(' · ');
       card.append(top,node('p','trigger-rule-preview',response));
       const details=[];if(rule.type==='keyword')details.push(rule.keywords.join(', '));if(rule.type==='absence')details.push('Fora de '+rule.schedule.start+'–'+rule.schedule.end+' · '+rule.schedule.days.map(day=>DAYS[day]).join(', '));if(rule.inactiveDays)details.push('Inatividade de '+rule.inactiveDays+' dia(s)');if(rule.delaySeconds)details.push('Espera de '+rule.delaySeconds+' s');
       if(details.length)card.append(node('small','trigger-rule-details',details.join(' · ')));
@@ -86,9 +86,17 @@
   function messageType(index,type) {
     if(busy)return;const current=draft.messages[index];
     if(current.type===type)return;
-    draft.messages[index]=type==='text'?{type,text:current.caption || ''}:type==='poll'?{type,name:'',options:[],selectableCount:1}:{type,base64:'',mimeType:'',fileName:'',caption:''};renderMessages();
+    draft.messages[index]=type==='text'?{type,text:current.caption || ''}:type==='poll'?{type,name:'',options:[],selectableCount:1}:{type,base64:'',mimeType:'',fileName:'',caption:'',...(type==='audio'?{voice:true}:{})};renderMessages();
   }
   function fileBase64(file) {return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(Error('Não foi possível ler o arquivo.'));reader.readAsDataURL(file);});}
+  // Duração do áudio, para o "gravando áudio…" durar o mesmo tempo. Sem leitura possível, o servidor usa um tempo curto.
+  function audioDuration(blob) {
+    return new Promise(resolve=>{
+      if(typeof Blob==='undefined' || !(blob instanceof Blob)) {resolve(null);return;}
+      let url='';const probe=document.createElement('audio'),done=value=>{clearTimeout(timer);if(url)URL.revokeObjectURL(url);resolve(Number.isFinite(value)&&value>0&&value<=3600?Math.round(value*10)/10:null);},timer=setTimeout(()=>done(null),4000);
+      try {probe.preload='metadata';probe.addEventListener('loadedmetadata',()=>done(probe.duration));probe.addEventListener('error',()=>done(null));url=URL.createObjectURL(blob);probe.src=url;}catch {done(null);}
+    });
+  }
   async function readMedia(index,file,audioOnly) {
     if(!file || busy)return;
     const target=draft.messages[index];
@@ -97,7 +105,8 @@
       if(audioOnly && !String(file.type).startsWith('audio/'))throw Error('Selecione um arquivo de áudio.');
       const base64=await fileBase64(file);if(draft.messages[index]!==target)return;
       const type=audioOnly?'audio':String(file.type).startsWith('image/')?'image':String(file.type).startsWith('video/')?'video':String(file.type).startsWith('audio/')?'audio':'document';
-      Object.assign(target,{type,base64,mimeType:file.type || 'application/octet-stream',fileName:file.name});status('trigger-form-status','');renderMessages();
+      const duration=type==='audio'?await audioDuration(file):null;if(draft.messages[index]!==target)return;
+      Object.assign(target,{type,base64,mimeType:file.type || 'application/octet-stream',fileName:file.name});delete target.durationSeconds;if(duration)target.durationSeconds=duration;if(type!=='audio')delete target.voice;status('trigger-form-status','');renderMessages();
     } catch(error) {status('trigger-form-status',error.message,true);}
   }
   function renderMessages() {
@@ -119,6 +128,14 @@
         card.append(field(message.type==='audio'?'Arquivo de áudio':'Arquivo anexado',file,'O arquivo fica salvo neste computador. Até 10 MB no total de todos os gatilhos.'));
         if(message.fileName)card.append(node('p','trigger-file-name',message.fileName));
         if(message.base64 && message.type==='audio') {const preview=node('audio','trigger-media-preview');preview.controls=true;preview.preload='none';const bytes=Uint8Array.from(atob(message.base64),char=>char.charCodeAt(0));preview.src=URL.createObjectURL(new Blob([bytes],{type:message.mimeType}));previewUrls.add(preview.src);preview.setAttribute('aria-label','Ouvir áudio da mensagem '+(index+1));card.append(preview);}
+        if(message.type==='audio') {
+          const voice=toggle('trigger-voice-'+index,'Enviar como mensagem de voz gravada na hora',message.voice===true),box=voice.children[0];
+          box.addEventListener('change',async()=>{
+            message.voice=box.checked;if(!box.checked || message.durationSeconds || !message.base64 || typeof Blob==='undefined')return;
+            const duration=await audioDuration(new Blob([Uint8Array.from(atob(message.base64),char=>char.charCodeAt(0))],{type:message.mimeType}));if(duration && message.voice)message.durationSeconds=duration;
+          });
+          card.append(voice,node('p','trigger-note trigger-voice-note','O contato vê "gravando áudio…" pelo tempo do áudio (até 60 s) e recebe uma mensagem de voz comum, sem aparecer como arquivo nem como encaminhada. Desligado, o áudio vai como arquivo anexado.'));
+        }
         if(message.type!=='audio') {const caption=input('trigger-caption-'+index,'text',message.caption || '');caption.maxLength=1000;caption.addEventListener('input',()=>{message.caption=caption.value;});card.append(field('Legenda (opcional)',caption));}
       }
       const foot=node('div','trigger-message-foot'),attach=button('Anexar arquivo',()=>messageType(index,'document'),'text-button');attach.prepend?.(icon('attach'));foot.append(attach,node('span','','Imagem, vídeo ou documento'));card.append(foot);list.append(card);
@@ -139,6 +156,7 @@
       if(message.type==='poll' && (!message.name.trim() || message.options.length<2 || message.options.length>10 || new Set(message.options.map(value=>value.toLocaleLowerCase('pt-BR'))).size!==message.options.length))throw Error('Preencha a pergunta e de 2 a 10 opções diferentes na enquete '+(index+1)+'.');
       if(MEDIA.has(message.type) && !message.base64)throw Error('Adicione o arquivo da mensagem '+(index+1)+'.');
     }
+    for(const message of rule.messages) if(message.type!=='audio' || !message.voice) {delete message.voice;delete message.durationSeconds;}
     if(!rule.id) delete rule.id;
     return rule;
   }
