@@ -71,7 +71,7 @@
     const name=chat?.name || 'esta conversa',amount=kind==='pix'?$('sales-pix-amount').value.trim():'';
     if(!confirm(kind==='pix'?`Enviar o código Pix${amount?' de R$ '+amount:' sem valor definido'} para ${name}?`:`Enviar o contrato para ${name}?`)) return;
     button.disabled=true;status('Enviando…');
-    try {await api('/sales/send','POST',{jid,kind,...(amount?{amount}:{})},60000);status(kind==='pix'?'Código Pix enviado para '+name+'.':'Contrato enviado para '+name+'.');sales=await api('/sales');renderLists();}
+    try {await api('/sales/send','POST',{jid,kind,...(amount?{amount}:{})},60000);status(kind==='pix'?'Código Pix enviado para '+name+'.':'Contrato enviado para '+name+'.');sales=await api('/sales');renderLists();await C.loadMessages?.();}
     catch(error) {status(error.message+' Confira a conversa antes de tentar de novo.',true);}
     finally {button.disabled=false;}
   }

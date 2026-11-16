@@ -10,6 +10,8 @@ async function createDemo({port=8876,autoTranscription=false}={}) {
   const names=['Alex Morgan','Sam Rivera','Taylor Chen','Jordan Lee','Casey Silva','Robin Santos','Jamie Costa','Drew Lima','Avery Rocha','Riley Alves'];
   const jids=names.map((_,i)=>`55110000000${String(i).padStart(2,'0')}@s.whatsapp.net`);
   const stamp=Math.floor(Date.now()/1000);
+  // Envios seguidos no mesmo milissegundo (texto + código Pix) precisam de identificadores diferentes.
+  let sentSequence=0;
   const raw=(i,id,text,fromMe=false,age=0)=>({key:{id,remoteJid:jids[i],fromMe},message:{conversation:text},messageTimestamp:stamp-age,status:'READ'});
   const histories=jids.map((_,i)=>[raw(i,'hello-'+i,'Olá! Queria saber mais sobre os produtos e serviços.',false,600),raw(i,'reply-'+i,'Olá! Posso ajudar com o catálogo e os detalhes do seu projeto.',true,500),raw(i,'question-'+i,i===0?'Pode compartilhar uma demonstração?':'Qual é o prazo de entrega?',false,100+i)]);
   histories[0].push({...raw(0,'demo-audio','',false,90),message:{audioMessage:{mimetype:'audio/wav',seconds:3,ptt:true}}},raw(0,'demo-link','Conheça o catálogo: https://example.com/catalog e os detalhes em www.example.org.',true,80),{...raw(0,'demo-video','',true,70),message:{videoMessage:{caption:'Demonstração do produto · vídeo de teste',mimetype:'video/mp4',fileName:'product-demo.mp4'}}});
@@ -85,7 +87,7 @@ async function createDemo({port=8876,autoTranscription=false}={}) {
     else if(route.includes('/localCapabilities/')) output={extensionVersion:1,disappearingMessages:true,expiration:0};
     else if(route.includes('/updateEphemeral/')) output={jid:input.number,expiration:input.expiration,success:true,updatedAt:Date.now()};
     else if(route.includes('/deleteMessageForEveryone/')) {const original=histories.flat().find(m=>m.key.id===input.id);if(original) {original.deleted=true;original.message={protocolMessage:{type:'REVOKE',key:original.key}};}output={key:{id:'revoke-'+input.id,remoteJid:input.remoteJid,fromMe:true},message:{protocolMessage:{type:0,key:{id:input.id,remoteJid:input.remoteJid,fromMe:true}}}};}
-    else if(route.startsWith('/message/')) {const i=jids.indexOf(input.number),sent=raw(i,'demo-sent-'+Date.now(),input.text || input.caption || '[Anexo de demonstração]',true);if(input.quoted) sent.message={extendedTextMessage:{text:input.text || input.caption || '',contextInfo:{stanzaId:input.quoted.key.id,participant:input.quoted.key.fromMe?jids[0]:input.quoted.key.remoteJid,quotedMessage:input.quoted.message}}};if(i>=0) histories[i].push(sent);output=sent;}
+    else if(route.startsWith('/message/')) {const i=jids.indexOf(input.number),sent=raw(i,'demo-sent-'+Date.now()+'-'+(++sentSequence),input.text || input.caption || '[Anexo de demonstração]',true);if(input.quoted) sent.message={extendedTextMessage:{text:input.text || input.caption || '',contextInfo:{stanzaId:input.quoted.key.id,participant:input.quoted.key.fromMe?jids[0]:input.quoted.key.remoteJid,quotedMessage:input.quoted.message}}};if(i>=0) histories[i].push(sent);output=sent;}
     else if(!route.includes('/markMessageAsRead/')) return new Response(JSON.stringify({error:'No external connector in demo mode'}),{status:404});
     return new Response(JSON.stringify(output));
   };
