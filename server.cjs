@@ -22,6 +22,7 @@ const {createLocalAi}=require('./lib/local-ai.cjs');
 const {createAiWatchdog}=require('./lib/ai-watchdog.cjs');
 const {createSpeechEngines}=require('./lib/speech.cjs');
 const {createVoiceFlow}=require('./lib/voice-flow.cjs');
+const {createSalesService}=require('./lib/sales.cjs');
 const {createMessagingRoutes,optionalSendFlag}=require('./lib/messaging-routes.cjs');
 const {pruneState}=require('./lib/housekeeping.cjs');
 const {createEvolutionEvents}=require('./lib/evolution-events.cjs');
@@ -127,7 +128,9 @@ function createWhatsAppServer(options={}) {
     const transcriptions=createTranscriptionService({store,credentials,mediaLoader:client.media,...createAudioEngines(),...options.transcriptionEngines});
     // Fluxo de voz: transcrição automática, leitura dos áudios pela IA e respostas em áudio (voz do Windows ou OpenAI).
     const voice=createVoiceFlow({store,client,transcriptions,speech,credentials,now});
-    const assistant=createAssistantService({humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.retrieve,reliability:extra.services.reliability,catalogText:extra.services.catalogText,now,intervalMs:options.assistantIntervalMs,voice});
+    // Vendas com IA: qualificação de leads, agenda, Pix e contrato. A IA pede, a central confere e executa.
+    const sales=createSalesService({store,client,products:extra.services.products,now});
+    const assistant=createAssistantService({sales,humanizer,store,client,ai:extra.services.ai,retrieve:extra.services.retrieve,reliability:extra.services.reliability,catalogText:extra.services.catalogText,now,intervalMs:options.assistantIntervalMs,voice});
     const avatars=createAvatarService({profileLoader:client.profile,fetchImpl:options.avatarFetchImpl});
     const crm=createCrmService({store}),automation=createAutomationService({store,client,humanizer}),groupPresentation=createGroupPresentation({store});
     const triggers=createTriggerService({store,client,now,humanizer});
@@ -183,7 +186,7 @@ function createWhatsAppServer(options={}) {
     const stop=()=>{stopped=true;clearTimeout(eventTimer);events?.stop();voice.stop();team.stop();triggers.stop();automation.stop();scheduler.stop();assistant.stop();};
     // Ao fechar, espera o ciclo em andamento e as transcrições: nada grava depois que o PostgreSQL fecha.
     const idle=async()=>{if(replyTick) await replyTick;await Promise.all([voice.idle(),team.idle(),triggers.idle(),automation.idle(),scheduler.idle(),assistant.idle(),transcriptions.idle()]);};
-    return {account,client,store,rules,transcriptions,voice,assistant,avatars,crm,automation,groupPresentation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
+    return {account,client,store,rules,transcriptions,voice,assistant,sales,avatars,crm,automation,groupPresentation,triggers,scheduler,team,chatDelta,sendOnce,messaging,housekeeping,pollReplies,scheduledPoll,autoArchiveSnapshot,events:()=>events?.status() || null,start,stop,idle};
   }
   const runtimes=new Map(accounts.list().map(account=>[account.id,createAccountRuntime(account)]));
   async function accountList() {
@@ -223,7 +226,7 @@ function createWhatsAppServer(options={}) {
         if(asset.immutable) res.setHeader('Cache-Control','public, max-age=31536000, immutable');
         res.writeHead(200,{'Content-Type':asset.type,...(asset.headers || {})});return res.end(content);
       }
-      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/team.js','/assets/accounts.js','/assets/accounts.css','/assets/prospection.js','/assets/prospection.css','/assets/group-order.js','/assets/group-order.css','/assets/contact-media.js','/assets/contact-media.css'].includes(route)) {
+      if(req.method==='GET' && ['/','/index.html','/assets/app.js','/assets/pages.js','/assets/app.css','/assets/features.js','/assets/features.css','/assets/avatars.js','/assets/avatars.css','/assets/schedule.js','/assets/schedule.css','/assets/triggers.js','/assets/triggers.css','/assets/messaging.css','/assets/conversation-media.js','/assets/pdf-viewer.js','/assets/whatsapp-plus.js','/assets/whatsapp-plus.css','/assets/voice.js','/assets/sales.js','/assets/sales.css','/assets/team.js','/assets/accounts.js','/assets/accounts.css','/assets/prospection.js','/assets/prospection.css','/assets/group-order.js','/assets/group-order.css','/assets/contact-media.js','/assets/contact-media.css'].includes(route)) {
         const file=route.startsWith('/assets/')?route.split('/').pop():'index.html';let content=await fs.readFile(path.join(root,'public',file),'utf8');
         if(file==='index.html') content=content.replace('</head>',`<meta name="whatsapp-session" content="${token}">\n<meta name="whatsapp-accounts" content="${accounts.list().map(item=>item.id).join(',')}">\n</head>`);
         if(file==='index.html' && options.demo) content=content.replace('<body>','<body class="demo-mode"><div class="demo-banner" role="status">DEMO · Fictional contacts · No real WhatsApp connection</div>');
@@ -248,7 +251,7 @@ function createWhatsAppServer(options={}) {
       // A conta vem do cabeçalho X-WhatsApp-Account; sem ele, vale a primeira conta (a original).
       const chosen=req.headers['x-whatsapp-account'],runtime=runtimes.get(chosen===undefined?accounts.fallback().id:chosen);
       if(!runtime) return json(res,404,{error:'Conta não encontrada. Recarregue a página.'});
-      const {account,client,store,rules,transcriptions,assistant,avatars,crm,automation,groupPresentation,triggers,scheduler,team,chatDelta,sendOnce,messaging}=runtime;
+      const {account,client,store,rules,transcriptions,assistant,sales,avatars,crm,automation,groupPresentation,triggers,scheduler,team,chatDelta,sendOnce,messaging}=runtime;
       res.setHeader('X-WhatsApp-Account',account.id);
       if(route==='/api/prospection/drafts') return json(res,200,await prospectionDrafts({account,config:options.config,method:req.method,input:req.method==='PATCH'?await readBody(req):undefined,fetchImpl:options.prospectionFetch}));
       if(route==='/api/accounts' && req.method==='GET') return json(res,200,await accountList());
@@ -425,7 +428,7 @@ function createWhatsAppServer(options={}) {
         const media=await client.media(jid,id);if(typeof media.base64!=='string') throw new ApiError('Mídia indisponível. Abra a mensagem no celular.');
         return json(res,200,{base64:media.base64,mimeType:media.mimetype || 'application/octet-stream',fileName:media.fileName || 'anexo'});
       }
-      const handled=(await team.handle(req,route,url,readBody)) || (await messaging(req,route,url,readBody)) || (await extra(req,route,url,readBody,{rules})) || (await assistant.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
+      const handled=(await team.handle(req,route,url,readBody)) || (await messaging(req,route,url,readBody)) || (await extra(req,route,url,readBody,{rules})) || (await assistant.handle(req,route,url,readBody)) || (await sales.handle(req,route,url,readBody));if(handled) return json(res,handled.status,handled.body);
       return json(res,404,{error:'Endereço não encontrado.'});
     } catch(error) {if(!error.status) console.error('Falha local:',error.code || error.name);return json(res,error.status || 500,{error:error.status?error.message:'Não foi possível acessar os dados locais. Consulte data/server.err.log.'});}
   });

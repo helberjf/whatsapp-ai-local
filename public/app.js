@@ -969,8 +969,8 @@
   function showPanel(section) {
     for(const name of ['attendance','products','assistant','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
   }
-  const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-team','nav-voice','nav-profile','settings','nav-connection','nav-settings'];
-  const pageIds=['page-dashboard','page-contacts','page-knowledge','page-products','page-ai','page-team','page-voice','page-profile'];
+  const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-team','nav-voice','nav-sales','nav-profile','settings','nav-connection','nav-settings'];
+  const pageIds=['page-dashboard','page-contacts','page-knowledge','page-products','page-ai','page-team','page-voice','page-sales','page-profile'];
   function renderDashboard() {
     const cards=document.createDocumentFragment(),activeChats=chats.filter(chat=>!chat.isGroup && chat.archived!==true);
     for(const [label,count,status,unread] of [
@@ -1148,7 +1148,7 @@
   $('media-viewer').addEventListener('close',()=>{const key=viewerMediaKey;viewerMediaKey=null;if(key && !key.startsWith((selected?.jid || '')+'|')) discardMedia(key);trimMediaCache();});
   window.addEventListener('pagehide',()=>{viewerMediaKey=null;mediaLocks.clear();clearConversationMedia();});
   const mainNav=document.querySelector('.main-nav');
-  if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-team','nav-products','nav-knowledge','nav-ai','nav-voice','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
+  if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-team','nav-products','nav-knowledge','nav-ai','nav-voice','nav-sales','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
   hooks.sync.push(()=>globalThis.WhatsAppTriggers?.onChats?.(chats));hooks.select.push(()=>globalThis.WhatsAppTriggers?.onSelectChat?.(selected));
   (async()=>{try {templates=(await api('/settings')).templates;renderTemplates();}catch(error) {notice(error.message);}await sync();if(new URLSearchParams(location.search).has('conectar') && connection?.reachable && connection.state!=='connected') openQr();})();
   setInterval(sync,4000);

@@ -36,6 +36,8 @@
   <link rel="stylesheet" href="/assets/whatsapp-plus.css">
   <script defer src="/assets/whatsapp-plus.js"></script>
   <script defer src="/assets/voice.js"></script>
+  <link rel="stylesheet" href="/assets/sales.css">
+  <script defer src="/assets/sales.js"></script>
   <script defer src="/assets/team.js"></script>
 </head>
 <body>
@@ -100,6 +102,7 @@
         <button id="nav-ai" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Assistente de IA</span></button>
         <button id="nav-team" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><span>Equipe e painel</span><small id="nav-waiting-count">—</small></button>
         <button id="nav-voice" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-wave"/></svg><span>Fluxo de voz (IA)</span><small id="nav-voice-state">—</small></button>
+        <button id="nav-sales" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Vendas com IA</span><small id="nav-sales-state">—</small></button>
         <button id="settings" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg><span>Respostas rápidas</span></button>
         <button id="transcription-settings" class="nav-item" type="button" title="Transcrição de áudios" aria-label="Transcrição de áudios"><svg class="icon" aria-hidden="true"><use href="#i-note"/></svg><span>Transcrição de áudios</span></button>
         <button id="nav-starred" class="nav-item" type="button"><svg class="icon" aria-hidden="true"><use href="#i-star"/></svg><span>Mensagens favoritas</span></button>
@@ -269,6 +272,47 @@
             <label class="field">Pergunta<input id="survey-question" maxlength="255"></label><p class="muted small" id="survey-options"></p>
             <p id="automations-status" class="form-status" role="status" aria-live="polite"></p><div class="form-actions"><button id="team-save-automations" class="button primary" type="button">Salvar automações</button></div></section>
         </div>
+      </section>
+      <section id="page-sales" class="page" hidden aria-labelledby="sales-title">
+        <div class="page-head"><div><h1 id="sales-title">Vendas com IA</h1><p>A IA qualifica o lead, marca a reunião e fecha a venda enviando o Pix ou o contrato. Ela só pede a ação: a central confere o horário na agenda e o valor no catálogo antes de enviar qualquer coisa. Tudo começa desligado e só funciona com as respostas automáticas ligadas em <button id="sales-open-assistant" class="text-button inline" type="button">Assistente de IA</button>.</p></div></div>
+        <div class="sales-grid">
+          <section class="panel pad" aria-labelledby="sales-qualify-title"><h2 id="sales-qualify-title"><svg class="icon green-ink" aria-hidden="true"><use href="#i-users"/></svg> Qualificação de leads</h2>
+            <p class="muted">Quando o cliente diz o que precisa e mostra interesse real, a IA marca a conversa como <strong>Lead qualificado</strong>, move o contato para <strong>Em negociação</strong> no CRM e anota um resumo do pedido. Todo contato atendido pela IA sai de Novo para Em contato.</p>
+            <label class="switch"><input id="sales-qualify" type="checkbox"><span>Qualificar leads e atualizar o CRM automaticamente</span></label>
+          </section>
+          <section class="panel pad" aria-labelledby="sales-agenda-title"><h2 id="sales-agenda-title"><svg class="icon green-ink" aria-hidden="true"><use href="#i-clock"/></svg> Agenda de reuniões</h2>
+            <p class="muted">A IA oferece apenas horários livres, com pelo menos 2 horas de antecedência, e confirma o que o cliente escolher. Cada contato tem um compromisso por vez: escolher outro horário remarca.</p>
+            <label class="switch"><input id="sales-agenda" type="checkbox"><span>Deixar a IA agendar</span></label>
+            <label class="field">O que será agendado<input id="sales-agenda-subject" type="text" maxlength="80" placeholder="uma reunião de apresentação"></label>
+            <span class="field">Dias de atendimento</span><div id="sales-days" class="sales-days"></div>
+            <div class="field-row"><label class="field">Das<input id="sales-agenda-start" type="time"></label><label class="field">Até<input id="sales-agenda-end" type="time"></label></div>
+            <div class="field-row"><label class="field">Duração<select id="sales-agenda-slot"><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">1 hora</option><option value="90">1 hora e meia</option><option value="120">2 horas</option></select></label><label class="field">Oferecer horários para os próximos (dias)<input id="sales-agenda-horizon" type="number" min="1" max="30" step="1"></label></div>
+            <label class="field">Instruções enviadas na confirmação (opcional)<textarea id="sales-agenda-note" rows="2" maxlength="500" placeholder="Ex.: A reunião será por vídeo: https://…"></textarea></label>
+            <p id="sales-next-slots" class="muted small"></p>
+            <h3 class="sources-title">Compromissos marcados</h3><ul id="sales-appointments" class="log-list"></ul>
+          </section>
+          <section class="panel pad" aria-labelledby="sales-pix-title"><h2 id="sales-pix-title"><svg class="icon green-ink" aria-hidden="true"><use href="#i-copy"/></svg> Cobrança por Pix</h2>
+            <p class="muted">A IA envia um código Pix Copia e Cola com o valor exato de um item do catálogo. Valor sob consulta, mais de um item ou desconto vão para um atendente. O pagamento não é confirmado automaticamente: confira o comprovante.</p>
+            <label class="switch"><input id="sales-pix" type="checkbox"><span>Deixar a IA enviar o Pix</span></label>
+            <div class="field-row"><label class="field">Tipo da chave<select id="sales-pix-type"><option value="cpf">CPF</option><option value="cnpj">CNPJ</option><option value="email">E-mail</option><option value="phone">Celular</option><option value="random">Chave aleatória</option></select></label><label class="field">Chave Pix<input id="sales-pix-key" type="text" maxlength="80" autocomplete="off" spellcheck="false"><small id="sales-pix-key-hint"></small></label></div>
+            <div class="field-row"><label class="field">Nome do recebedor<input id="sales-pix-name" type="text" maxlength="25" autocomplete="off"><small>Como aparece no banco, até 25 letras.</small></label><label class="field">Cidade<input id="sales-pix-city" type="text" maxlength="15" autocomplete="off"></label></div>
+            <label class="field">Descrição no extrato (opcional)<input id="sales-pix-description" type="text" maxlength="40"></label>
+            <label class="field">Valor para testar ou enviar agora (opcional)<input id="sales-pix-amount" type="text" inputmode="decimal" maxlength="14" placeholder="Ex.: 199,90"></label>
+            <div class="form-actions"><button id="sales-pix-test" class="button secondary" type="button">Salvar e gerar código de teste</button><button id="sales-pix-send" class="button secondary" type="button">Enviar para a conversa aberta</button></div>
+            <div id="sales-pix-code-box" class="sales-code" hidden><textarea id="sales-pix-code" rows="4" readonly aria-label="Código Pix de teste"></textarea><button id="sales-pix-copy" class="button secondary compact" type="button">Copiar</button></div>
+          </section>
+          <section class="panel pad" aria-labelledby="sales-contract-title"><h2 id="sales-contract-title"><svg class="icon green-ink" aria-hidden="true"><use href="#i-doc"/></svg> Contrato para assinatura</h2>
+            <p class="muted">Quando o cliente aceita a proposta e pede o contrato, a IA envia o arquivo, o link de assinatura ou os dois, com a sua mensagem.</p>
+            <label class="switch"><input id="sales-contract" type="checkbox"><span>Deixar a IA enviar o contrato</span></label>
+            <label class="field">Mensagem<textarea id="sales-contract-message" rows="2" maxlength="1000"></textarea></label>
+            <label class="field">Link de assinatura (opcional)<input id="sales-contract-link" type="url" maxlength="500" placeholder="https://…"><small>Link do documento na sua plataforma de assinatura eletrônica.</small></label>
+            <label class="field">Arquivo do contrato (opcional, até 2 MB)<input id="sales-contract-file" type="file" accept=".pdf,.doc,.docx,application/pdf"></label>
+            <p class="muted small"><span id="sales-contract-current"></span> <button id="sales-contract-remove" class="text-button inline" type="button" hidden>Remover</button></p>
+            <div class="form-actions"><button id="sales-contract-send" class="button secondary" type="button">Enviar para a conversa aberta</button></div>
+          </section>
+        </div>
+        <section class="panel pad"><div class="sales-save-bar"><button id="sales-save" class="button primary" type="button">Salvar vendas com IA</button><p id="sales-status" class="form-status" role="status" aria-live="polite"></p></div></section>
+        <section class="panel pad" aria-labelledby="sales-log-title"><h2 id="sales-log-title"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg> Atividade de vendas</h2><ul id="sales-log" class="log-list"></ul></section>
       </section>
       <section id="page-voice" class="page" hidden aria-labelledby="voice-title">
         <div class="page-head"><div><h1 id="voice-title">Fluxo de voz com IA</h1><p>Ative cada etapa: o áudio recebido vira texto, a IA lê a transcrição como uma mensagem do cliente e responde em texto ou com uma mensagem de voz. Tudo começa desligado.</p></div></div>
