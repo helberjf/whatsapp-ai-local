@@ -24,6 +24,9 @@ const test=base.extend({demo:async({page},use)=>{
     else if(pathname==='/api/contact') result={status:'open',labels:[],notes:[]};
     else if(pathname==='/api/avatar') result={url:null};
     else if(pathname==='/api/transcriptions') result=[];
+    else if(pathname==='/api/transcriptions/discover') result={discovered:0};
+    else if(pathname==='/api/conversation-media') result={items:[],page:1,pages:1};
+    else if(pathname==='/api/group-presentation') result={version:2,pinned:[],normal:[],archived:[]};
     else if(pathname==='/api/messages') {
       const rows=fixture.stickerBase64?[...history,message('sticker-in',jids[0],'sticker',''),{...message('sticker-out',jids[0],'sticker',''),fromMe:true}]:history;
       result={messages:rows.filter(item=>item.jid===url.searchParams.get('jid')).map(item=>item.type==='video' && fixture.videoThumbnail?{...item,jpegThumbnail:fixture.videoThumbnail,durationSeconds:3}:item),page:1,pages:1};

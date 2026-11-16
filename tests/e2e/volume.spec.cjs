@@ -23,7 +23,7 @@ const test=base.extend({central:async({},use)=>{
 
 test('thousands of conversations render only visible rows and stay searchable and clickable',async({page,central})=>{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto(central);await expect(page.locator('#chat-count')).toHaveText(String(COUNT));
+  await page.goto(central);await expect.poll(()=>page.evaluate(()=>globalThis.WhatsAppCentral?.chats().length)).toBe(COUNT);
   const rendered=await page.locator('#chat-list .chat-item').count();expect(rendered).toBeGreaterThan(5);expect(rendered).toBeLessThan(80);
   await expect(page.locator('#chat-list .chat-item').first()).toContainText('Cliente 0000');
   const cost=await page.evaluate(()=>{const start=performance.now();for(let i=0;i<5;i++) globalThis.WhatsAppCentral.renderChats();return (performance.now()-start)/5;});
@@ -32,7 +32,7 @@ test('thousands of conversations render only visible rows and stay searchable an
   await expect(page.locator('#chat-list .chat-item').filter({hasText:'Cliente 2999'})).toBeVisible();
   await page.locator('#chat-list .chat-item').filter({hasText:'Cliente 2999'}).click();await expect(page.locator('#contact-name')).toHaveText('Cliente 2999');
   await page.locator('#search').fill('Cliente 1234');await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);
-  await page.locator('#search').fill('');await expect(page.locator('#chat-count')).toHaveText(String(COUNT));
+  await page.locator('#search').fill('');await expect.poll(()=>page.evaluate(()=>globalThis.WhatsAppCentral?.chats().length)).toBe(COUNT);await expect(page.locator('#chat-list .chat-item').first()).toContainText('Cliente 0000');
   const syncs=await page.evaluate(async()=>{const token=document.querySelector('meta[name="whatsapp-session"]').content,first=await (await fetch('/api/chats?delta=1',{headers:{'X-WhatsApp-Token':token}})).json(),second=await (await fetch('/api/chats?delta=1&since='+encodeURIComponent(first.version),{headers:{'X-WhatsApp-Token':token}})).json();return {full:first.chats.length,changed:second.changed.length};});
   expect(syncs).toEqual({full:COUNT,changed:0});
   expect(errors).toEqual([]);
