@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');
 const path=require('node:path');
 const fs=require('node:fs');
 const {EventEmitter}=require('node:events');
+const {spawnSync}=require('node:child_process');
 const {runScript}=require('../scripts/launcher.cjs');
 const {classifyLine,runVisualLauncher}=require('../scripts/launcher-ui.cjs');
 
@@ -113,4 +114,28 @@ test('adaptador visual oculta o processo, registra saídas e preserva argumentos
   assert.match(calls.appended.join(''),/2026-11-16T12:00:00\.000Z.*inicio/);
   assert.match(calls.appended.join(''),/aviso técnico/);
   assert.match(calls.appended.join(''),/exit=0/);
+});
+
+test('iniciador invisível abre a interface WPF e preserva o modo sem navegador',()=>{
+  const root=path.join(__dirname,'..');
+  const vbs=fs.readFileSync(path.join(root,'scripts','open-central-ui.vbs'),'utf8');
+  const ui=fs.readFileSync(path.join(root,'scripts','start-ui.ps1'),'utf8');
+  assert.match(vbs,/WScript\.Shell/i);
+  assert.match(vbs,/start-ui\.ps1/i);
+  assert.match(vbs,/-WindowStyle Hidden/i);
+  assert.match(vbs,/-NoBrowser/i);
+  assert.match(ui,/PresentationFramework/);
+  assert.match(ui,/launcher-ui\.cjs/);
+  assert.match(ui,/CreateNoWindow\s*=\s*\$true/);
+  assert.match(ui,/launcher\.log/);
+  assert.match(ui,/Substring\(\$statusPrefix\.Length\)/);
+  assert.match(ui,/Central pronta/);
+  assert.match(ui,/Fechar/);
+  assert.match(ui,/ShowDialog/);
+});
+
+test('XAML da abertura visual carrega no Windows',()=>{
+  const script=path.join(__dirname,'..','scripts','start-ui.ps1');
+  const result=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',script,'-ValidateOnly'],{encoding:'utf8',windowsHide:true});
+  assert.equal(result.status,0,result.stderr || result.stdout);
 });
