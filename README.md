@@ -68,7 +68,7 @@ npm ci
 npm start
 ```
 
-The Windows launcher creates local connector credentials if none exist, starts Docker Desktop when needed, brings up the containers, starts the application in the background, and opens [Whats AI](http://127.0.0.1:8766/) directly in the default browser after the health check succeeds. Existing configuration and pairing data are preserved.
+The **Whats AI** desktop shortcut shows a compact progress window while it prepares local credentials, starts Docker and the databases, and opens [Whats AI](http://127.0.0.1:8766/) after the health check succeeds. Docker, Node and PowerShell output stays hidden during normal use. If startup fails, the window remains open with a friendly message; technical details are appended to `data/launcher.log`. Existing configuration and pairing data are preserved.
 
 Whats AI is also an installable PWA. In Chrome or Edge, open the browser menu and choose **Install Whats AI** to add it to the desktop and Start menu with its own icon and standalone window. The application still needs the local launcher and services; private conversations, media, health responses, and API data are never stored in the PWA cache.
 
@@ -92,13 +92,14 @@ Other entry points:
 | --- | --- |
 | `npm run configure` | Generate missing initial configuration without replacing existing secrets. |
 | `npm run serve` | Run only the Node server when configuration and the connector are already available. |
-| `npm run shortcut` | Create the **Whats AI** desktop shortcut and migrate the previous app shortcut when owned by this project. |
-| `Iniciar WhatsApp Central.cmd` / `npm start` | The single supported interactive launcher: start the local stack and open the application in the default browser. The launcher restarts an older running build after an update. |
+| `npm run shortcut` | Create the visual **Whats AI** desktop shortcut and migrate a previous project-owned shortcut. |
+| **Whats AI** desktop shortcut | Start the local stack through a visual progress window, without displaying a command window. |
+| `Iniciar WhatsApp Central.cmd` / `npm start` | Start the same local stack in textual diagnostic mode. The launcher opens the browser and restarts an older running build after an update. |
 | `Parar WhatsApp Central.cmd` / `npm run stop` | The supported stop command: stop the application and containers while preserving data. |
 | `Ativar inicio com Windows.cmd` | Opt into starting the services at Windows sign-in. |
 | `Desativar inicio com Windows.cmd` | Remove that sign-in shortcut. |
 
-`Iniciar WhatsApp Central.cmd` and `Parar WhatsApp Central.cmd` use the Node launchers, which run `scripts/start-central.ps1` and `scripts/stop.ps1`. If either PowerShell script is missing from the local copy, they run the version from the last commit under a temporary name in `scripts/` and remove it afterwards.
+The desktop shortcut uses `scripts/open-central-ui.vbs` and `scripts/start-ui.ps1` to keep consoles hidden, while the visual adapter records startup details in `data/launcher.log`. `Iniciar WhatsApp Central.cmd` and `Parar WhatsApp Central.cmd` remain the textual diagnostic launchers; they run `scripts/start-central.ps1` and `scripts/stop.ps1`. If either PowerShell script is missing from the local copy, they run the version from the last commit under a temporary name in `scripts/` and remove it afterwards.
 
 If the launcher reports that Docker did not start, open Docker Desktop and read its error. If the error mentions `docker-secrets-engine\engine.sock`, a socket left by an interrupted shutdown is blocking it: quit Docker Desktop, delete `%LOCALAPPDATA%\docker-secrets-engine\engine.sock` (restart Windows first if it cannot be deleted) and start again.
 
