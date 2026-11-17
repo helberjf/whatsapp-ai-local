@@ -2,7 +2,9 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 const fs=require('node:fs');
+const {EventEmitter}=require('node:events');
 const {runScript}=require('../scripts/launcher.cjs');
+const {classifyLine,runVisualLauncher}=require('../scripts/launcher-ui.cjs');
 
 // Dependências simuladas: nenhum PowerShell nem git de verdade é executado.
 function deps({present=true,status=0,error=null,gitFails=false}={}) {
@@ -82,4 +84,33 @@ test('iniciador abre uma URL nova para não reutilizar a aba antiga em cache',()
   assert.match(start,/Start-Process \$launchUrl/);
   assert.match(start,/Start-Process \(\$launchUrl\+'\&conectar=1'\)/);
   assert.doesNotMatch(start,/Start-Process \$centralUrl/);
+});
+
+test('carregamento visual traduz somente marcos estáveis do iniciador',()=>{
+  assert.deepEqual(classifyLine('Configuração local pronta. Segredos preservados.'),{step:2,status:'Iniciando serviços...'});
+  assert.deepEqual(classifyLine('Preparando WhatsApp, banco e sessão persistente…'),{step:3,status:'Conectando ao WhatsApp...'});
+  assert.deepEqual(classifyLine('Banco PostgreSQL da central pronto. Banco do conector preservado.'),{step:4,status:'Abrindo a Central...'});
+  assert.deepEqual(classifyLine('Central ja iniciada. Reutilizando a sessao.'),{step:4,status:'Central pronta.',done:true});
+  assert.deepEqual(classifyLine('Whats AI pronto: http://127.0.0.1:8766/'),{step:4,status:'Central pronta.',done:true});
+  assert.equal(classifyLine('uma linha técnica qualquer'),null);
+});
+
+test('adaptador visual oculta o processo, registra saídas e preserva argumentos',async()=>{
+  const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();
+  const calls={spawned:[],appended:[],emitted:[]};
+  const promise=runVisualLauncher({
+    root:'C:/central',extraArgs:['-NoBrowser'],
+    spawn:(file,args,options)=>{calls.spawned.push({file,args,options});return child;},
+    append:text=>calls.appended.push(text),emit:event=>calls.emitted.push(event),now:()=>new Date('2026-11-16T12:00:00.000Z'),
+    nodePath:'C:/node/node.exe'
+  });
+  child.stdout.emit('data',Buffer.from('Configuração local pronta. Segredos preservados.\r\nBanco PostgreSQL da central pronto.\r\n'));
+  child.stderr.emit('data',Buffer.from('aviso técnico\r\n'));
+  child.emit('close',0);
+  assert.equal(await promise,0);
+  assert.deepEqual(calls.spawned,[{file:'C:/node/node.exe',args:[path.join('C:/central','scripts','open-central.cjs'),'-NoBrowser'],options:{cwd:'C:/central',windowsHide:true,stdio:['ignore','pipe','pipe']}}]);
+  assert.deepEqual(calls.emitted,[{step:2,status:'Iniciando serviços...'},{step:4,status:'Abrindo a Central...'}]);
+  assert.match(calls.appended.join(''),/2026-11-16T12:00:00\.000Z.*inicio/);
+  assert.match(calls.appended.join(''),/aviso técnico/);
+  assert.match(calls.appended.join(''),/exit=0/);
 });
