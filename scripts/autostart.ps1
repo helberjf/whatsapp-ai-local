@@ -3,9 +3,11 @@ $ErrorActionPreference='Stop'
 $startupPath=[Environment]::GetFolderPath('Startup')
 $shortcutPath=Join-Path $startupPath 'Whats AI.lnk'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$launcherPath=Join-Path $projectRoot 'Iniciar WhatsApp Central.cmd'
+$launcherPath=Join-Path $PSScriptRoot 'open-central-ui.vbs'
 if(-not (Test-Path -LiteralPath $launcherPath)) {throw 'Iniciador da central nao encontrado.'}
-$arguments='/d /c ""'+$launcherPath+'" -NoBrowser"'
+$arguments='"'+$launcherPath+'" -NoBrowser'
+$cmdLauncher=Join-Path $projectRoot 'Iniciar WhatsApp Central.cmd'
+$cmdArguments='/d /c ""'+$cmdLauncher+'" -NoBrowser"'
 $oldArguments='-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+(Join-Path $PSScriptRoot 'start.ps1')+'" -NoBrowser'
 $shell=New-Object -ComObject WScript.Shell
 $ownedPaths=@()
@@ -13,7 +15,7 @@ foreach($name in @('Whats AI.lnk','WhatsApp Local.lnk')) {
   $candidate=Join-Path $startupPath $name
   if(Test-Path -LiteralPath $candidate) {
     $existing=$shell.CreateShortcut($candidate)
-    if($existing.Arguments -in @($arguments,$oldArguments) -and $existing.WorkingDirectory -eq $projectRoot) {$ownedPaths+=$candidate}
+    if($existing.Arguments -in @($arguments,$cmdArguments,$oldArguments) -and $existing.WorkingDirectory -eq $projectRoot) {$ownedPaths+=$candidate}
     elseif($candidate -eq $shortcutPath) {throw 'Ja existe outro atalho Whats AI na inicializacao do Windows.'}
   }
 }
@@ -22,7 +24,7 @@ if($Remove) {
   Write-Output 'Inicialização automática desativada.'
 } else {
   $shortcut=$shell.CreateShortcut($shortcutPath)
-  $shortcut.TargetPath=Join-Path $env:SystemRoot 'System32\cmd.exe'
+  $shortcut.TargetPath=Join-Path $env:SystemRoot 'System32\wscript.exe'
   $shortcut.Arguments=$arguments
   $shortcut.WorkingDirectory=$projectRoot
   $shortcut.WindowStyle=7

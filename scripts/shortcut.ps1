@@ -3,18 +3,20 @@ $projectRoot=Split-Path -Parent $PSScriptRoot
 $desktopPath=[Environment]::GetFolderPath('Desktop')
 $shortcutPath=Join-Path $desktopPath 'Whats AI.lnk'
 $legacyPath=Join-Path $desktopPath 'WhatsApp Central.lnk'
-$launcherPath=Join-Path $projectRoot 'Iniciar WhatsApp Central.cmd'
+$launcherPath=Join-Path $PSScriptRoot 'open-central-ui.vbs'
 if(-not (Test-Path -LiteralPath $launcherPath)) {throw 'Iniciador da central nao encontrado.'}
-$arguments='/d /c ""'+$launcherPath+'""'
+$arguments='"'+$launcherPath+'"'
+$cmdLauncher=Join-Path $projectRoot 'Iniciar WhatsApp Central.cmd'
+$cmdArguments='/d /c ""'+$cmdLauncher+'""'
 $oldLauncher=Join-Path $PSScriptRoot 'start.ps1'
 $oldArguments='-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+$oldLauncher+'"'
 $previousArguments='"'+(Join-Path $projectRoot 'Abrir WhatsApp.vbs')+'"'
 $shell=New-Object -ComObject WScript.Shell
 $shortcut=$shell.CreateShortcut($shortcutPath)
-if((Test-Path -LiteralPath $shortcutPath) -and $shortcut.Arguments -notin @($arguments,$oldArguments,$previousArguments)) {
+if((Test-Path -LiteralPath $shortcutPath) -and $shortcut.Arguments -notin @($arguments,$cmdArguments,$oldArguments,$previousArguments)) {
   throw 'Ja existe outro atalho Whats AI na area de trabalho. Renomeie-o antes de continuar.'
 }
-$shortcut.TargetPath=Join-Path $env:SystemRoot 'System32\cmd.exe'
+$shortcut.TargetPath=Join-Path $env:SystemRoot 'System32\wscript.exe'
 $shortcut.Arguments=$arguments
 $shortcut.WorkingDirectory=$projectRoot
 $shortcut.WindowStyle=7
@@ -23,6 +25,6 @@ $shortcut.Description='Abre Whats AI e inicia os servicos locais automaticamente
 $shortcut.Save()
 if(Test-Path -LiteralPath $legacyPath) {
   $legacy=$shell.CreateShortcut($legacyPath)
-  if($legacy.Arguments -in @($arguments,$oldArguments,$previousArguments) -and $legacy.WorkingDirectory -eq $projectRoot) {Remove-Item -LiteralPath $legacyPath}
+  if($legacy.Arguments -in @($arguments,$cmdArguments,$oldArguments,$previousArguments) -and $legacy.WorkingDirectory -eq $projectRoot) {Remove-Item -LiteralPath $legacyPath}
 }
 Write-Output ('Atalho pronto: '+$shortcutPath)

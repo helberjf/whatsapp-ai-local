@@ -63,13 +63,17 @@ test('somente os iniciadores canônicos de abrir e parar permanecem',()=>{
   for(const legacy of ['Abrir WhatsApp.cmd','Iniciar WhatsApp.cmd','Iniciar WhatsApp Local.cmd','Parar WhatsApp.cmd']) assert.equal(fs.existsSync(path.join(root,legacy)),false,legacy+' deve ser removido');
 });
 
-test('atalhos do Windows chamam o launcher canônico e usam a marca Whats AI',()=>{
+test('atalhos do Windows usam a abertura visual e reconhecem formatos antigos do projeto',()=>{
   const root=path.join(__dirname,'..'),shortcut=fs.readFileSync(path.join(root,'scripts','shortcut.ps1'),'utf8'),autostart=fs.readFileSync(path.join(root,'scripts','autostart.ps1'),'utf8');
-  assert.match(shortcut,/Iniciar WhatsApp Central\.cmd/);
+  assert.match(shortcut,/open-central-ui\.vbs/);
+  assert.match(shortcut,/System32\\wscript\.exe/);
   assert.match(shortcut,/public\\icons\\whats-ai\.ico/);
-  assert.match(autostart,/Iniciar WhatsApp Central\.cmd/);
+  assert.match(autostart,/open-central-ui\.vbs/);
+  assert.match(autostart,/System32\\wscript\.exe/);
   assert.match(autostart,/-NoBrowser/);
-  assert.doesNotMatch(shortcut+autostart,/\$launcherPath=Join-Path \$PSScriptRoot 'start\.ps1'/);
+  assert.match(shortcut,/Iniciar WhatsApp Central\.cmd/);
+  assert.match(autostart,/Iniciar WhatsApp Central\.cmd/);
+  assert.doesNotMatch(shortcut+autostart,/\$shortcut\.TargetPath=.*cmd\.exe/);
 });
 
 test('iniciador PowerShell antigo usa o launcher resiliente quando o script principal foi apagado',()=>{
