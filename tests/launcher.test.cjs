@@ -69,6 +69,12 @@ test('atalhos do Windows chamam o launcher canônico e usam a marca Whats AI',()
   assert.doesNotMatch(shortcut+autostart,/\$launcherPath=Join-Path \$PSScriptRoot 'start\.ps1'/);
 });
 
+test('iniciador PowerShell antigo usa o launcher resiliente quando o script principal foi apagado',()=>{
+  const root=path.join(__dirname,'..'),legacy=fs.readFileSync(path.join(root,'scripts','start.ps1'),'utf8');
+  assert.match(legacy,/open-central\.cjs/);
+  assert.doesNotMatch(legacy,/Join-Path \$PSScriptRoot 'start-central\.ps1'/);
+});
+
 test('iniciador abre uma URL nova para não reutilizar a aba antiga em cache',()=>{
   const root=path.join(__dirname,'..'),start=fs.readFileSync(path.join(root,'scripts','start-central.ps1'),'utf8');
   assert.match(start,/\$launchNonce=\[DateTimeOffset\]::UtcNow\.ToUnixTimeMilliseconds\(\)/);

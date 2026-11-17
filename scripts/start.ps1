@@ -1,4 +1,7 @@
 param([switch]$NoBrowser)
 $ErrorActionPreference='Stop'
-& (Join-Path $PSScriptRoot 'start-central.ps1') -NoBrowser:$NoBrowser
+$nodePath=(Get-Command node -ErrorAction Stop).Source
+$launcherArgs=@()
+if($NoBrowser) {$launcherArgs+='-NoBrowser'}
+& $nodePath (Join-Path $PSScriptRoot 'open-central.cjs') @launcherArgs
 exit $LASTEXITCODE
