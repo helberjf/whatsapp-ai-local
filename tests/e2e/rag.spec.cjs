@@ -24,8 +24,8 @@ test.beforeEach(async({page,demo})=>{
 test('pergunta sem palavras em comum encontra o trecho por significado',async({page})=>{
   await openKnowledge(page);
   const answer=await ask(page,'fone sem fio');
-  await expect(answer).toContainText('Confiança da busca: alta · modo equilibrado');
-  await expect(answer.getByText(/Product guide\.txt · \d+% relevante · por significado · confiança alta/)).toBeVisible();
+  await expect(answer).toContainText('Confiança da busca: média · modo equilibrado');
+  await expect(answer.getByText(/Product guide\.txt · \d+% relevante · por significado · confiança média/)).toBeVisible();
   await answer.getByText(/Product guide\.txt/).click();
   await expect(answer).toContainText('Studio Headphones');
 });
@@ -42,7 +42,7 @@ test('confiabilidade rigorosa descarta trecho de confiança média e fica salva'
   const reliability=page.getByLabel('Confiabilidade das respostas');
   await expect(reliability).toHaveValue('balanced');
   await reliability.selectOption('strict');
-  await expect(page.locator('#kb-reliability-hint')).toContainText('só usa trechos de confiança alta');
+  await expect(page.locator('#kb-reliability-hint')).toContainText('só responde quando o primeiro trecho tem confiança alta');
   await expect(page.locator('#notice')).toHaveText('Confiabilidade salva.');
   let answer=await ask(page,'Studio');
   await expect(answer).toContainText('Nenhum trecho da base foi usado.');

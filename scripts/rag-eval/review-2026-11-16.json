@@ -1,0 +1,7 @@
+{"P01":{"pass":true,"note":"Revisão: correta; disse pontos em vez de milhas."},
+"P02":{"pass":true,"note":"Revisão: correta; disse que dá para pedir uma peça de teste."},
+"P07":{"pass":false,"note":"Revisão: acrescentou regra geral de tarifa promocional sem reembolso ('Geralmente'), que não está na base."},
+"E03":{"pass":false,"note":"Revisão: afirmou que a empresa aceita Pix; a base não diz."},
+"E05":{"pass":false,"note":"Revisão: afirmou a exigência da Anatel como regra; a base diz que alguns produtos exigem e que isso é verificado."},
+"U03":{"pass":true,"note":"Revisão: correta; 'sob consulta', sem preço."},
+"U04":{"pass":true,"note":"Revisão: correta; disse que não informa o parcelamento e ofereceu verificar, sem inventar condição."}}

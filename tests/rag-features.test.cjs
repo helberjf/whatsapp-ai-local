@@ -28,6 +28,17 @@ test('confiança: as duas buscas juntas dão alta; só por palavra dá média e 
   assert.equal((await service.search('milhas',{reliability:'balanced'}))[0].docName,'passagens.md');
 });
 
+test('confiança alta exige o primeiro lugar nas duas buscas; discordância vira média e o rigoroso não responde',async t=>{
+  // Por significado vence a importação (dois assuntos da pergunta); por palavra vence a garantia (repetida).
+  const docs=[{id:'i',name:'importacao.md',text:'Importa da China com troca.'},{id:'g',name:'garantia.md',text:'Garantia garantia de 12 meses.'}];
+  const service=await indexOf(t,docs),found=await service.search('importa garantia');
+  assert.deepEqual(found.map(item=>[item.via.length,item.confidence]),[[2,'media'],[2,'media']],'Achado pelas duas buscas não basta.');
+  assert.deepEqual(await service.search('importa garantia',{reliability:'strict'}),[]);
+  assert.equal((await service.search('importa garantia',{reliability:'balanced'})).length,2);
+  const sure=await service.search('garantia',{reliability:'strict'});
+  assert.deepEqual(sure.map(item=>[item.docName,item.confidence]),[['garantia.md','alta'],['importacao.md','media']],'Com o primeiro trecho confirmado, o rigoroso leva também os de apoio.');
+});
+
 test('modo flexível aceita confiança baixa e mais trechos; rigoroso limita a três',async t=>{
   const many=Array.from({length:8},(_,index)=>({id:'d'+index,name:`garantia-${index}.md`,text:`Garantia número ${index} cobre defeitos.`}));
   const service=await indexOf(t,many);
@@ -52,6 +63,8 @@ test('o prompt muda com o nível: rigoroso exige texto explícito, flexível lib
   assert.match(build('strict'),/Modo rigoroso[\s\S]*\[\[HUMANO\]\]/);
   assert.match(build('flexible'),/Modo flexível/);
   assert.doesNotMatch(build('balanced'),/Modo (rigoroso|flexível)/);
+  assert.match(build('balanced'),/Não afirme nem negue nada sobre a empresa que não esteja escrito/);
+  assert.equal(core.REPLY_TIMEOUT_MS>90_000 && core.REPLY_TIMEOUT_MS<180_000,true,'Maior que os 90 s que cortavam o modelo local e menor que os 180 s que a tela espera.');
   assert.match(core.buildSystem({rules:[],catalog:'',sources:[],reliability:'strict',suggestion:true}),/Modo rigoroso: não use nenhuma informação comercial/);
 });
 
@@ -98,6 +111,9 @@ test('HTTP: confiabilidade salva, aplicada na pergunta e sugestões com fonte',a
   assert.equal((await call('/api/kb/suggestions','POST',{})).status,409,'Sem documentos, não há o que ler.');
   await call('/api/ai','PUT',{provider:'openai',model:'m',apiKey:'k'});
   for(const doc of DOCS) await call('/api/kb','POST',{name:doc.name,text:doc.text});
+  const copy=await call('/api/kb','POST',{name:'copia.md',text:DOCS[2].text+'\n'});
+  assert.equal(copy.status,409);assert.match(JSON.stringify(copy.body),/já está na base como \\"garantia\.md\\"/);
+  assert.equal((await call('/api/kb')).body.documents.length,3,'O mesmo conteúdo com outro nome não ocupa outra vaga.');
   for(let attempt=0;attempt<50;attempt++) {const {search}=(await call('/api/kb')).body;if(search.indexed===3 && !search.indexing) break;await new Promise(resolve=>setTimeout(resolve,20));}
   assert.equal((await call('/api/kb')).body.reliability,'balanced');
   assert.equal((await call('/api/kb/settings','PUT',{reliability:'qualquer'})).status,422);

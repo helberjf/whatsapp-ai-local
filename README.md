@@ -232,15 +232,17 @@ When the central depends on the local Ollama server (Ollama chat model, or embed
 
 ### Answer reliability
 
-Each retrieved passage gets a confidence level. **High** means both searches agree, the embedding similarity is well above the model's cutoff, or, without embeddings, most of the question's words appear in the passage. **Medium** means only one search found it. **Low** means a weak keyword match. Choose how much of that reaches the AI in **Base de Conhecimento → Confiabilidade das respostas**. The choice applies to questions on that page, manual suggestions and automatic replies:
+Each retrieved passage gets a confidence level. **High** means the passage ranks first in both searches (keywords and embeddings) or, without embeddings, most of the question's words appear in it. **Medium** means a search found it without that agreement. **Low** means a weak keyword match. Choose how much of that reaches the AI in **Base de Conhecimento → Confiabilidade das respostas**. The choice applies to questions on that page, manual suggestions and automatic replies:
 
 | Level | Passages sent to the AI | Behavior |
 | --- | --- | --- |
-| Rigorosa | High only, up to 3 | Instructs the AI to use explicit context and hand off to an operator when it cannot support an answer. |
+| Rigorosa | Up to 3 (high and medium), only when the first passage is high; otherwise none | Instructs the AI to use explicit context and hand off to an operator when it cannot support an answer. Answers fewer questions. |
 | Equilibrada (default) | High and medium, up to 4 | Balances retrieval coverage with the confidence filter. |
 | Flexível | All levels, up to 6, with a lower semantic cutoff | Allows greetings and general questions while instructing the AI to ground business facts in the base. |
 
-The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct; prompt instructions do not guarantee factual answers.
+The answer panel shows the search confidence and the level used. These labels describe retrieval agreement, not a calibrated probability that the answer is correct; prompt instructions do not guarantee factual answers. In the evaluation described in [docs/rag.md](docs/rag.md), the first passage labelled high was the right one in 18 of 21 questions.
+
+Uploading or pasting content that is already in the base under another name is refused, because the copy would take context slots from other documents.
 
 ### Output guard
 

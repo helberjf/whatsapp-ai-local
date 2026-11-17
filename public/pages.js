@@ -42,7 +42,7 @@
     renderHealth();
   }
   const reliabilityHints={
-    strict:'Rigorosa: só usa trechos de confiança alta e passa para um atendente quando falta certeza. Menos respostas, menos risco.',
+    strict:'Rigorosa: só responde quando o primeiro trecho tem confiança alta (o mesmo trecho em primeiro lugar nas duas buscas); senão, passa para um atendente. Menos respostas, menos risco.',
     balanced:'Equilibrada: usa trechos de confiança alta e média. É o padrão.',
     flexible:'Flexível: usa até 6 trechos, inclusive os de confiança baixa, e responde cumprimentos e dúvidas gerais. Mais respostas, mais revisão.'
   };
