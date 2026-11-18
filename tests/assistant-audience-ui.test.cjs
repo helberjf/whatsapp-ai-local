@@ -40,7 +40,7 @@ test('assistant audience controls reflect saved settings without mutating them',
 });
 test('saving an audience is explicit and does not enable the assistant or rewrite contacts',async()=>{
   const b=await browser();b.get('assistant-audience').value='all';await b.get('assistant-audience').emit('change');assert.equal(b.requests.some(item=>item.method==='PUT'),false);await b.get('assistant-audience-save').emit('click');
-  const saved=b.requests.find(item=>item.method==='PUT');assert.deepEqual(Object.keys(saved.input),['audience']);assert.equal(saved.input.audience,'all');assert.equal(b.get('assistant-enabled').checked,false);assert.match(b.get('assistant-audience-hint').textContent,/Desligada|pausa/i);
+  const saved=b.requests.find(item=>item.method==='PUT');assert.deepEqual(Object.keys(saved.input),['audience','defaultMode']);assert.equal(saved.input.defaultMode,'auto');assert.equal(saved.input.audience,'all');assert.equal(b.get('assistant-enabled').checked,false);assert.match(b.get('assistant-audience-hint').textContent,/Desligada|pausa/i);
 });
 test('failed audience save keeps chosen audience visible and saved settings intact',async()=>{
   const b=await browser({save:async()=>{throw Error('Conexão indisponível');}});b.get('assistant-audience').value='new';await b.get('assistant-audience-save').emit('click');assert.equal(b.get('assistant-audience').value,'new');assert.match(b.get('assistant-audience-status').textContent,/Conexão indisponível/);assert.equal(b.get('assistant-enabled').checked,false);

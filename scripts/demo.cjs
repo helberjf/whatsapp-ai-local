@@ -101,7 +101,9 @@ async function createDemo({port=8876,autoTranscription=false}={}) {
     if(url.endsWith('/api/embed')) return new Response(JSON.stringify({embeddings:body.input.map(demoVector)}));
     aiCalls.push(body);
     if(body.format==='json' && body.messages?.[0]?.content?.includes('perguntas frequentes')) return new Response(JSON.stringify({message:{content:JSON.stringify({suggestions:DEMO_SUGGESTIONS})}}));
-    return new Response(JSON.stringify({message:{content:'Posso ajudar com o produto Studio Headphones. Quer que eu confirme o prazo de entrega?'}}));}});
+    // Pedido de nova sugestão: cada sugestão descartada leva a outra resposta fictícia.
+    const discarded=(String(body.messages?.at(-1)?.content || '').split('já foram descartadas:')[1] || '').split('\n').filter(line=>/^\d+\. /.test(line)).length;
+    return new Response(JSON.stringify({message:{content:DEMO_REPLIES[discarded % DEMO_REPLIES.length]}}));}});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`,html=await(await fetch(base)).text(),token=html.match(/name="whatsapp-session" content="([a-f0-9]+)"/)[1];
   const api=async(route,input)=>{const response=await fetch(base+'/api'+route,{method:'POST',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify(input)});if(!response.ok) throw Error('Demo fixture failed: '+route);return response.json();};
@@ -111,6 +113,7 @@ async function createDemo({port=8876,autoTranscription=false}={}) {
   await server.team.tick();
   return {server,base,directory,aiCalls,archiveOnPhone(index,archived=true) {archivedRemote[jids[index]]={archived,updatedAt:Date.now()};server.invalidateChats();},async close(){await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await Promise.all([server.scheduler.idle(),server.triggers.idle(),server.assistant.idle()]);if(path.dirname(directory)!==os.tmpdir() || !path.basename(directory).startsWith('whatsapp-central-demo-')) throw Error('Unsafe demo cleanup path');await fs.rm(directory,{recursive:true,force:true});}};
 }
+const DEMO_REPLIES=['Posso ajudar com o produto Studio Headphones. Quer que eu confirme o prazo de entrega?','Oi! Os Studio Headphones são sem fio e bem confortáveis. Quer saber mais sobre eles?','Claro! Me conta como você pretende usar os fones que eu te ajudo a escolher.'];
 // Embeddings fictícios: cada posição conta menções de um assunto, então "fone sem fio" encontra "headphones" sem palavras em comum.
 const DEMO_CONCEPTS=[/headphone|fone|audio|som|musica|battery|bateria/g,/delivery|entrega|prazo|frete|envio/g,/warranty|garantia|defeito/g,/website|site|web|design|pagina/g,/price|preco|valor|custa|brl|reais/g];
 const demoVector=text=>{const clean=String(text).normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();return [...DEMO_CONCEPTS.map(pattern=>(clean.match(pattern) || []).length),.05];};

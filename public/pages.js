@@ -545,7 +545,7 @@
   document.addEventListener('click',event=>{if(!event.target.closest?.('.global-search')) $('global-results').hidden=true;});
 
   // ---------- Atendimento automático, regras e classificação de contatos ----------
-  let assistant=null,rulesDraft=[],audienceSelect=null,audienceSave=null;
+  let assistant=null,rulesDraft=[],audienceSelect=null,audienceSave=null,modeSelect=null;
   const MODE_LABEL={off:'Desligada',draft:'Rascunho',auto:'Automática'};
   const ACTION_LABEL={draft:'Rascunho preparado',sent:'Resposta enviada',handoff:'Chamou atendente',error:'Erro',unanswered:'Sem resposta · responda manualmente'};
   const AUDIENCE_LABEL={classified:'Apenas contatos classificados',all:'Todos os contatos',new:'Apenas conversas novas'};
@@ -554,7 +554,11 @@
     all:'Com a chave geral ligada, a IA atende todos os contatos individuais, inclusive quem já conversou com você. Contatos em “Desligada”, em rascunho ou com automações pausadas mantêm sua escolha.',
     new:'Com a chave geral ligada, a IA atende conversas iniciadas depois da ativação, sem histórico anterior. Contatos admitidos continuam atendidos nas próximas mensagens, sem histórico anterior de mensagens recebidas ou enviadas. Estar salvo na agenda não define se um contato é novo. Contatos em “Desligada”, em rascunho ou com automações pausadas mantêm sua escolha.'
   };
-  function renderAudienceHint() {if(audienceSelect) $('assistant-audience-hint').textContent=AUDIENCE_HINT[audienceSelect.value] || AUDIENCE_HINT.classified;}
+  const DEFAULT_MODE_HINT={auto:'A IA responde sozinha (contatos classificados seguem o modo de cada um).',draft:'A IA fica ligada, mas não envia nada: deixa o rascunho no editor de cada conversa e você decide se envia. Vale também para contatos em “Automática”.'};
+  function renderAudienceHint() {
+    if(!audienceSelect) return;$('assistant-audience-hint').textContent=AUDIENCE_HINT[audienceSelect.value] || AUDIENCE_HINT.classified;
+    if(modeSelect) $('assistant-default-mode-hint').textContent=DEFAULT_MODE_HINT[modeSelect.value];
+  }
   function buildAudienceControls() {
     const anchor=$('assistant-summary');if(!anchor?.parentNode) return;
     const box=el('div','assistant-audience-controls'),label=el('label','field','Quem a IA pode atender?');
@@ -562,15 +566,18 @@
     for(const [value,text] of Object.entries(AUDIENCE_LABEL)) {const option=el('option','',text);option.value=value;audienceSelect.append(option);}
     audienceSelect.value='classified';audienceSelect.addEventListener('change',renderAudienceHint);label.append(audienceSelect);
     const hint=el('p','muted');hint.id='assistant-audience-hint';
-    audienceSave=textButton('Salvar público','button secondary',async()=>{
+    const modeLabel=el('label','field','A IA envia sozinha ou só deixa rascunho?');modeSelect=el('select');modeSelect.id='assistant-default-mode';
+    for(const [value,text] of [['auto','Responde sozinha'],['draft','Só rascunho: você decide se envia']]) {const option=el('option','',text);option.value=value;modeSelect.append(option);}
+    modeSelect.addEventListener('change',renderAudienceHint);modeLabel.append(modeSelect);const modeHint=el('p','muted');modeHint.id='assistant-default-mode-hint';
+    audienceSave=textButton('Salvar público e modo','button secondary',async()=>{
       if(!assistant || audienceSave.disabled) return;
       audienceSave.disabled=true;const audience=audienceSelect.value;$('assistant-audience-status').textContent='Salvando público…';
-      try {assistant=await api('/assistant','PUT',{audience});renderAssistant();$('assistant-audience-status').textContent='Público salvo.'+(assistant.enabled?' Vale para as próximas mensagens.':' A chave geral continua desligada.');}
+      try {assistant=await api('/assistant','PUT',{audience,defaultMode:modeSelect.value});renderAssistant();$('assistant-audience-status').textContent='Público salvo.'+(assistant.enabled?' Vale para as próximas mensagens.':' A chave geral continua desligada.');}
       catch(error) {$('assistant-audience-status').textContent=error.message;}
       finally {audienceSave.disabled=false;}
     });audienceSave.id='assistant-audience-save';
     const status=el('p','form-status assistant-audience-status');status.id='assistant-audience-status';status.setAttribute('role','status');
-    box.append(label,hint,audienceSave,status);anchor.parentNode.insertBefore(box,anchor);renderAudienceHint();
+    box.append(label,hint,modeLabel,modeHint,audienceSave,status);anchor.parentNode.insertBefore(box,anchor);renderAudienceHint();
   }
   buildAudienceControls();
   // ---------- Como a IA responde: de onde tira a resposta, quantas mensagens lê e o tom ----------
@@ -617,9 +624,9 @@
   function renderAssistant() {
     if(!assistant) return;
     $('assistant-enabled').checked=assistant.enabled;
-    if(audienceSelect) {audienceSelect.value=assistant.audience || 'classified';renderAudienceHint();}
+    if(audienceSelect) {audienceSelect.value=assistant.audience || 'classified';if(modeSelect) modeSelect.value=assistant.defaultMode || 'auto';renderAudienceHint();}
     if($('assistant-source')) {$('assistant-source').value=assistant.source || 'base';$('assistant-tone').value=assistant.tone || 'formal';$('assistant-history').value=assistant.history || 14;renderStyleHint();}
-    $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.')+(assistant.load?.conversations?` Agora: ${assistant.load.conversations} conversa(s) em atendimento pela IA, ${assistant.load.ai.waiting} aguardando vaga.`:'')+(assistant.counts.unanswered?` ${assistant.counts.unanswered} conversa(s) com a etiqueta “Sem resposta”.`:'');
+    $('assistant-summary').textContent=`Público: ${AUDIENCE_LABEL[assistant.audience || 'classified']}${assistant.defaultMode==='draft'?' · só rascunho, nada é enviado sozinho':''}. Contatos em rascunho: ${assistant.counts.draft} · classificados em automático: ${assistant.counts.auto}.`+(assistant.ai?'':' Configure a IA acima para usar.')+(assistant.load?.conversations?` Agora: ${assistant.load.conversations} conversa(s) em atendimento pela IA, ${assistant.load.ai.waiting} aguardando vaga.`:'')+(assistant.counts.unanswered?` ${assistant.counts.unanswered} conversa(s) com a etiqueta “Sem resposta”.`:'');
     const names=new Map(C.chats().map(chat=>[chat.jid,chat.name])),fragment=document.createDocumentFragment();
     for(const entry of assistant.log) {
       const row=el('li','log-row'),who=names.get(entry.jid) || phoneLabel(entry.jid.split('@')[0]);
@@ -632,7 +639,8 @@
   $('assistant-enabled').addEventListener('change',async()=>{
     const wanted=$('assistant-enabled').checked;
     const audience=assistant?.audience || 'classified',target=audience==='all'?'todos os contatos individuais':audience==='new'?'conversas novas sem histórico anterior e suas próximas mensagens':'apenas aos contatos marcados como “Automática”';
-    if(wanted && !confirm('Ligar as respostas automáticas? A IA passará a responder sozinha, pelo seu WhatsApp, a '+target+'. Contatos em “Desligada”, em rascunho ou com automações pausadas mantêm sua escolha.')) {$('assistant-enabled').checked=false;return;}
+    const draftOnly=assistant?.defaultMode==='draft';
+    if(wanted && !confirm(draftOnly?'Ligar a IA? Ela vai preparar rascunhos para '+target+'. Nada é enviado sem você.':'Ligar as respostas automáticas? A IA passará a responder sozinha, pelo seu WhatsApp, a '+target+'. Contatos em “Desligada”, em rascunho ou com automações pausadas mantêm sua escolha.')) {$('assistant-enabled').checked=false;return;}
     try {assistant=await api('/assistant','PUT',{enabled:wanted});renderAssistant();$('assistant-status').textContent=wanted?'Respostas automáticas ligadas.':'Respostas automáticas desligadas: contatos em "Automática" passam a receber só rascunho.';}
     catch(error) {$('assistant-enabled').checked=!wanted;$('assistant-status').textContent=error.message;}
   });
@@ -649,20 +657,43 @@
     const selected=C.selected();if(!selected) return;
     const chat=C.chats().find(item=>item.jid===selected.jid),draft=chat?.aiDraft,last=chat?.lastMessage;
     if(!draft || !last || last.fromMe || draft.messageId!==last.id || insertedDrafts.has(selected.jid+draft.messageId) || $('message-text').value.trim()) return;
-    insertedDrafts.add(selected.jid+draft.messageId);C.insertDraft(draft.text);
-    notice('Rascunho da IA pronto no editor. Revise antes de enviar.',true);
+    insertedDrafts.add(selected.jid+draft.messageId);C.insertDraft(draft.text);rememberSuggestion(selected.jid,draft.text,draft.messageId);
+    notice('Rascunho da IA pronto no editor. Revise e envie, ou clique em Nova sugestão para outra resposta.',true);
   }
-  C.hooks.open.push(applyDraft);C.hooks.sync.push(applyDraft);
+  // Sugestões da IA por conversa: a que está no editor e as que o atendente já descartou pedindo outra.
+  // Um novo clique troca a sugestão do editor por uma resposta diferente; nada é enviado sem o atendente.
+  const suggestions=new Map();
+  function rememberSuggestion(jid,text,lastId) {
+    const state=suggestions.get(jid);
+    const previous=state && state.lastId===lastId?[...state.previous,...(state.current?[state.current]:[])].slice(-5):[];
+    suggestions.set(jid,{current:$('message-text').value,lastId,previous});renderSuggestButton();
+  }
+  // O botão vira "Nova sugestão" enquanto o editor tem exatamente a sugestão da IA.
+  function renderSuggestButton() {
+    const selected=C.selected(),state=selected && suggestions.get(selected.jid),fresh=Boolean(state?.current && $('message-text').value===state.current);
+    const label=[...($('ai-suggest').childNodes || [])].find(node=>node.nodeType===3);
+    if(label) label.textContent=fresh?'Nova sugestão':'Sugerir com IA';
+    $('ai-suggest').title=fresh?'Troca a sugestão do editor por outra resposta da IA, diferente das anteriores. Nada é enviado.':'A IA considera as mensagens recentes desta conversa, o catálogo e a base. A sugestão fica no editor e você decide se envia.';
+  }
+  C.hooks.open.push(applyDraft);C.hooks.sync.push(applyDraft);C.hooks.open.push(renderSuggestButton);C.hooks.sync.push(renderSuggestButton);
+  $('message-text').addEventListener('input',renderSuggestButton);
   $('ai-suggest').addEventListener('click',guard(async()=>{
     const selected=C.selected();if(!selected) {notice('Abra uma conversa primeiro.');return;}
+    const state=suggestions.get(selected.jid),typed=$('message-text').value,replacing=Boolean(state?.current && typed===state.current);
+    // Texto escrito ou editado pelo atendente só é trocado com confirmação.
+    if(typed.trim() && !replacing && !confirm('Trocar o texto do editor por uma sugestão da IA? O que você escreveu será substituído.')) return;
+    const avoid=state?[...state.previous,...(state.current?[state.current]:[])].slice(-5):[];
     const snapshot=C.contextSnapshot?.(),originalText=$('message-text').value;
-    $('ai-suggest').disabled=true;notice('A IA está lendo as mensagens recentes da conversa…');
+    $('ai-suggest').disabled=true;notice(avoid.length?'A IA está escrevendo outra resposta…':'A IA está lendo as mensagens recentes da conversa…');
     try {
-      const result=await api('/assistant/draft','POST',{jid:selected.jid},180000),current=C.contextSnapshot?.();
+      const result=await api('/assistant/draft','POST',{jid:selected.jid,...(avoid.length?{avoid}:{})},180000),current=C.contextSnapshot?.();
       if(C.selected()?.jid!==selected.jid || $('message-text').value!==originalText || (snapshot && current && (current.selection!==snapshot.selection || current.revision!==snapshot.revision || current.lastMessageId!==snapshot.lastMessageId)) || (result.contextLastId && current?.lastTextId && result.contextLastId!==current.lastTextId)) {notice('A conversa ou o rascunho mudou. Clique em Sugerir com IA para gerar uma sugestão atualizada.');return;}
       if(result.handoff) {notice('A IA sugere chamar um atendente: não há resposta segura na base.');return;}
       if(!result.text) {notice('A IA não gerou uma resposta.');return;}
-      C.insertDraft(result.text);notice('Sugestão inserida no editor. Revise antes de enviar.',true);
+      // Se o contexto mudou (nova mensagem do cliente), as sugestões descartadas deixam de valer.
+      if(state && state.lastId!==result.contextLastId) suggestions.delete(selected.jid);
+      C.setDraftText(result.text);$('message-text').focus();rememberSuggestion(selected.jid,result.text,result.contextLastId);
+      notice(result.repeated?'A IA repetiu uma sugestão anterior. Edite o texto ou peça outra.':'Sugestão no editor. Revise e envie, ou clique em Nova sugestão para outra resposta.',true);
     } finally {$('ai-suggest').disabled=false;}
   }));
 

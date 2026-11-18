@@ -134,6 +134,8 @@ Trigger rules are evaluated in list order, and the first matching rule supplies 
 
 Text responses accept `{name}` or `{nome}` to insert the contact's available display name. If a usable name is unavailable, the Portuguese fallback is “você”; private identifiers are not treated as names.
 
+The suggestion stays in the editor until you send it. While the editor holds it unchanged, the button reads **Nova sugestão**: each click replaces it with a different reply (the AI receives up to five discarded suggestions and more variation), and text you wrote or edited is only replaced after a confirmation. Under **Assistente de IA**, choose **Só rascunho** to keep the AI on without any automatic sending: it prepares a draft for each incoming message, even for contacts marked Automática, and you decide what to send.
+
 **Sugerir com IA** reads up to the latest 14 text messages from both sides of the selected conversation (bounded to 12,000 characters), including conversations where the last message was sent by the operator. The catalog and retrieved knowledge supplement that dialogue. A delayed suggestion is not inserted into a different chat or a draft edited during generation. Manual suggestions remain separate from automatic-reply eligibility.
 
 AI audience options have distinct meanings:

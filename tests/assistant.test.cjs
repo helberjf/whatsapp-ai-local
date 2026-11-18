@@ -217,3 +217,29 @@ test('mesma entrada em telefone e LID reserva todos os aliases e gera uma única
 test('público novo aceita várias entradas da primeira conversa antes da consulta inicial',async t=>{
   const f=await audienceFixture(t);await f.put({enabled:true,audience:'new'});f.advance(1000);f.receive('first');f.advance(1000);f.receive('second');await f.service.tick();assert.equal(f.sent.length,1);assert.equal(f.calls.length,1);assert.match(f.calls[0].messages.at(-1).content,/Olá\nOlá/);assert.ok((await f.store.read()).assistant.enrolled[jid]);
 });
+
+test('só rascunho: com a IA ligada nada é enviado sozinho, nem a contatos em Automática',async t=>{
+  const f=await audienceFixture(t);
+  const view=await f.put({enabled:true,audience:'all',defaultMode:'draft'});assert.equal(view.body.defaultMode,'draft');
+  f.advance(1000);f.receive();await f.service.tick();
+  assert.equal(f.sent.length,0);const data=await f.store.read();assert.ok(data.contacts[jid].aiDraft.text);assert.equal(data.assistant.log[0].action,'draft');
+  await assert.rejects(f.put({defaultMode:'sempre'}),error=>error.status===422);
+  const env=await setup({mode:'auto',enabled:true});
+  try {await env.store.update(data=>{data.assistant.defaultMode='draft';});await env.service.tick();assert.equal(env.sent.length,0);assert.equal((await env.contact()).aiDraft.text,env.reply);}finally {await env.done();}
+});
+test('nova sugestão: pede resposta diferente das descartadas, com mais variação, e tenta de novo se repetir',async()=>{
+  const env=await setup({mode:'off'}),draft=input=>env.service.handle({method:'POST'},'/api/assistant/draft',null,async()=>input);
+  try {
+    const first=await draft({jid});assert.equal(first.body.text,env.reply);assert.equal(env.calls.at(-1).temperature,undefined);
+    // Em sequência: a primeira resposta repete a descartada, a segunda é nova.
+    const replies=[env.reply,'Outra forma: qual produto você quer importar da China?'],ai=env.calls,original=ai.length;let call=0;
+    const result=await (async()=>{
+      const service=createAssistantService({store:env.store,client:{chats:async()=>env.chats,messages:async()=>({messages:env.messages})},ai:{config:async()=>({configured:true}),complete:async options=>{ai.push(options);return replies[call++];}},loadTexts:async()=>[],catalogText:async()=>CATALOG,now:()=>env.clock.t});
+      return (await service.handle({method:'POST'},'/api/assistant/draft',null,async()=>({jid,avoid:[first.body.text]}))).body;
+    })();
+    assert.equal(result.text,replies[1]);assert.equal(result.repeated,false);assert.equal(ai.length-original,2);
+    assert.equal(ai.at(-1).temperature,.8);const asked=ai.at(-1).messages.at(-1);assert.equal(asked.role,'user');assert.match(asked.content,/já foram descartadas:\n1\. Fazemos importação da China/);assert.match(asked.content,/2\. Fazemos importação da China/);
+    await assert.rejects(draft({jid,avoid:'texto'}),error=>error.status===422);
+    await assert.rejects(draft({jid,avoid:Array(6).fill('a')}),error=>error.status===422);
+  } finally {await env.done();}
+});
