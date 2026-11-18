@@ -225,6 +225,27 @@
           </form>
           <div class="panel pad"><h2><svg class="icon green-ink" aria-hidden="true"><use href="#i-shield"/></svg> Privacidade</h2><p class="muted">Ao usar a IA, a pergunta e os trechos da base (ou os documentos escolhidos na importação) são enviados ao provedor selecionado. Com <b>Ollama</b>, tudo roda neste computador.</p><h2>Como funciona</h2><ol class="steps"><li>Envie catálogos e políticas em <b>Base de Conhecimento</b>.</li><li>A central busca os trechos mais relevantes para cada pergunta.</li><li>A IA responde usando só esses trechos. Se não houver resposta, ela diz que não encontrou.</li><li>Em <b>Produtos</b>, a IA lê a base e propõe a lista; você revisa antes de salvar.</li></ol></div>
         </div>
+        <form id="budget-form" class="panel pad form-grid budget-panel" aria-labelledby="budget-title">
+          <h2 id="budget-title"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg> Limite de gastos da API</h2>
+          <p class="muted">Defina quanto a IA paga pode gastar por mês. A central soma o custo de cada resposta e de cada busca na base (tokens informados pelo provedor × preço do modelo) e para de chamar a API quando o limite seria ultrapassado. O contador volta a zero todo dia 1º. A IA local (Ollama) não tem custo.</p>
+          <div class="budget-usage" role="status" aria-live="polite"><div><strong id="budget-spent">—</strong><span id="budget-of" class="muted"></span></div><progress id="budget-progress" max="1" value="0"></progress><small id="budget-detail" class="muted"></small></div>
+          <label class="check big"><input id="budget-enabled" type="checkbox"> Ativar limite de gastos</label>
+          <div class="field-row three">
+            <label class="field">Limite mensal<input id="budget-limit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Ex.: 50,00"></label>
+            <label class="field">Moeda<select id="budget-currency"><option value="BRL">Reais (R$)</option><option value="USD">Dólares (US$)</option></select></label>
+            <label class="field" id="budget-rate-field">Cotação do dólar (R$)<input id="budget-rate" type="number" min="0.01" step="0.01" inputmode="decimal"><small>Os provedores cobram em dólar.</small></label>
+          </div>
+          <fieldset id="budget-prices" class="budget-prices"><legend>Preço do modelo em uso <span id="budget-model" class="muted"></span></legend>
+            <div class="field-row three">
+              <label class="field">Entrada · US$ por 1 milhão de tokens<input id="budget-price-input" type="number" min="0" step="0.0001" inputmode="decimal"></label>
+              <label class="field">Saída · US$ por 1 milhão de tokens<input id="budget-price-output" type="number" min="0" step="0.0001" inputmode="decimal"></label>
+              <label class="field" id="budget-embedding-field">Embeddings · US$ por 1 milhão de tokens<input id="budget-price-embedding" type="number" min="0" step="0.0001" inputmode="decimal"><small id="budget-embedding-model"></small></label>
+            </div>
+            <small id="budget-price-hint" class="muted">Confira os valores na página de preços do provedor.</small>
+          </fieldset>
+          <p id="budget-status" class="form-status" role="status"></p>
+          <div class="form-actions"><button id="budget-save" class="button primary" type="submit">Salvar limite</button><button id="budget-reset" class="text-button" type="button">Zerar contador do mês</button></div>
+        </form>
       <div class="two-col">
           <section class="panel pad" aria-labelledby="auto-title"><h2 id="auto-title"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg> Atendimento automático</h2>
             <p class="muted">Classifique cada contato em <b>Contatos</b> ou na conversa: <b>Desligada</b> (padrão), <b>Rascunho</b> (a IA deixa a resposta pronta no editor) ou <b>Automática</b> (a IA responde sozinha). Você pode escolher contatos classificados, todas as pessoas ou apenas novos contatos. Desligada e pausa por contato prevalecem. São tratadas apenas mensagens novas de texto, no máximo 6 respostas por hora por contato, e passa para um atendente (situação Pendente + etiqueta Atendente) quando não souber.</p>

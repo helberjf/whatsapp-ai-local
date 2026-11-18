@@ -434,17 +434,61 @@
   for(const type of ['input','change']) $('ai-form').addEventListener(type,()=>{aiEdits++;});
   $('ai-form').addEventListener('submit',async event=>{
     event.preventDefault();$('ai-status').textContent='';
-    try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();$('ai-status').textContent=ai.hasKey?'Configuração salva. Chave criptografada no banco local.':'Configuração salva.';}
+    try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();$('ai-status').textContent=ai.hasKey?'Configuração salva. Chave criptografada no banco local.':'Configuração salva.';refreshBudget();}
     catch(error) {$('ai-status').textContent=error.message;}
   });
   $('ai-test').addEventListener('click',async()=>{
     $('ai-test').disabled=true;$('ai-status').textContent='Testando…';
-    try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();const result=await api('/ai/test','POST',{},undefined,120000);$('ai-status').textContent=`Conexão funcionando. Resposta do modelo: "${result.reply}".`;}
+    try {ai=await api('/ai','PUT',aiPayload());renderAi();renderCounters();const result=await api('/ai/test','POST',{},undefined,120000);$('ai-status').textContent=`Conexão funcionando. Resposta do modelo: "${result.reply}".`;refreshBudget();}
     catch(error) {$('ai-status').textContent=error.message;}finally {$('ai-test').disabled=false;}
   });
   $('ai-clear').addEventListener('click',async()=>{
     if(!confirm('Remover a chave de API salva neste computador?')) return;
     try {ai=await api('/ai/key','DELETE',{provider:$('ai-provider').value});$('ai-key').value='';syncKeyHint();renderCounters();$('ai-status').textContent='Chave removida.';}catch(error) {$('ai-status').textContent=error.message;}
+  });
+
+  // ---------- Limite de gastos da API ----------
+  let budget=null,budgetEdits=0;
+  const budgetMoney=(value,currency)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency,minimumFractionDigits:2,maximumFractionDigits:value>0 && value<1?4:2}).format(value || 0);
+  const budgetCount=value=>new Intl.NumberFormat('pt-BR').format(value || 0);
+  const numberOrNull=id=>{const raw=$(id).value.trim().replace(',','.');return raw===''?null:Number(raw);};
+  function renderBudget({keepFields=false}={}) {
+    if(!budget) return;
+    const b=budget,limit=b.limit>0?b.limit:0,ratio=limit?Math.min(1,b.spent/limit):0;
+    $('budget-spent').textContent=budgetMoney(b.spent,b.currency);
+    $('budget-of').textContent=limit?`de ${budgetMoney(limit,b.currency)} em ${b.period.split('-').reverse().join('/')}${b.enabled?'':' · limite desativado'}`:`gastos em ${b.period.split('-').reverse().join('/')} · sem limite definido`;
+    $('budget-progress').value=ratio;$('budget-progress').hidden=!limit;
+    $('budget-progress').parentElement.dataset.state=b.reached?'over':ratio>=.8?'warn':'ok';
+    $('budget-detail').textContent=`${budgetCount(b.calls)} chamada(s) · ${budgetCount(b.inputTokens)} tokens de entrada · ${budgetCount(b.outputTokens)} de saída`+(b.currency==='BRL'?` · US$ ${b.spentUsd.toFixed(4)}`:'')+(b.blocked?` · ${budgetCount(b.blocked)} chamada(s) bloqueada(s) pelo limite`:'')+(b.reached?' · Limite atingido: a IA paga está pausada até o próximo mês.':'');
+    if(keepFields) return;
+    $('budget-enabled').checked=b.enabled;$('budget-limit').value=b.limit || '';$('budget-currency').value=b.currency;$('budget-rate').value=b.rate;
+    $('budget-rate-field').hidden=b.currency!=='BRL';
+    $('budget-model').textContent=b.model.key.endsWith(':')?'· nenhum modelo salvo':'· '+b.model.key.replace(':',' › ');
+    $('budget-prices').disabled=b.free;
+    $('budget-price-input').value=b.model.price?.input ?? '';$('budget-price-output').value=b.model.price?.output ?? '';
+    $('budget-embedding-field').hidden=!b.embedding || b.embedding.free;
+    if(b.embedding && !b.embedding.free) {$('budget-price-embedding').value=b.embedding.price?.input ?? '';$('budget-embedding-model').textContent=b.embedding.key.replace(':',' › ');}
+    $('budget-price-hint').textContent=b.free?'A IA local (Ollama) roda neste computador e não tem custo de API.':b.model.price?(b.model.custom?'Preço informado por você. Confira na página de preços do provedor.':'Preço sugerido para este modelo. Confira na página de preços do provedor.'):'Informe o preço deste modelo: sem ele, a central não consegue calcular o gasto e bloqueia a IA paga enquanto o limite estiver ativo.';
+  }
+  async function refreshBudget() {const edits=budgetEdits;try {budget=await api('/ai/budget');renderBudget({keepFields:edits!==budgetEdits});}catch(error) {$('budget-status').textContent=error.message;}}
+  for(const type of ['input','change']) $('budget-form').addEventListener(type,()=>{budgetEdits++;});
+  $('budget-currency').addEventListener('change',()=>{$('budget-rate-field').hidden=$('budget-currency').value!=='BRL';});
+  $('budget-form').addEventListener('submit',async event=>{
+    event.preventDefault();$('budget-status').textContent='';
+    const input={enabled:$('budget-enabled').checked,limit:numberOrNull('budget-limit') ?? 0,currency:$('budget-currency').value,rate:numberOrNull('budget-rate') ?? budget?.rate ?? 5.5},prices={};
+    if(budget && !budget.free && !budget.model.key.endsWith(':')) {
+      const priceIn=numberOrNull('budget-price-input'),priceOut=numberOrNull('budget-price-output');
+      if(priceIn!==null || priceOut!==null) prices[budget.model.key]={input:priceIn ?? 0,output:priceOut ?? 0};
+    }
+    if(budget?.embedding && !budget.embedding.free) {const value=numberOrNull('budget-price-embedding');if(value!==null) prices[budget.embedding.key]={input:value,output:0};}
+    if(Object.keys(prices).length) input.prices=prices;
+    $('budget-save').disabled=true;
+    try {budget=await api('/ai/budget','PUT',input);budgetEdits++;renderBudget();$('budget-status').textContent=budget.enabled?'Limite salvo e ativo.':'Configuração salva. O limite está desativado.';}
+    catch(error) {$('budget-status').textContent=error.message;}finally {$('budget-save').disabled=false;}
+  });
+  $('budget-reset').addEventListener('click',async()=>{
+    if(!confirm('Zerar o contador de gastos deste mês? O histórico de uso do mês será perdido.')) return;
+    try {budget=await api('/ai/budget/reset','POST',{});renderBudget({keepFields:true});$('budget-status').textContent='Contador zerado.';}catch(error) {$('budget-status').textContent=error.message;}
   });
 
   // ---------- Contatos (CRM) ----------
@@ -663,7 +707,7 @@
     view=name;
     if(name==='page-knowledge') guard(refreshKb)();
     if(name==='page-products') guard(refreshProducts)();
-    if(name==='page-ai') {guard(refreshAi)();guard(refreshAssistant)();guard(refreshHuman)();}
+    if(name==='page-ai') {guard(refreshAi)();guard(refreshBudget)();guard(refreshAssistant)();guard(refreshHuman)();}
     if(name==='page-contacts') renderContacts();
   });
   C.hooks.sync.push(()=>{if(view==='page-contacts' && Date.now()-contactsFetchedAt>15_000) renderContacts();});
