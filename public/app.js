@@ -15,6 +15,7 @@
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,submitQueued=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
   const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
   let virtualRows=null,rowHeight=0,chatsVersion=null;
+  let inboxScroll=0, detailsTrigger=null;
   let chatLists=[],listContacts=[],listFilter='',listsPending=false,listsRefreshAt=0;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),mediaRequests=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
   const mediaControllers=new Map(),previewViews=new Map(),previewTargets=new WeakMap(),mediaLocks=new Set();
@@ -217,14 +218,16 @@
     const provider=view.provider.value,key=transcriptionKey(view.jid,view.messageId),job=latestTranscription(view.jid,view.messageId,provider),error=transcriptionErrors.get(key+'|'+provider);
     const busy=transcriptionRequests.has(key+'|'+provider),pending=pendingTranscription(job),failed=job?.status==='failed' || Boolean(error);
     view.button.disabled=busy || pending;view.provider.disabled=busy;
-    view.button.textContent=busy?'Solicitando…':pending?'Transcrevendo…':failed?'Tentar novamente':'Transcrever';
+    view.buttonLabel.textContent=busy?'Solicitando…':pending?'Transcrevendo…':failed?'Tentar novamente':'Transcrever';
     view.disclosure.hidden=provider!=='ai';
     const source=(job?.auto?'Automática · ':'')+(provider==='ai'?'IA · OpenAI':'Whisper local');
     const status=busy?'Solicitando transcrição…':error?error:job?.status==='completed'?source+' · Transcrição concluída':job?.status==='failed'?(job.error || 'Não foi possível transcrever este áudio.'):job?.status==='running'?source+' · Transcrevendo…':job?.status==='queued'?source+' · Na fila…':'';
     if(view.status.textContent!==status) view.status.textContent=status;
-    view.status.hidden=!status;view.status.classList.toggle('transcription-error',failed);
+    view.status.hidden=!status || job?.status==='completed' && !error && !busy;view.status.classList.toggle('transcription-error',failed);
     const text=job?.status==='completed'?job.text || 'Nenhuma fala identificada.':'';
     if(view.text.textContent!==text) view.text.textContent=text;
+    view.panel.classList.toggle('has-transcript',Boolean(text));
+    view.heading.hidden=!text;view.button.hidden=Boolean(text) && !failed;
     view.text.hidden=!text;view.copy.hidden=!job?.text || job.status!=='completed';
   }
   function updateTranscriptionViews(jid=selected?.jid) {
@@ -237,10 +240,27 @@
     panel.setAttribute('aria-label','Transcrição do áudio');provider.setAttribute('aria-label','Transcritor deste áudio');
     for(const [value,label] of [['whisper','Whisper local (padrão)'],['ai','IA (OpenAI)']]) {const option=el('option','',label);option.value=value;provider.append(option);}
     provider.value=transcriptionChoices.get(key) || 'whisper';
-    const button=el('button','transcribe-button','Transcrever');button.type='button';controls.append(provider,button);
-    const disclosure=el('p','transcription-disclosure','Este áudio será enviado à OpenAI para transcrição.'),status=el('p','transcription-status'),text=el('p','transcription-text'),copy=el('button','text-button transcription-copy','Copiar transcrição');
-    status.setAttribute('role','status');status.setAttribute('aria-live','polite');copy.type='button';
-    const view={jid,messageId:message.id,provider,button,disclosure,status,text,copy};transcriptionViews.set(key,view);
+    const button=el('button','transcribe-button'),buttonLabel=el('span','','Transcrever');
+    const heading=el('strong','transcription-heading');
+    const copy=el('button','text-button transcription-copy');
+    const more=el('button','text-button transcription-more','Mais');
+    button.type=copy.type=more.type='button';
+    button.append(voiceIcon('doc'),buttonLabel);
+    heading.append(voiceIcon('doc'),el('span','','Transcrição'));
+    copy.append(voiceIcon('copy'),el('span','','Copiar'));
+    copy.setAttribute('aria-label','Copiar transcrição');
+    more.setAttribute('aria-label','Mais opções de transcrição');
+    more.setAttribute('aria-expanded','false');
+    controls.append(heading,button,copy,more);
+    const settings=el('div','transcription-options');
+    settings.hidden=true;settings.append(provider);
+    more.addEventListener('click',()=>{
+      settings.hidden=!settings.hidden;
+      more.setAttribute('aria-expanded',String(!settings.hidden));
+    });
+    const disclosure=el('p','transcription-disclosure','Este áudio será enviado à OpenAI para transcrição.'),status=el('p','transcription-status'),text=el('p','transcription-text');
+    status.setAttribute('role','status');status.setAttribute('aria-live','polite');text.setAttribute('aria-live','polite');
+    const view={jid,messageId:message.id,panel,heading,provider,button,buttonLabel,disclosure,status,text,copy};transcriptionViews.set(key,view);
     provider.addEventListener('change',async()=>{
       transcriptionChoices.set(key,provider.value);updateTranscription(view);
       if(provider.value==='ai') {
@@ -254,7 +274,7 @@
       const job=latestTranscription(jid,message.id,provider.value);if(!job?.text) return;
       try {await navigator.clipboard.writeText(job.text);notice('Transcrição copiada.',true);}catch {notice('Não foi possível copiar. Selecione o texto da transcrição para copiar.');}
     });
-    panel.append(controls,disclosure,status,text,copy);updateTranscription(view);return panel;
+    panel.append(controls,settings,disclosure,status,text);updateTranscription(view);return panel;
   }
   async function startTranscription(view) {
     const {jid,messageId}=view,version=selection,provider=view.provider.value,key=transcriptionKey(jid,messageId)+'|'+provider;
@@ -297,19 +317,43 @@
   const audioObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{
     for(const entry of entries) if(entry.isIntersecting) {audioObserver.unobserve(entry.target);const view=entry.target.audioView;if(view) {audioQueue.push(view);pumpAudio();}}
   },{rootMargin:'300px 0px'}):null;
+  function voiceIcon(name) {
+    const ns='http://www.w3.org/2000/svg';
+    const icon=document.createElementNS(ns,'svg'),use=document.createElementNS(ns,'use');
+    icon.setAttribute('class','icon');icon.setAttribute('aria-hidden','true');
+    use.setAttribute('href','#i-'+name);icon.append(use);
+    return icon;
+  }
   function audioCard(message,jid) {
     const key=jid+'|'+message.id;if(audioViews.has(key)) return audioViews.get(key).card;
     const card=el('section','audio-card'),main=el('div','audio-main'),play=el('button','audio-play','▶'),track=el('div','audio-track'),wave=el('div','audio-wave'),row=el('div','audio-row');
     const clock=el('span','audio-time'),speed=el('div','audio-speed'),note=el('small','audio-note'),player=el('audio','audio-player'),status=el('p','audio-status');
     card.setAttribute('aria-label','Mensagem de voz');play.type='button';play.setAttribute('aria-label','Reproduzir áudio');
     player.preload='none';player.hidden=true;status.setAttribute('role','status');status.hidden=true;note.hidden=true;
+    const sender=message.fromMe?{jid:connection?.phone?connection.phone+'@s.whatsapp.net':null,name:'Você'}:
+      selected.isGroup?{jid:message.key?.participant,name:message.senderName || 'Contato'}:selected;
+    const portrait=el('span','audio-avatar');
+    const avatar=el('span','avatar',initials(sender.name));
+    const mic=el('span','audio-mic');mic.append(voiceIcon('mic'));
+    portrait.setAttribute('aria-hidden','true');portrait.append(avatar,mic);
+    globalThis.WhatsAppAvatars?.decorate?.(avatar,sender,{eager:true});
     const known=Number.isFinite(message.durationSeconds)?message.durationSeconds:NaN;
-    const updateTime=()=>{const total=Number.isFinite(player.duration)?player.duration:known;clock.textContent=(player.src?audioTime(player.currentTime || 0)+' / ':'')+audioTime(total);};
+    const updateTime=()=>{
+      const total=Number.isFinite(player.duration)?player.duration:known;
+      const elapsed=player.currentTime || 0;
+      clock.textContent=elapsed?audioTime(elapsed)+' / '+audioTime(total):audioTime(total);
+    };
     // Onda fixa por mensagem: as alturas vêm do id, então não mudam a cada atualização da tela.
     let seed=0;for(const char of String(message.id)) seed=(seed*31+char.charCodeAt(0))>>>0;
     const bars=[];for(let index=0;index<36;index++) {seed=(seed*1103515245+12345)>>>0;const bar=el('i');bar.setAttribute('style','height:'+(5+seed%19)+'px');bars.push(bar);wave.append(bar);}
     wave.setAttribute('role','slider');wave.setAttribute('aria-label','Posição do áudio');wave.tabIndex=0;
-    const paint=()=>{const total=player.duration,ratio=Number.isFinite(total) && total>0?player.currentTime/total:0,played=Math.round(ratio*bars.length);bars.forEach((bar,index)=>bar.classList.toggle('played',index<played));wave.setAttribute('aria-valuenow',String(Math.round(ratio*100)));};
+    const paint=()=>{
+      const total=player.duration,ratio=Number.isFinite(total) && total>0?(player.currentTime || 0)/total:0;
+      const played=Math.round(ratio*bars.length),percent=Math.round(ratio*100);
+      bars.forEach((bar,index)=>bar.classList.toggle('played',index<played));
+      wave.setAttribute('aria-valuenow',String(percent));
+      wave.setAttribute('style','--audio-progress:'+percent+'%');
+    };
     let rate=1;const rates=[];
     for(const [value,label] of [[1,'1×'],[1.5,'1,5×'],[2,'2×']]) {
       const button=el('button','audio-rate',label);button.type='button';button.dataset.rate=String(value);button.setAttribute('aria-pressed',String(value===rate));
@@ -330,7 +374,7 @@
       finally {view.loading=false;card.classList.remove('loading');play.disabled=false;icon();trimMediaCache();}
     };
     // Ao liberar memória, o cartão volta a esperar: o próximo ▶ baixa o áudio de novo.
-    view.reset=()=>{card.classList.remove('ready','playing');bars.forEach(bar=>bar.classList.remove('played'));icon();updateTime();};
+    view.reset=()=>{card.classList.remove('ready','playing');paint();icon();updateTime();};
     play.addEventListener('click',()=>{focusedMediaKey=key;if(!player.src) return view.loadAudio(true);if(player.paused) Promise.resolve(player.play?.()).catch(()=>{});else player.pause?.();});
     const seek=ratio=>{if(player.src && Number.isFinite(player.duration)) {player.currentTime=Math.max(0,Math.min(1,ratio))*player.duration;paint();}};
     wave.addEventListener('click',event=>{const box=wave.getBoundingClientRect();seek((event.clientX-box.left)/box.width);});
@@ -341,8 +385,8 @@
     player.addEventListener('error',()=>{if(!player.getAttribute('src')) return;status.textContent='Não foi possível reproduzir este formato de áudio. Toque em ▶ para tentar de novo.';status.hidden=false;player.removeAttribute('src');view.reset();});
     if(audioAuto(message)) audioObserver?.observe(card);
     else {note.textContent='Áudio grande'+(message.bytes?' ('+audioSize(message.bytes)+')':'')+': toque em ▶ para carregar.';note.hidden=false;}
-    updateTime();
-    track.append(wave,row);row.append(clock,speed);main.append(play,track);card.append(main,note,player,status);return card;
+    updateTime();paint();
+    track.append(wave,row);row.append(clock,speed);main.append(portrait,play,track);card.append(main,note,player,status);return card;
   }
   function videoCard(message,jid) {
     const key=jid+'|'+message.id;if(videoViews.has(key)) return videoViews.get(key).card;
@@ -741,6 +785,8 @@
   }
   async function selectChat(chat) {
     if(sending) return;
+    if($('chat-list').clientHeight) inboxScroll=$('chat-list').scrollTop;
+    if(selected?.jid!==chat.jid) toggleContact(false,false);
     if(selected) drafts.set(selected.jid,$('message-text').value);
     clearConversationMedia();
     selected=chat;selection++;editRevision++;historyQueue=Promise.resolve();historyLoaded=false;messages=[];page=1;pages=1;attachment=null;attachmentKind=null;pendingSend=null;$('attachment').value='';$('attachment-info').hidden=true;$('message-text').required=true;$('send-status').textContent='';
@@ -964,7 +1010,18 @@
     event.preventDefault();const button=event.submitter;button.disabled=true;
     try {const chat=await api('/resolve-phone','POST',{phone:$('new-phone').value});$('new-dialog').close();await selectChat({...chat,status:'open',labels:[],unread:0});}catch(error) {$('new-error').textContent=error.message;}finally {button.disabled=false;}
   });
-  function toggleContact(value) {detailsOpen=value;$('app-shell').classList.toggle('details-open',detailsOpen);$('show-contact').setAttribute('aria-expanded',String(detailsOpen));}
+  function toggleContact(value, restoreFocus=true) {
+    if(detailsOpen===value) return;
+    if(value) detailsTrigger=document.activeElement;
+    detailsOpen=value;
+    $('app-shell').classList.toggle('details-open',value);
+    for(const id of ['show-contact','contact-header-info']) $(id).setAttribute('aria-expanded',String(value));
+    if(value) $('hide-contact').focus();
+    else {
+      if(restoreFocus) detailsTrigger?.focus();
+      detailsTrigger=null;
+    }
+  }
   function showPanel(section) {
     for(const name of ['attendance','products','assistant','templates','connection']) {$('tab-'+name).classList.toggle('active',name===section);$('tab-'+name).setAttribute('aria-selected',String(name===section));$(name==='attendance'?'attendance-section':name+'-section').hidden=name!==section;}
   }
@@ -1022,7 +1079,12 @@
   $('dashboard-ai-open').addEventListener('click',()=>showView('page-ai','nav-ai'));
   hooks.sync.push(renderDashboard);
   function showView(view='workspace',nav) {
-    const workspace=view==='workspace';$('metrics').hidden=!workspace;$('workspace').hidden=!workspace;
+    const workspace=view==='workspace';
+    if(!workspace) toggleContact(false,false);
+    expandNavigation(false);
+    $('app-shell').dataset.view=view;
+    $('metrics').hidden=view!=='page-dashboard';
+    $('workspace').hidden=!workspace;
     for(const id of pageIds) $(id).hidden=id!==view;
     if(nav) setNavigation(nav);
     runHooks('view',view);
@@ -1052,8 +1114,51 @@
   $('manage-connection').addEventListener('click',()=>$('connection-dialog').showModal());
   $('nav-settings').addEventListener('click',()=>{showView('workspace','nav-settings');showPanel('connection');toggleContact(true);});
   $('refresh-top').addEventListener('click',()=>{notice('');sync(true);});
+  let navigationPinned=false;
+  function expandNavigation(value, pinned=value) {
+    navigationPinned=pinned;
+    $('app-shell').classList.toggle('navigation-expanded',value);
+    $('expand-navigation').setAttribute('aria-expanded',String(value));
+    const label=pinned?'Fechar menu':value?'Fixar menu aberto':'Mais opções de navegação';
+    $('expand-navigation').setAttribute('aria-label',label);
+    $('expand-navigation').title=label;
+    $('expand-navigation-label').textContent=label;
+  }
+  $('expand-navigation').addEventListener('click',()=>{
+    expandNavigation(!navigationPinned);
+  });
+  $('main-sidebar').addEventListener('pointerenter',event=>{
+    if(event.pointerType==='mouse' && !navigationPinned && $('app-shell').dataset.view==='workspace' &&
+      window.matchMedia('(min-width: 768px)').matches) expandNavigation(true,false);
+  });
+  $('main-sidebar').addEventListener('pointerleave',event=>{
+    if(event.pointerType==='mouse' && !navigationPinned &&
+      $('app-shell').classList.contains('navigation-expanded')) expandNavigation(false);
+  });
   $('show-contact').addEventListener('click',()=>{showPanel('attendance');toggleContact(!detailsOpen);});$('hide-contact').addEventListener('click',()=>toggleContact(false));
-  $('back-to-chats').addEventListener('click',()=>{if(sending) return;if(selected) drafts.set(selected.jid,$('message-text').value);clearConversationMedia();selection++;selected=null;globalThis.WhatsAppFeatures?.onSelectChat?.(null);globalThis.WhatsAppSchedule?.onSelectChat?.(null);globalThis.WhatsAppContactMedia?.onSelect?.(null);extras()?.onSelectChat?.(null);toggleContact(false);$('app-shell').classList.toggle('has-chat',false);$('contact-empty').hidden=false;$('contact-details').hidden=true;renderTemplateShortcuts();renderChats();});
+  document.addEventListener('keydown',event=>{
+    if(event.key!=='Escape' || event.defaultPrevented || document.querySelector('dialog[open], .message-actions[open]')) return;
+    if(detailsOpen) toggleContact(false);
+    else if($('app-shell').classList.contains('navigation-expanded')) {
+      expandNavigation(false);
+      $('expand-navigation').focus();
+    }
+  });
+  $('back-to-chats').addEventListener('click',()=>{
+    if(sending) return;
+    if(selected) drafts.set(selected.jid,$('message-text').value);
+    clearConversationMedia();selection++;selected=null;
+    globalThis.WhatsAppFeatures?.onSelectChat?.(null);
+    globalThis.WhatsAppSchedule?.onSelectChat?.(null);
+    globalThis.WhatsAppContactMedia?.onSelect?.(null);extras()?.onSelectChat?.(null);
+    toggleContact(false,false);$('app-shell').classList.remove('has-chat');
+    $('conversation-content').hidden=true;$('conversation-empty').hidden=false;
+    $('contact-empty').hidden=false;$('contact-details').hidden=true;
+    renderTemplateShortcuts();renderChats();$('chat-list').scrollTop=inboxScroll;
+    if(virtualRows) renderChatWindow();
+    $('inbox-title').setAttribute('tabindex','-1');
+    $('inbox-title').focus({preventScroll:true});
+  });
   $('contact-form').addEventListener('submit',async event=>{
     event.preventDefault();if(!selected) return;const jid=selected.jid,button=event.submitter;button.disabled=true;
     try {const detail=await api('/contact?jid='+encodeURIComponent(jid),'PATCH',{status:$('contact-status').value,aiMode:$('contact-ai').value || undefined,labels:$('contact-labels').value.split(',').map(value=>value.trim()).filter(Boolean)});const chat=chats.find(item=>item.jid===jid);if(chat) Object.assign(chat,detail,{archived:chat.archived});renderChats();notice(detail.surveyError?'Atendimento salvo. '+detail.surveyError:detail.surveySent?'Atendimento salvo e pesquisa de satisfação enviada.':'Atendimento salvo.',!detail.surveyError);}catch(error) {notice(error.message);}finally {button.disabled=false;}
@@ -1147,7 +1252,18 @@
   $('media-viewer').addEventListener('close',()=>{const key=viewerMediaKey;viewerMediaKey=null;if(key && !key.startsWith((selected?.jid || '')+'|')) discardMedia(key);trimMediaCache();});
   window.addEventListener('pagehide',()=>{viewerMediaKey=null;mediaLocks.clear();clearConversationMedia();});
   const mainNav=document.querySelector('.main-nav');
-  if(mainNav?.append) for(const id of ['nav-overview','nav-conversations','nav-contacts','nav-crm','nav-team','nav-products','nav-knowledge','nav-ai','nav-voice','nav-sales','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {const entry=$(id);if(entry) {entry.setAttribute('aria-label',entry.getAttribute('aria-label') || entry.textContent.trim());mainNav.append(entry);}}
+  if(mainNav?.append) {
+    for(const id of ['nav-conversations','nav-overview','nav-contacts','nav-prospection','nav-crm','nav-team','nav-products','nav-knowledge','nav-ai','nav-voice','nav-sales','nav-triggers','nav-automation','nav-schedule','settings','transcription-settings','nav-starred','nav-profile','nav-connection','nav-settings','nav-pending','nav-closed']) {
+      const entry=$(id);
+      if(entry) mainNav.append(entry);
+    }
+    for(const entry of mainNav.querySelectorAll('button')) {
+      const label=entry.getAttribute('aria-label') || entry.querySelector('span')?.textContent.trim() || entry.textContent.trim();
+      entry.setAttribute('aria-label',label);
+      if(!entry.title) entry.title=label;
+    }
+    setNavigation('nav-conversations');
+  }
   hooks.sync.push(()=>globalThis.WhatsAppTriggers?.onChats?.(chats));hooks.select.push(()=>globalThis.WhatsAppTriggers?.onSelectChat?.(selected));
   (async()=>{try {templates=(await api('/settings')).templates;renderTemplates();}catch(error) {notice(error.message);}await sync();if(new URLSearchParams(location.search).has('conectar') && connection?.reachable && connection.state!=='connected') openQr();})();
   setInterval(sync,4000);

@@ -174,22 +174,86 @@ section.panel{position:relative}
 .archived-sync[hidden]{display:none}
 .archived-sync span{flex:1;min-width:160px}
 
-/* Mensagem de voz: botão redondo, onda com progresso e velocidades lado a lado. */
-.message .audio-card{width:310px;max-width:100%;min-width:0;display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid #2c5147;border-radius:16px;background:linear-gradient(135deg,#143832,#0e221f);box-shadow:0 2px 8px #0003}
-.message:has(.audio-card){min-width:min(100%,260px)}
-.message .audio-main{display:flex;align-items:center;gap:11px;min-width:0}
-.message .audio-play{flex:0 0 auto;width:42px;height:42px;min-height:0;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:#25c08a;color:#05201a;font-size:15px;line-height:1;cursor:pointer;box-shadow:0 2px 6px #0005;transition:background .15s,transform .15s}
-.message .audio-play:hover{background:#3ad79f}.message .audio-play:active{transform:scale(.94)}.message .audio-play:focus-visible{outline:2px solid #9ff5d4;outline-offset:2px}
+/* Voice messages use the bubble itself as their surface. */
+.message:has(.audio-card) {
+  width: 414px;
+  min-width: 0;
+  max-width: min(100%, 414px);
+  padding: 10px 15px 7px;
+  border-radius: 12px;
+  background: #273438;
+  --voice-accent: #70d9d1;
+}
+.message.mine:has(.audio-card) { background: #15483d; }
+.message:has(.audio-card) .message-meta { justify-content: flex-end; margin-top: 8px; padding-inline-end: 0; }
+.message .audio-card {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.message .audio-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.message .audio-avatar { position: relative; flex: none; }
+.message:not(.mine) .audio-avatar { order: 1; }
+.message .audio-avatar .avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  font-size: 16px;
+}
+.message .audio-mic {
+  position: absolute;
+  inset: auto 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #122e2c;
+  color: var(--voice-accent);
+}
+.message .audio-mic .icon { width: 14px; height: 14px; }
+.message .audio-play {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #f4fffd;
+  font-size: 16px;
+}
+.message .audio-play:hover { background: #ffffff17; }
 .message .audio-card.loading .audio-play{cursor:progress;animation:audio-pulse 1s ease-in-out infinite}
 @keyframes audio-pulse{50%{opacity:.45}}
 .message .audio-track{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
-.message .audio-wave{display:flex;height:26px;margin:0;opacity:1;align-items:center;justify-content:space-between;gap:2px;cursor:pointer;border-radius:4px}
+.message .audio-wave{position:relative;display:flex;height:26px;margin:0;opacity:1;align-items:center;justify-content:space-between;gap:2px;cursor:pointer;border-radius:4px}
+.message .audio-wave::after {
+  content: '';
+  position: absolute;
+  left: var(--audio-progress, 0%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--voice-accent);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
 .message .audio-wave:focus-visible{outline:2px solid #9ff5d4;outline-offset:2px}
-.message .audio-wave i{display:block;flex:1;max-width:4px;min-width:2px;border-radius:3px;background:#4c7a6d;transition:background .1s}
+.message .audio-wave i{display:block;flex:1;min-width:0;border-radius:3px;background:#72b5ab80;transition:background .1s}
 .message .audio-card:not(.ready) .audio-wave{cursor:default;opacity:.75}
 .message .audio-wave i.played{background:#62e8b8}
 .message .audio-row{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
-.message .audio-time{margin:0;font-size:11px;color:#a9c7bd;font-variant-numeric:tabular-nums;white-space:nowrap}
+.message .audio-time{margin:0;font-size:12px;color:#c3d8d3;font-variant-numeric:tabular-nums;white-space:nowrap}
 .message .audio-speed{display:inline-flex;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:2px;margin:0;padding:2px;min-height:0;border:1px solid #2f5a4d;border-radius:999px;background:#0a1e1a;font-size:inherit}
 .message .audio-rate{min-height:0;padding:3px 8px;border:0;border-radius:999px;background:transparent;color:#a9c7bd;font-size:11px;font-weight:600;line-height:1.3;cursor:pointer;white-space:nowrap}
 .message .audio-rate:hover{color:#e6fff5}
@@ -197,4 +261,67 @@ section.panel{position:relative}
 .message .audio-note{font-size:11px;color:#c9b88a}
 .message .audio-player{display:none}
 .message .audio-status{margin:0;font-size:11px;line-height:1.5;color:#ffd1b5}
-@media(max-width:760px){.message .audio-card{width:280px;padding:9px 10px}.message .audio-play{width:38px;height:38px}.message .audio-rate{padding:3px 6px}}
+
+.message .audio-transcription {
+  max-width: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+}
+.message .audio-transcription.has-transcript {
+  padding: 9px 10px 10px;
+  border: 1px solid #a7e2d826;
+  border-radius: 10px;
+  background: #ffffff09;
+}
+.message .transcription-controls { gap: 4px 8px; }
+.message .transcription-heading {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  color: var(--voice-accent);
+  font-size: 13px;
+}
+.message .transcription-controls .icon { width: 15px; height: 15px; }
+.message .transcribe-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  min-height: 34px;
+  border-color: #65cdb98c;
+  border-radius: 8px;
+  background: transparent;
+  color: #9cead9;
+  font-size: 13px;
+}
+.message .transcribe-button:hover { background: #72d7c61a; }
+.message :is(.transcription-copy, .transcription-more) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 3px;
+  color: #c6d9d5;
+  font-size: 12px;
+}
+.message .transcription-options { margin-block-start: 5px; }
+.message .transcription-provider { font-size: 12px; }
+.message .has-transcript .transcription-text {
+  margin: 5px 0 0;
+  padding: 8px 0 0;
+  border: 0;
+  border-top: 1px solid #a7e2d826;
+  border-radius: 0;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1.45;
+}
+@media (max-width: 480px) {
+  .message:has(.audio-card) { padding-inline: 11px; }
+  .message .audio-avatar .avatar { width: 46px; height: 46px; }
+  .message .audio-play { width: 34px; }
+  .message .audio-wave { gap: 1px; }
+  .message .audio-rate { padding: 3px 5px; }
+}

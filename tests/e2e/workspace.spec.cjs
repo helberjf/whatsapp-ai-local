@@ -285,6 +285,88 @@ for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:39
     await page.locator('#show-contact').click();await expect(page.locator('#contact-info-open')).toBeVisible();await insideViewport(page.locator('#contact-info-open'));
   });
 }
+test('sidebar expands on hover and stays open when pinned',async({page})=>{
+  await page.setViewportSize({width:1366,height:768});
+  const sidebar=page.locator('#main-sidebar');
+  const toggle=page.locator('#expand-navigation');
+  const inbox=page.locator('.inbox');
+  const inboxBefore=await inbox.boundingBox();
+  await sidebar.hover({position:{x:20,y:70}});
+  await expect(toggle).toHaveAttribute('aria-expanded','true');
+  await expect(page.locator('#account-name')).toBeVisible();
+  await page.mouse.move(180,220);
+  await expect(toggle).toHaveAttribute('aria-expanded','true');
+  expect(await inbox.boundingBox()).toEqual(inboxBefore);
+  await page.mouse.move(350,220);
+  await expect(toggle).toHaveAttribute('aria-expanded','false');
+
+  await toggle.click();
+  await page.mouse.move(350,220);
+  await expect(toggle).toHaveAttribute('aria-expanded','true');
+  await page.keyboard.press('Escape');
+  await expect(toggle).toHaveAttribute('aria-expanded','false');
+  await expect(toggle).toBeFocused();
+});
+
+test('conversation layout fills the window and details overlay the history',async({page})=>{
+  await page.setViewportSize({width:1892,height:842});
+  await page.locator('#expand-navigation').click();
+  await expect(page.locator('#expand-navigation')).toHaveAttribute('aria-expanded','true');
+  await expect(page.locator('#account-name')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#expand-navigation')).toBeFocused();
+  await openChat(page);
+  const inbox=await page.locator('.inbox').boundingBox();
+  const conversation=await page.locator('.conversation').boundingBox();
+  expect(inbox.x+inbox.width).toBeGreaterThanOrEqual(625);
+  expect(inbox.x+inbox.width).toBeLessThanOrEqual(655);
+  expect(conversation.width).toBeGreaterThanOrEqual(1200);
+  await expect(page.locator('#metrics')).toBeHidden();
+  await insideViewport(page.locator('#send'));
+  await page.locator('#show-contact').click();
+  await expect(page.locator('#contact-panel')).toBeVisible();
+  expect(await page.locator('.conversation').boundingBox()).toEqual(conversation);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#contact-panel')).toBeHidden();
+  await expect(page.locator('#show-contact')).toBeFocused();
+  await page.locator('#nav-overview').click();
+  await expect(page.locator('#metrics')).toBeVisible();
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.locator('#metrics')).toBeVisible();
+});
+
+test('mobile back restores the filtered inbox and keeps the draft',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('#search').fill('Alex');
+  await openChat(page);
+  await expect(page.locator('.inbox')).toBeHidden();
+  await expect(page.locator('.sidebar')).toBeHidden();
+  await page.locator('#message-text').fill('Rascunho no celular');
+  await page.locator('#back-to-chats').click();
+  await expect(page.locator('#search')).toHaveValue('Alex');
+  await openChat(page);
+  await expect(page.locator('#message-text')).toHaveValue('Rascunho no celular');
+});
+
+test('voice bubble shows the sender, compact transcription controls and inline result',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await openChat(page);
+  const bubble=page.locator('.message').filter({has:page.locator('.audio-card')}).first();
+  await expect(bubble.locator('.audio-avatar')).toContainText('AM');
+  await expect(bubble.getByRole('button',{name:'Transcrever',exact:true})).toBeVisible();
+  const provider=bubble.getByRole('combobox',{name:'Transcritor deste áudio'});
+  await expect(provider).toBeHidden();
+  await bubble.getByRole('button',{name:'Mais opções de transcrição'}).click();
+  await expect(provider).toBeVisible();
+  await bubble.getByRole('button',{name:'Mais opções de transcrição'}).click();
+  await bubble.getByRole('button',{name:'Transcrever',exact:true}).click();
+  await expect(bubble.locator('.transcription-text')).toHaveText('Transcrição automática de demonstração');
+  await expect(bubble.getByRole('button',{name:'Copiar transcrição'})).toBeVisible();
+  await expect(bubble.getByRole('button',{name:'Transcrever',exact:true})).toBeHidden();
+  const dimensions=await bubble.evaluate(node=>({width:node.clientWidth,content:node.scrollWidth}));
+  expect(dimensions.content).toBeLessThanOrEqual(dimensions.width+1);
+});
+
 test('media players, safe links and draft survive polling',async({page})=>{
   await page.setViewportSize({width:1536,height:1100});
   await openChat(page);await page.locator('#message-text').fill('Rascunho preservado');
@@ -427,6 +509,7 @@ test('voice flow stages save separately and the voice preview never enables auto
 async function openChatFromNav(page) {await page.locator('#nav-conversations').click();await openChat(page);}
 
 test('"Sem resposta" queue lists unanswered conversations with the longest wait first',async({page})=>{
+  await page.locator('#toggle-filters').click();
   await expect(page.locator('#filter-unanswered')).toBeHidden();
   await page.evaluate(async()=>{const token=document.querySelector('meta[name="whatsapp-session"]').content;for(const jid of ['5511000000004@s.whatsapp.net','5511000000002@s.whatsapp.net']) await fetch('/api/contact?jid='+encodeURIComponent(jid),{method:'PATCH',headers:{'Content-Type':'application/json','X-WhatsApp-Token':token},body:JSON.stringify({status:'pending',labels:['Sem resposta']})});});
   await page.locator('#refresh-top').click();await expect(page.locator('#filter-unanswered')).toBeVisible();await expect(page.locator('#filter-unanswered-count')).toHaveText('2');
@@ -435,6 +518,7 @@ test('"Sem resposta" queue lists unanswered conversations with the longest wait 
   await page.locator('#filter-all').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(10);
 });
 test('team tools: waiting queue, slash replies, bulk actions, transfer and dashboard',async({page})=>{
+  await page.locator('#toggle-filters').click();
   await expect(page.locator('#filter-waiting-count')).not.toHaveText('0');await page.locator('#filter-waiting').click();
   await expect(page.locator('#inbox-title')).toContainText('Aguardando');expect(await page.locator('#chat-list .chat-item').count()).toBeGreaterThan(3);await expect(page.locator('#chat-list .wait-chip').first()).toBeVisible();
   await page.locator('#filter-all').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(10);
@@ -458,6 +542,7 @@ test('chats archived on the phone appear under Arquivadas and every filter stays
   demo.archiveOnPhone(1,false);await page.locator('#refresh-top').click();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Riley Alves');
   await page.locator('#archived-row').click();
+  await page.locator('#toggle-filters').click();
   for(const viewport of [{width:1440,height:960},{width:1133,height:637},{width:390,height:844}]) {
     await page.setViewportSize(viewport);
     for(const id of ['filter-all','filter-pending','filter-waiting','archived-row']) {const box=await page.locator('#'+id).boundingBox();expect(box,id).not.toBeNull();const panel=await page.locator('.inbox').boundingBox();expect(box.x+box.width,id+' '+viewport.width).toBeLessThanOrEqual(panel.x+panel.width+1);}
@@ -495,6 +580,7 @@ test('the inbox search and unanswered filter keep archived chats separate',async
   await expect(page.locator('#chat-list .chat-item').filter({hasText:'Sam Rivera'})).toHaveCount(1);
   await page.locator('#filter-all').click();
   await expect(page.locator('#filter-unanswered-count')).toHaveText('1');
+  await page.locator('#toggle-filters').click();
   await page.locator('#filter-unanswered').click();
   await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);
   await expect(page.locator('#chat-list .chat-item')).toContainText('Sam Rivera');

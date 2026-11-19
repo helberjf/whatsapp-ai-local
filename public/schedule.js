@@ -131,7 +131,13 @@
     const nav=button('',()=>open('sidebar'),'nav-item','nav-schedule');nav.title='Mensagens programadas';nav.setAttribute('aria-label','Mensagens programadas');
     const icon=node('span','schedule-nav-icon','◷');icon.setAttribute('aria-hidden','true');nav.append(icon,node('span','','Mensagens programadas'));document.querySelector('.main-nav')?.append(nav);
     const composer=$('composer'),quick=composer?.querySelector('.quick-reply');
-    if(composer) {const toolbar=node('div','schedule-composer-toolbar');composer.insertBefore(toolbar,quick || composer.children[0]);if(quick) toolbar.append(quick);toolbar.append(button('◷ Programar',()=>open('composer'),'schedule-composer-button','schedule-message-button'));}
+    if(composer) {
+      const toolbar=node('div','schedule-composer-toolbar');
+      const actions=quick?.parentElement || composer;
+      actions.insertBefore(toolbar,quick || actions.firstChild);
+      if(quick) toolbar.append(quick);
+      toolbar.append(button('◷ Programar',()=>open('composer'),'schedule-composer-button','schedule-message-button'));
+    }
     const dialog=node('dialog','schedule-dialog',undefined,'schedule-dialog');dialog.setAttribute('aria-labelledby','schedule-title');
     const head=node('div','dialog-heading'),title=node('div');title.append(node('p','eyebrow','NO HORÁRIO QUE VOCÊ ESCOLHER'),node('h2','','Mensagens programadas','schedule-title'));
     const close=button('×',()=>dialog.close(),'icon-button');close.setAttribute('aria-label','Fechar mensagens programadas');head.append(title,close);dialog.append(head);
