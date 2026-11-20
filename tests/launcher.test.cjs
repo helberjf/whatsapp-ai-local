@@ -112,6 +112,14 @@ test('carregamento visual traduz somente marcos estáveis do iniciador',()=>{
   assert.equal(classifyLine('uma linha técnica qualquer'),null);
 });
 
+test('o servidor da central é iniciado fora da árvore de processos do atalho',()=>{
+  let start;
+  assert.equal(runScript('start-central.ps1',[],{spawn:file=>{start=fs.readFileSync(file,'utf8');return {status:0};}}),0);
+  assert.match(start,/Invoke-CimMethod -ClassName Win32_Process -MethodName Create/);
+  assert.match(start,/run-central-server\.ps1/);
+  assert.doesNotMatch(start,/Start-Process -FilePath \$nodePath/);
+});
+
 test('a conferência aguarda a central sair da inicialização',async()=>{
   const {waitForCentral}=require('../scripts/launcher-ui.cjs');
   let attempts=0;

@@ -70,15 +70,25 @@ try {
     Write-Output 'A central aberta e de uma versao anterior. Reiniciando com a atualizacao...'
     if(-not (Stop-OldCentral $running)) {throw 'A central anterior continua aberta. Use Parar WhatsApp Central.cmd e abra de novo.'}
   }
-  # O auxiliar fica em segundo plano, sem depender de uma janela de terminal aberta.
-  $scriptPath=Join-Path $projectRoot 'server.cjs'
-  $nodeCaPath=Join-Path $dataPath 'certs\windows-ca.pem'
-  if(-not $env:NODE_EXTRA_CA_CERTS -and (Test-Path -LiteralPath $nodeCaPath) -and (Get-Item -LiteralPath $nodeCaPath).Length -gt 0) {$env:NODE_EXTRA_CA_CERTS=$nodeCaPath}
-  $arguments='"'+$scriptPath+'" --no-open'
-  $process=Start-Process -FilePath $nodePath -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $dataPath 'server.log') -RedirectStandardError (Join-Path $dataPath 'server.err.log')
-  $process.Id | Set-Content -LiteralPath (Join-Path $dataPath 'server.pid') -Encoding ascii
+  # O Windows inicia este processo fora da árvore do atalho. Fechar o iniciador não encerra a central.
+  $serverRunner=Join-Path $PSScriptRoot 'run-central-server.ps1'
+  $powershellPath=Join-Path $PSHOME 'powershell.exe'
+  $command='"{0}" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}" -NodePath "{2}"' -f $powershellPath,$serverRunner,$nodePath
+  $startup=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}
+  $result=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+    CommandLine=$command
+    CurrentDirectory=$projectRoot
+    ProcessStartupInformation=$startup
+  }
+  if($result.ReturnValue -ne 0) {throw ('O Windows não iniciou o servidor da central. Código WMI '+$result.ReturnValue+'.')}
+  Write-Output ('Servidor iniciado em segundo plano. Processo de acompanhamento: '+$result.ProcessId)
   $ready=$false
-  for($attempt=0;$attempt -lt 30;$attempt++) {if(Test-Central) {$ready=$true;break};Start-Sleep -Milliseconds 500}
+  $deadline=[DateTime]::UtcNow.AddSeconds(30)
+  do {
+    if(Test-Central) {$ready=$true;break}
+    if(-not (Get-Process -Id $result.ProcessId -ErrorAction SilentlyContinue)) {break}
+    Start-Sleep -Milliseconds 500
+  } while([DateTime]::UtcNow -lt $deadline)
   if(-not $ready) {throw 'A central não respondeu na porta 8766. Consulte data/server.err.log.'}
   Write-Output ('Whats AI pronto: '+$centralUrl)
   if(-not $NoBrowser) {Start-Process ($launchUrl+'&conectar=1')}
