@@ -5,6 +5,17 @@ const fs=require('node:fs');
 const {EventEmitter}=require('node:events');
 const {spawnSync}=require('node:child_process');
 const {runScript}=require('../scripts/launcher.cjs');
+const {ensureDocker}=require('../scripts/open-central.cjs');
+
+test('a abertura espera pelo motor mesmo quando o Docker Desktop já informou sucesso',async()=>{
+  let probes=0,starts=0,waits=0;
+  await ensureDocker({run(args){
+    if(args[0]==='info') return {status:++probes===3?0:1};
+    if(!args.includes('--help')) starts++;
+    return {status:0};
+  },wait:async()=>{waits++;},log(){}});
+  assert.deepEqual({probes,starts,waits},{probes:3,starts:1,waits:1});
+});
 const {classifyLine,runVisualLauncher}=require('../scripts/launcher-ui.cjs');
 
 // Dependências simuladas: nenhum PowerShell nem git de verdade é executado.
@@ -83,7 +94,8 @@ test('iniciador PowerShell antigo usa o launcher resiliente quando o script prin
 });
 
 test('iniciador abre uma URL nova para não reutilizar a aba antiga em cache',()=>{
-  const root=path.join(__dirname,'..'),start=fs.readFileSync(path.join(root,'scripts','start-central.ps1'),'utf8');
+  let start;
+  assert.equal(runScript('start-central.ps1',[],{spawn:file=>{start=fs.readFileSync(file,'utf8');return {status:0};}}),0);
   assert.match(start,/\$launchNonce=\[DateTimeOffset\]::UtcNow\.ToUnixTimeMilliseconds\(\)/);
   assert.match(start,/\$launchUrl=\$centralUrl\+'\?iniciar='\+\$launchNonce/);
   assert.match(start,/Start-Process \$launchUrl/);
@@ -93,11 +105,23 @@ test('iniciador abre uma URL nova para não reutilizar a aba antiga em cache',()
 
 test('carregamento visual traduz somente marcos estáveis do iniciador',()=>{
   assert.deepEqual(classifyLine('Configuração local pronta. Segredos preservados.'),{step:2,status:'Iniciando serviços...'});
-  assert.deepEqual(classifyLine('Preparando WhatsApp, banco e sessão persistente…'),{step:3,status:'Conectando ao WhatsApp...'});
+  assert.deepEqual(classifyLine('Preparando WhatsApp, banco e sessão persistente…'),{step:3,status:'Iniciando banco e conector...'});
   assert.deepEqual(classifyLine('Banco PostgreSQL da central pronto. Banco do conector preservado.'),{step:4,status:'Abrindo a Central...'});
   assert.deepEqual(classifyLine('Central ja iniciada. Reutilizando a sessao.'),{step:4,status:'Central pronta.',done:true});
   assert.deepEqual(classifyLine('Whats AI pronto: http://127.0.0.1:8766/'),{step:4,status:'Central pronta.',done:true});
   assert.equal(classifyLine('uma linha técnica qualquer'),null);
+});
+
+test('a conferência aguarda a central sair da inicialização',async()=>{
+  const {waitForCentral}=require('../scripts/launcher-ui.cjs');
+  let attempts=0;
+  await waitForCentral({wait:async()=>{},request:async()=>{
+    attempts++;
+    if(attempts===1) throw new TypeError('fetch failed');
+    if(attempts===2) return Response.json({service:'whatsapp-local',ready:false},{status:503});
+    return Response.json({service:'whatsapp-local'});
+  }});
+  assert.equal(attempts,3);
 });
 
 test('adaptador visual oculta o processo, registra saídas e preserva argumentos',async()=>{
@@ -107,7 +131,7 @@ test('adaptador visual oculta o processo, registra saídas e preserva argumentos
     root:'C:/central',extraArgs:['-NoBrowser'],
     spawn:(file,args,options)=>{calls.spawned.push({file,args,options});return child;},
     append:text=>calls.appended.push(text),emit:event=>calls.emitted.push(event),now:()=>new Date('2026-11-16T12:00:00.000Z'),
-    nodePath:'C:/node/node.exe'
+    nodePath:'C:/node/node.exe',checkReady:async()=>{}
   });
   child.stdout.emit('data',Buffer.from('Configuração local pronta. Segredos preservados.\r\nBanco PostgreSQL da central pronto.\r\n'));
   child.stderr.emit('data',Buffer.from('aviso técnico\r\n'));
@@ -118,6 +142,69 @@ test('adaptador visual oculta o processo, registra saídas e preserva argumentos
   assert.match(calls.appended.join(''),/2026-11-16T12:00:00\.000Z.*inicio/);
   assert.match(calls.appended.join(''),/aviso técnico/);
   assert.match(calls.appended.join(''),/exit=0/);
+});
+
+test('atalho abre o webapp durante a inicialização e só libera a central após a conferência',async()=>{
+  for(const available of [false,true]) {
+    const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();
+    const events=[];
+    const result=runVisualLauncher({
+      spawn:()=>child,append:()=>{},emit:()=>{},
+      startPage:async()=>({url:'http://127.0.0.1:12345/loading',ready:()=>events.push('ready'),fail:()=>events.push('failed'),close:()=>{}}),
+      checkReady:async()=>{events.push('health');if(!available) throw Error('offline');},
+      openBrowser:async url=>{assert.equal(url,'http://127.0.0.1:12345/loading');events.push('browser');}
+    });
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(events,['browser'],'abre antes de o processo de inicialização terminar');
+    child.emit('close',0);
+    assert.equal(await result,available?0:1);
+    assert.deepEqual(events,available?['browser','health','ready']:['browser','health','failed']);
+  }
+});
+
+test('tela de abertura espera, redireciona quando pronta e mostra falha de inicialização',async()=>{
+  const {startLaunchPage}=require('../scripts/launch-page.cjs');
+  for(const success of [true,false]) {
+    const page=await startLaunchPage(path.join(__dirname,'..'),'http://127.0.0.1:8766/?iniciar=123');
+    try {
+      const loading=await fetch(page.url);
+      assert.match(await loading.text(),/Abrindo Whats AI/);
+      if(success) {
+        page.ready();
+        const ready=await fetch(page.url,{redirect:'manual'});
+        assert.equal(ready.status,302);
+        assert.equal(ready.headers.get('location'),'http://127.0.0.1:8766/?iniciar=123');
+      } else {
+        page.fail();
+        const failed=await (await fetch(page.url)).text();
+        assert.match(failed,/Não foi possível iniciar/);
+        assert.doesNotMatch(failed,/http-equiv="refresh"/);
+      }
+    } finally {page.close();}
+  }
+});
+
+test('libera o webapp quando o processo termina mesmo com canais herdados ainda abertos',async()=>{
+  const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();
+  let ready=false;
+  const result=runVisualLauncher({
+    spawn:()=>child,append:()=>{},emit:()=>{},
+    checkReady:async()=>{},openBrowser:async()=>{},
+    startPage:async()=>({url:'http://127.0.0.1:12345/loading',ready:()=>{ready=true;},close(){},fail(){}})
+  });
+  await new Promise(resolve=>setImmediate(resolve));
+  child.emit('exit',0);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ready,true);
+  assert.equal(await result,0);
+  child.emit('close',0);
+});
+
+test('falha na abertura não mantém o iniciador preso pelo servidor de carregamento',()=>{
+  const source=`require('./scripts/launch-page.cjs').startLaunchPage(process.cwd(),'http://127.0.0.1:8766/').then(page=>page.fail())`;
+  const result=spawnSync(process.execPath,['-e',source],{cwd:path.join(__dirname,'..'),encoding:'utf8',timeout:5000,windowsHide:true});
+  assert.equal(result.error,undefined,result.error?.message);
+  assert.equal(result.status,0,result.stderr);
 });
 
 test('iniciador invisível abre a interface WPF e preserva o modo sem navegador',()=>{
