@@ -21,25 +21,44 @@ const css = `
   [data-step="4"] .track span { width: 90%; }
   [data-state="failed"] .track { display: none; }
   p { margin: 12px 0 0; color: #bcd0c7; font-size: 14px; line-height: 1.5; }
+  a { display: inline-block; margin-top: 18px; color: #87edbe; font-size: 14px;
+    font-weight: 600; text-underline-offset: 3px; }
   @media (prefers-reduced-motion: reduce) { .track span { transition: none; } }
 `;
 
 const clientScript = `
+  const card = document.querySelector('main');
+  const status = document.querySelector('#status');
+  let unavailableSince = 0;
+
+  function showFailure(message) {
+    card.dataset.state = 'failed';
+    document.querySelector('h1').textContent = 'Não foi possível iniciar';
+    status.textContent = message;
+  }
+
   async function poll() {
     try {
-      const response = await fetch(location.pathname + '/status', {cache: 'no-store'});
+      const response = await fetch(location.pathname + '/status', {
+        cache: 'no-store', signal: AbortSignal.timeout(4000)
+      });
       if (!response.ok) throw Error('Status indisponível');
       const progress = await response.json();
-      if (progress.ready) { location.replace(location.pathname); return; }
-      const card = document.querySelector('main');
+      unavailableSince = 0;
+      if (progress.ready) { location.replace(progress.targetUrl); return; }
       card.dataset.step = progress.step;
-      document.querySelector('#status').textContent = progress.status;
+      status.textContent = progress.status;
       if (progress.failed) {
-        card.dataset.state = 'failed';
-        document.querySelector('h1').textContent = 'Não foi possível iniciar';
+        showFailure(progress.status);
         return;
       }
-    } catch {}
+    } catch {
+      unavailableSince ||= Date.now();
+      if (Date.now() - unavailableSince >= 4000) {
+        showFailure('Tente abrir a central pelo link abaixo. Se ela estiver fechada, clique no atalho novamente.');
+        return;
+      }
+    }
     setTimeout(poll, 800);
   }
   poll();
@@ -69,7 +88,7 @@ async function startLaunchPage(projectRoot, targetUrl) {
     }
     if (req.url === pagePath + '/status') {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify({...progress,ready,failed}));
+      return res.end(JSON.stringify({...progress,ready,failed,targetUrl:ready?targetUrl:undefined}));
     }
     const asset = assets.get(req.url);
     if (asset) {
@@ -82,7 +101,6 @@ async function startLaunchPage(projectRoot, targetUrl) {
     }
     if (ready) {
       res.writeHead(302, {Location: targetUrl});
-      res.once('finish', () => server.close());
       return res.end();
     }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -98,7 +116,8 @@ async function startLaunchPage(projectRoot, targetUrl) {
       <body><main data-state="${failed?'failed':'loading'}">
       <img src="${pagePath}/logo" alt=""><h1>${title}</h1>
       <div class="track" aria-hidden="true"><span></span></div>
-      <p id="status" role="status">${description}</p></main></body></html>`);
+      <p id="status" role="status">${description}</p>
+      <a href="${new URL('/', targetUrl).origin}/">Abrir Whats AI</a></main></body></html>`);
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);

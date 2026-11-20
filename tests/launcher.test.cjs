@@ -171,9 +171,14 @@ test('tela de abertura espera, redireciona quando pronta e mostra falha de inici
       assert.match(await loading.text(),/Abrindo Whats AI/);
       if(success) {
         page.ready();
-        const ready=await fetch(page.url,{redirect:'manual'});
-        assert.equal(ready.status,302);
-        assert.equal(ready.headers.get('location'),'http://127.0.0.1:8766/?iniciar=123');
+        const target='http://127.0.0.1:8766/?iniciar=123';
+        for(let attempt=0;attempt<2;attempt++) {
+          const ready=await fetch(page.url,{redirect:'manual',headers:{Connection:'close'}});
+          assert.equal(ready.status,302);
+          assert.equal(ready.headers.get('location'),target);
+        }
+        const status=await (await fetch(page.url+'/status')).json();
+        assert.equal(status.targetUrl,target);
       } else {
         page.fail();
         const failed=await (await fetch(page.url)).text();
