@@ -70,7 +70,7 @@ function runVisualLauncher(deps={}) {
     let child;
     try {
       const childArgs=extraArgs.filter(arg=>arg.toLowerCase()!=='-nobrowser');
-      child=spawn(nodePath,[path.join(projectRoot,'scripts','open-central.cjs'),...childArgs,'-NoBrowser'],{cwd:projectRoot,windowsHide:true,stdio:['ignore','pipe','pipe']});
+      child=spawn(nodePath,[path.join(projectRoot,'scripts','open-central.cjs'),...childArgs,'-NoBrowser','-ReuseReady'],{cwd:projectRoot,windowsHide:true,stdio:['ignore','pipe','pipe']});
     } catch(error) {
       append(`[${now().toISOString()}] erro=${error.message}\n`);finish(1);return;
     }

@@ -55,8 +55,7 @@ const clientScript = `
     } catch {
       unavailableSince ||= Date.now();
       if (Date.now() - unavailableSince >= 4000) {
-        showFailure('Tente abrir a central pelo link abaixo. Se ela estiver fechada, clique no atalho novamente.');
-        return;
+        status.textContent = 'O computador está demorando para responder. Ainda tentando abrir a central…';
       }
     }
     setTimeout(poll, 800);

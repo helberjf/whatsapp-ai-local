@@ -7,6 +7,17 @@ const {spawnSync}=require('node:child_process');
 const {runScript}=require('../scripts/launcher.cjs');
 const {ensureDocker}=require('../scripts/open-central.cjs');
 
+test('o atalho reutiliza a central somente com a versão atual e o conector disponível',async()=>{
+  const {canReuseCentral}=require('../scripts/open-central.cjs');
+  const connector='http://127.0.0.1:8767/';
+  for(const [stale,connectorReady,expected] of [[false,true,true],[true,true,false],[false,false,false]]) {
+    const request=async url=>url===connector
+      ? new Response('',{status:connectorReady?200:503})
+      : Response.json({service:'whatsapp-local',build:'current-build',stale});
+    assert.equal(await canReuseCentral(connector,request),expected);
+  }
+});
+
 test('a abertura espera pelo motor mesmo quando o Docker Desktop já informou sucesso',async()=>{
   let probes=0,starts=0,waits=0;
   await ensureDocker({run(args){
@@ -77,7 +88,9 @@ test('somente os iniciadores canônicos de abrir e parar permanecem',()=>{
 test('atalhos do Windows usam a abertura visual e reconhecem formatos antigos do projeto',()=>{
   const root=path.join(__dirname,'..'),shortcut=fs.readFileSync(path.join(root,'scripts','shortcut.ps1'),'utf8'),autostart=fs.readFileSync(path.join(root,'scripts','autostart.ps1'),'utf8');
   assert.match(shortcut,/open-central-ui\.vbs/);
-  assert.match(shortcut,/System32\\wscript\.exe/);
+  assert.match(shortcut,/launcher-ui\.cjs/);
+  assert.match(shortcut,/\$shortcut\.TargetPath=.*powershell\.exe/);
+  assert.doesNotMatch(shortcut,/Test-Path -LiteralPath \$legacyLauncher/);
   assert.match(shortcut,/public\\icons\\whats-ai\.ico/);
   assert.match(autostart,/open-central-ui\.vbs/);
   assert.match(autostart,/System32\\wscript\.exe/);
@@ -145,7 +158,7 @@ test('adaptador visual oculta o processo, registra saídas e preserva argumentos
   child.stderr.emit('data',Buffer.from('aviso técnico\r\n'));
   child.emit('close',0);
   assert.equal(await promise,0);
-  assert.deepEqual(calls.spawned,[{file:'C:/node/node.exe',args:[path.join('C:/central','scripts','open-central.cjs'),'-NoBrowser'],options:{cwd:'C:/central',windowsHide:true,stdio:['ignore','pipe','pipe']}}]);
+  assert.deepEqual(calls.spawned,[{file:'C:/node/node.exe',args:[path.join('C:/central','scripts','open-central.cjs'),'-NoBrowser','-ReuseReady'],options:{cwd:'C:/central',windowsHide:true,stdio:['ignore','pipe','pipe']}}]);
   assert.deepEqual(calls.emitted,[{step:2,status:'Iniciando serviços...'},{step:4,status:'Abrindo a Central...'}]);
   assert.match(calls.appended.join(''),/2026-11-16T12:00:00\.000Z.*inicio/);
   assert.match(calls.appended.join(''),/aviso técnico/);
