@@ -1,13 +1,18 @@
-﻿$ErrorActionPreference='Stop'
+﻿param([string]$DesktopPath=[Environment]::GetFolderPath('DesktopDirectory'))
+$ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$desktopPath=[Environment]::GetFolderPath('Desktop')
 $shortcutPath=Join-Path $desktopPath 'Whats AI.lnk'
+$alternatePath=Join-Path $desktopPath 'Whats AI - Central.lnk'
 $legacyPath=Join-Path $desktopPath 'WhatsApp Central.lnk'
 $launcherPath=Join-Path $PSScriptRoot 'launcher-ui.cjs'
 if(-not (Test-Path -LiteralPath $launcherPath)) {throw 'Iniciador da central nao encontrado.'}
-$nodePath=(Get-Command node -CommandType Application -ErrorAction Stop).Source
-$command="& '{0}' '{1}'" -f $nodePath.Replace("'","''"),$launcherPath.Replace("'","''")
-$arguments='-NoProfile -NonInteractive -WindowStyle Hidden -Command "'+$command+'"'
+$nodePath=Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source
+function Get-LaunchArguments([string]$executable) {
+  $command="& '{0}' '{1}'" -f $executable.Replace("'","''"),$launcherPath.Replace("'","''")
+  return '-NoProfile -NonInteractive -WindowStyle Hidden -Command "'+$command+'"'
+}
+$arguments=Get-LaunchArguments $nodePath
+$brokenArguments=Get-LaunchArguments 'System.Object[]'
 $legacyLauncher=Join-Path $PSScriptRoot 'open-central-ui.vbs'
 $legacyLauncherArguments='"'+$legacyLauncher+'"'
 $cmdLauncher=Join-Path $projectRoot 'Iniciar WhatsApp Central.cmd'
@@ -15,7 +20,7 @@ $cmdArguments='/d /c ""'+$cmdLauncher+'""'
 $oldLauncher=Join-Path $PSScriptRoot 'start.ps1'
 $oldArguments='-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'+$oldLauncher+'"'
 $previousArguments='"'+(Join-Path $projectRoot 'Abrir WhatsApp.vbs')+'"'
-$knownArguments=@($arguments,$legacyLauncherArguments,$cmdArguments,$oldArguments,$previousArguments)
+$knownArguments=@($arguments,$brokenArguments,$legacyLauncherArguments,$cmdArguments,$oldArguments,$previousArguments)
 $shell=New-Object -ComObject WScript.Shell
 function Save-CentralShortcut([string]$file) {
   $shortcut=$shell.CreateShortcut($file)
@@ -31,9 +36,13 @@ function Save-CentralShortcut([string]$file) {
   $shortcut.Save()
 }
 try {
+  if(-not (Test-Path -LiteralPath $shortcutPath) -and (Test-Path -LiteralPath $alternatePath)) {
+    $shortcutPath=$alternatePath
+  }
   Save-CentralShortcut $shortcutPath
 } catch [System.UnauthorizedAccessException] {
-  $shortcutPath=Join-Path $desktopPath 'Whats AI - Central.lnk'
+  if($shortcutPath -eq $alternatePath) {throw}
+  $shortcutPath=$alternatePath
   Save-CentralShortcut $shortcutPath
 }
 if(Test-Path -LiteralPath $legacyPath) {

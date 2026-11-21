@@ -100,6 +100,36 @@ test('atalhos do Windows usam a abertura visual e reconhecem formatos antigos do
   assert.doesNotMatch(shortcut+autostart,/\$shortcut\.TargetPath=.*cmd\.exe/);
 });
 
+test('o atalho gerado aponta para um executável Node mesmo com entradas duplicadas no PATH',{skip:process.platform!=='win32'},()=>{
+  const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'whatsai-shortcut-'));
+  const shortcut=path.join(dir,'Whats AI - Central.lnk');
+  try {
+    const generator=path.join(__dirname,'..','scripts','shortcut.ps1');
+    const launcher=path.join(__dirname,'..','scripts','launcher-ui.cjs');
+    const quote=value=>"'"+value.replaceAll("'","''")+"'";
+    const command=[
+      '$ErrorActionPreference="Stop"',
+      '$shell=New-Object -ComObject WScript.Shell',
+      '$link=$shell.CreateShortcut('+quote(shortcut)+')',
+      '$link.TargetPath=(Get-Process -Id $PID).Path',
+      '$link.Arguments='+quote('-NoProfile -NonInteractive -WindowStyle Hidden -Command "& \'System.Object[]\' '+quote(launcher)+'"'),
+      '$link.Save()',
+      '& '+quote(generator)+' -DesktopPath '+quote(dir),
+      '$link=$shell.CreateShortcut('+quote(shortcut)+')',
+      'if($link.Arguments -notmatch "node\\.exe.*launcher-ui\\.cjs"){throw $link.Arguments}'
+    ].join('\n');
+    const result=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command',command],{
+      env:{...process.env,Path:[path.dirname(process.execPath),process.env.Path,path.dirname(process.execPath)].join(';')},
+      encoding:'utf8',windowsHide:true
+    });
+    assert.equal(result.status,0,result.stderr || result.stdout);
+  } finally {
+    fs.rmSync(shortcut,{force:true});
+    fs.rmSync(path.join(dir,'Whats AI.lnk'),{force:true});
+    fs.rmdirSync(dir);
+  }
+});
+
 test('iniciador PowerShell antigo usa o launcher resiliente quando o script principal foi apagado',()=>{
   const root=path.join(__dirname,'..'),legacy=fs.readFileSync(path.join(root,'scripts','start.ps1'),'utf8');
   assert.match(legacy,/open-central\.cjs/);
