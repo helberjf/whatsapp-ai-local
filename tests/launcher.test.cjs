@@ -163,6 +163,23 @@ test('o servidor da central é iniciado fora da árvore de processos do atalho',
   assert.doesNotMatch(start,/Start-Process -FilePath \$nodePath/);
 });
 
+test('a recuperação do iniciador usa a versão mais nova quando a main está à frente',()=>{
+  const {readScriptFromGit}=require('../scripts/launcher.cjs');
+  for(const isAncestor of [true,false]) {
+    const calls=[];
+    const git=(args)=>{
+      calls.push(args);
+      if(args[0]==='merge-base' && !isAncestor) throw Object.assign(Error('diverged'),{status:1});
+      return Buffer.from('script');
+    };
+    assert.equal(readScriptFromGit('start-central.ps1',git).toString(),'script');
+    assert.deepEqual(calls,[
+      ['merge-base','--is-ancestor','HEAD','refs/heads/main'],
+      ['show',(isAncestor?'refs/heads/main':'HEAD')+':scripts/start-central.ps1']
+    ]);
+  }
+});
+
 test('a conferência aguarda a central sair da inicialização',async()=>{
   const {waitForCentral}=require('../scripts/launcher-ui.cjs');
   let attempts=0;

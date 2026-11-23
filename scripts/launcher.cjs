@@ -8,8 +8,18 @@ const {execFileSync,spawnSync}=require('node:child_process');
 
 const root=path.join(__dirname,'..');
 
+function readScriptFromGit(file,git=args=>execFileSync('git',args,{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe']})) {
+  if(file==='start-central.ps1') {
+    try {git(['merge-base','--is-ancestor','HEAD','refs/heads/main']);}
+    catch {return git(['show','HEAD:scripts/'+file]);}
+    try {return git(['show','refs/heads/main:scripts/'+file]);}
+    catch {return git(['show','HEAD:scripts/'+file]);}
+  }
+  return git(['show','HEAD:scripts/'+file]);
+}
+
 function runScript(name,args=[],deps={}) {
-  const {exists=fs.existsSync,gitShow=file=>execFileSync('git',['show','HEAD:scripts/'+file],{cwd:root,windowsHide:true}),write=(file,text)=>fs.writeFileSync(file,text,{flag:'wx'}),remove=file=>fs.rmSync(file,{force:true}),spawn=(file,rest)=>spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',file,...rest],{cwd:root,stdio:'inherit'}),log=console.error,folder=__dirname}=deps;
+  const {exists=fs.existsSync,gitShow=readScriptFromGit,write=(file,text)=>fs.writeFileSync(file,text,{flag:'wx'}),remove=file=>fs.rmSync(file,{force:true}),spawn=(file,rest)=>spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',file,...rest],{cwd:root,stdio:'inherit'}),log=console.error,folder=__dirname}=deps;
   let script=path.join(folder,name),temporary;
   try {
     if(!exists(script)) {
@@ -27,4 +37,4 @@ function runScript(name,args=[],deps={}) {
     if(temporary) remove(temporary);
   }
 }
-module.exports={runScript};
+module.exports={readScriptFromGit,runScript};
