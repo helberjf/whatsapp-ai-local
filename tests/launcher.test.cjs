@@ -27,6 +27,37 @@ test('a abertura espera pelo motor mesmo quando o Docker Desktop já informou su
   },wait:async()=>{waits++;},log(){}});
   assert.deepEqual({probes,starts,waits},{probes:3,starts:1,waits:1});
 });
+
+test('repete a inicialização quando o processo termina com sucesso sem subir a central',async()=>{
+  const {startVerified}=require('../scripts/open-central.cjs');
+  let starts=0;
+  const messages=[];
+  const result=await startVerified({
+    start:()=>{starts++;return 0;},
+    ready:async()=>starts===2,
+    wait:async()=>{},
+    log:message=>messages.push(message)
+  });
+  assert.equal(starts,2);
+  assert.equal(result,0);
+  assert.equal(messages.length,1);
+});
+
+test('uma falha explícita é preservada e a saída prematura repetida vira erro',async()=>{
+  const {startVerified}=require('../scripts/open-central.cjs');
+  for(const [code,expectedStarts,expectedResult] of [[7,1,7],[0,2,1]]) {
+    let starts=0;
+    const result=await startVerified({
+      start:()=>{starts++;return code;},
+      ready:async()=>false,
+      wait:async()=>{},
+      log:()=>{},
+      logError:()=>{}
+    });
+    assert.equal(starts,expectedStarts);
+    assert.equal(result,expectedResult);
+  }
+});
 const {classifyLine,runVisualLauncher}=require('../scripts/launcher-ui.cjs');
 
 // Dependências simuladas: nenhum PowerShell nem git de verdade é executado.

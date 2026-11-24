@@ -25,14 +25,36 @@ async function ensureDocker({run=docker,wait=delay,log=console.log}={}) {
   throw Error('Docker Desktop não ficou pronto. '+(started.stderr?.trim() || started.error?.message || 'Verifique o estado do motor no Docker Desktop.'));
 }
 
+async function isCentralReady(request=fetch) {
+  try {
+    const response=await request('http://127.0.0.1:8766/health',{signal:AbortSignal.timeout(2000),cache:'no-store'});
+    if(!response.ok) return false;
+    const health=await response.json();
+    return health.service==='whatsapp-local' && Boolean(health.build) && health.stale===false;
+  } catch {return false;}
+}
+
 async function canReuseCentral(connector,request=fetch) {
   try {
     const options={signal:AbortSignal.timeout(4000),cache:'no-store'};
-    const [central,evolution]=await Promise.all([request('http://127.0.0.1:8766/health',options),request(connector,options)]);
-    if(!central.ok || !evolution.ok) return false;
-    const health=await central.json();
-    return health.service==='whatsapp-local' && Boolean(health.build) && health.stale===false;
+    const [ready,evolution]=await Promise.all([isCentralReady(request),request(connector,options)]);
+    return ready && evolution.ok;
   } catch {return false;}
+}
+
+async function startVerified({start,ready=isCentralReady,wait=delay,log=console.log,logError=console.error}) {
+  for(let attempt=0;attempt<2;attempt++) {
+    const code=start();
+    if(code!==0) return code;
+    // O processo pode sair com código zero enquanto a central ainda está sem porta aberta.
+    for(let probe=0;probe<5;probe++) {
+      if(await ready()) return 0;
+      if(probe<4) await wait(750);
+    }
+    if(attempt===0) log('A central ainda não respondeu. Tentando iniciar novamente…');
+  }
+  logError('A central não respondeu após duas tentativas. Confira data/server.err.log e data/launcher.log.');
+  return 1;
 }
 
 async function openCentral(args) {
@@ -45,10 +67,11 @@ async function openCentral(args) {
     }
   }
   await ensureDocker();
-  return runScript('start-central.ps1',args.filter(arg=>arg!=='-ReuseReady'));
+  const scriptArgs=args.filter(arg=>arg!=='-ReuseReady');
+  return startVerified({start:()=>runScript('start-central.ps1',scriptArgs)});
 }
 
-module.exports={ensureDocker,canReuseCentral};
+module.exports={ensureDocker,canReuseCentral,startVerified};
 if(require.main===module) openCentral(process.argv.slice(2)).then(code=>{process.exitCode=code;}).catch(error=>{
   console.error(error.message);
   process.exitCode=1;

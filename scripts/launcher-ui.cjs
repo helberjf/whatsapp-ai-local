@@ -22,6 +22,7 @@ async function waitForCentral({request=fetch,wait=delay}={}) {
 }
 
 function classifyLine(line) {
+  if(line.includes('Tentando iniciar novamente')) return {step:3,status:'Tentando iniciar novamente…'};
   if(line.includes('Aguardando Docker Desktop')) return {step:1,status:'Aguardando Docker Desktop...'};
   if(line.includes('Configuração local pronta')) return {step:2,status:'Iniciando serviços...'};
   if(line.includes('Preparando WhatsApp')) return {step:3,status:'Iniciando banco e conector...'};
