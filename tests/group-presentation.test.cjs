@@ -57,3 +57,13 @@ test('reordena arquivados sem permitir mudança de bloco ou duplicatas',async()=
   await assert.rejects(service.reorder({pinned:[],normal:['333@g.us','111@g.us'],archived:['222@g.us']}),error=>error.status===409);
   await assert.rejects(service.reorder({pinned:[],normal:['333@g.us'],archived:['111@g.us','111@g.us']}),error=>error.status===422);
 });
+
+test('repetir arquivamento confirmado atualiza a intenção local sem mudar a ordem',async()=>{
+  const {createGroupPresentation}=require('../lib/group-presentation.cjs');
+  const store=memoryStore({groupPresentation:{version:2,pinned:[],normal:[],archived:['111@g.us']},contacts:{'111@g.us':{archived:false,archivedAt:'2000-01-01T00:00:00.000Z'}}});
+  await createGroupPresentation({store}).setArchived('111@g.us',true);
+  const saved=await store.read();
+  assert.equal(saved.contacts['111@g.us'].archived,true);
+  assert.ok(Date.parse(saved.contacts['111@g.us'].archivedAt)>Date.parse('2000-01-01'));
+  assert.deepEqual(saved.groupPresentation.archived,['111@g.us']);
+});

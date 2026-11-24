@@ -81,11 +81,15 @@ async function insideViewport(locator) {await locator.scrollIntoViewIfNeeded();c
 
 test('filtra grupos e listas personalizadas e envia texto no grupo aberto',async({page})=>{
   const group={jid:'123@g.us',name:'Grupo da família',isGroup:true,status:'open',labels:[],unread:2};
-  const contact={jid:'5511998765432@s.whatsapp.net',name:'Contato individual',status:'open',labels:[],unread:0};
+  const contact={jid:'5511998765432@s.whatsapp.net',aliasJids:['123456789@lid'],name:'Contato individual',status:'open',labels:[],unread:0};
+  let listsAvailable=true;
   await page.route(/\/api\/(?:chats|chat-lists|messages|send)(?:\?|$)/,route=>{
     const url=new URL(route.request().url());
     if(url.pathname==='/api/chats') return route.fulfill({json:[group,contact]});
-    if(url.pathname==='/api/chat-lists') return route.fulfill({json:{lists:[{id:'1',name:'Família',jids:[group.jid,contact.jid]}]}});
+    if(url.pathname==='/api/chat-lists') return route.fulfill({json:{
+      whatsappListsAvailable:listsAvailable,
+      lists:listsAvailable?[{id:'1',name:'Família',jids:[group.jid,...contact.aliasJids]}]:[]
+    }});
     if(url.pathname==='/api/messages') {
       if(url.searchParams.get('jid')!==group.jid) return route.continue();
       return route.fulfill({json:{messages:[{id:'hi',type:'text',text:'Almoço de domingo',fromMe:false}],page:1,pages:1}});
@@ -95,13 +99,13 @@ test('filtra grupos e listas personalizadas e envia texto no grupo aberto',async
     return route.fulfill({json:{id:'out-group',jid,text,fromMe:true,type:'text',timestamp:Date.now(),deliveryStatus:'sent'}});
   });
   await page.locator('#refresh-top').click();
-  const filter=page.getByRole('combobox',{name:'Grupos e listas do WhatsApp'});
+  const filter=page.getByRole('combobox',{name:'Filtrar por lista'});
   const rows=page.locator('#chat-list .chat-item');
-  await expect(rows).toHaveText([/Contato individual/]);
-  await expect(page.locator('#filter-unread-count')).toHaveText('0');
+  await expect(rows).toHaveText([/Grupo da família/,/Contato individual/]);
+  await expect(page.locator('#filter-unread-count')).toHaveText('1');
   await filter.selectOption({label:'Família'});
   await expect(rows).toHaveText([/Grupo da família/,/Contato individual/]);
-  await filter.selectOption({label:'Grupos'});
+  await page.getByRole('button',{name:'Grupos',exact:true}).click();
   await expect(rows).toHaveText([/Grupo da família/]);
   await page.locator('#chat-list .chat-item').filter({hasText:'Grupo da família'}).click();
   await expect(page.locator('#messages')).toContainText('Almoço de domingo');
@@ -112,22 +116,56 @@ test('filtra grupos e listas personalizadas e envia texto no grupo aberto',async
   await page.locator('#send').click();
   await expect(page.locator('#messages .message.mine')).toContainText('Confirmado para domingo');
   await page.locator('#filter-all').click();
-  await expect(rows).toHaveText([/Contato individual/]);
+  await expect(rows).toHaveText([/Grupo da família/,/Contato individual/]);
+  await page.getByRole('button',{name:'Listas',exact:true}).click();
+  const lists=page.getByRole('dialog',{name:'Listas'});
+  await expect(lists.getByRole('button',{name:'Família'})).toBeVisible();
+  await lists.getByRole('button',{name:'Fechar listas'}).click();
+  listsAvailable=false;
+  await Promise.all([page.waitForResponse('**/api/chat-lists'),page.locator('#refresh-top').click()]);
+  await page.getByRole('button',{name:'Listas',exact:true}).click();
+  await expect(lists.getByText('Não foi possível atualizar as listas do WhatsApp.')).toBeVisible();
+  await lists.getByRole('button',{name:'Família'}).click();
+  await expect(rows).toHaveText([/Grupo da família/,/Contato individual/]);
 });
 
-test('grupos ficam à parte como as arquivadas e voltam às conversas',async({page})=>{
+test('Tudo mostra grupos e contatos, com as conversas fixadas no topo',async({page})=>{
   const group={jid:'123@g.us',name:'Grupo da família',isGroup:true,status:'open',labels:[],unread:2};
-  const person={jid:'5511998765432@s.whatsapp.net',name:'Ana Souza',status:'open',labels:[],unread:0};
-  await page.route('**/api/chats?**',route=>route.fulfill({json:[group,person]}));
+  const person={jid:'5511998765432@s.whatsapp.net',name:'Ana Souza',status:'open',labels:[],unread:0,pinned:true,pinnedAt:'2026-11-24T10:00:00Z'};
+  const recent={...person,jid:'5511998765433@s.whatsapp.net',name:'Contato recente',pinned:false};
+  await page.route('**/api/chats?**',route=>route.fulfill({json:[recent,group,person]}));
+  await page.route('**/api/group-presentation',route=>route.fulfill({json:{version:2,pinned:[group.jid],normal:[],archived:[]}}));
   await page.locator('#refresh-top').click();
-  await expect(page.locator('.chat-item')).toHaveCount(1);await expect(page.locator('.chat-item')).toContainText('Ana Souza');
-  await expect(page.locator('#groups-row')).toBeVisible();await expect(page.locator('#groups-row-count')).toHaveText('1');
-  await page.locator('#groups-row').click();
-  await expect(page.locator('.chat-item')).toHaveCount(1);await expect(page.locator('.chat-item')).toContainText('Grupo da família');
-  await expect(page.locator('#groups-row')).toContainText('Voltar às conversas');await expect(page.locator('#archived-row')).toBeHidden();
-  await page.locator('#groups-row').click();
-  await expect(page.locator('.chat-item')).toHaveCount(1);await expect(page.locator('.chat-item')).toContainText('Ana Souza');
+  const names=page.locator('#chat-list .chat-title strong');
+  await expect(names).toHaveText(['Ana Souza','Grupo da família','Contato recente']);
+  await expect(page.locator('#chat-list .chat-flag.pin')).toHaveCount(2);
+  const groups=page.getByRole('button',{name:'Grupos',exact:true});
+  await groups.click();
+  await expect(names).toHaveText(['Grupo da família']);
+  await expect(groups).toHaveAttribute('aria-pressed','true');
+  await page.getByRole('button',{name:'Tudo',exact:true}).click();
+  await expect(names).toHaveCount(3);
   await page.locator('#search').fill('família');await expect(page.locator('.chat-item')).toContainText('Grupo da família');
+});
+
+test('Arquivadas mostra grupos e contatos sem contador',async({page})=>{
+  const group={jid:'111@g.us',name:'Grupo arquivado no celular',isGroup:true,status:'open',labels:[],unread:24,archived:true};
+  const normal={jid:'222@g.us',name:'Grupo ativo',isGroup:true,status:'open',labels:[],unread:3,archived:false};
+  const person={jid:'5511998765432@s.whatsapp.net',name:'Pessoa arquivada',status:'open',labels:[],unread:1,archived:true};
+  await page.route('**/api/chats?**',route=>route.fulfill({json:[group,normal,person]}));
+  await page.route('**/api/group-presentation',route=>route.fulfill({json:{version:2,pinned:[],normal:[normal.jid],archived:[group.jid]}}));
+  await page.locator('#refresh-top').click();
+  await expect(page.locator('#archived-row')).toHaveText('Arquivadas');
+  await page.locator('#groups-row').click();await expect(page.locator('#chat-list')).toContainText('Grupo ativo');
+  await expect(page.locator('#chat-list')).not.toContainText('Grupo arquivado no celular');
+  await page.locator('#group-archived-row').click();
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);
+  await expect(page.locator('#chat-list')).toContainText('Grupo arquivado no celular');
+  await page.locator('#filter-all').click();
+  await page.locator('#archived-row').click();
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(2);
+  await expect(page.locator('#chat-list')).toContainText('Pessoa arquivada');
+  await expect(page.locator('#chat-list')).toContainText('Grupo arquivado no celular');
 });
 
 test('grupos arquivados ficam em pasta própria e o hambúrguer controla as ações',async({page})=>{
@@ -156,14 +194,14 @@ test('grupos arquivados ficam em pasta própria e o hambúrguer controla as aç�
   await expect(page).toHaveTitle('Whats AI');await expect(page.locator('#metric-unread')).toHaveText('0');
   await page.locator('#groups-row').click();
   const fixedRow=page.locator('.group-chat-row').filter({hasText:'Grupo fixado'});
-  await fixedRow.getByRole('button',{name:'Opções do grupo Grupo fixado'}).click();
+  await fixedRow.click({button:'right'});
   await expect(page.getByRole('menuitem',{name:'Arquivar grupo'})).toBeVisible();
   await page.keyboard.press('Escape');await expect(page.getByRole('menuitem',{name:'Arquivar grupo'})).toBeHidden();
   await fixedRow.getByRole('button',{name:'Opções do grupo Grupo fixado'}).click();
   await page.getByRole('menuitem',{name:'Arquivar grupo'}).click();
   await expect(page.locator('#group-archived-row')).toBeVisible();await expect(page.locator('#group-archived-row')).not.toContainText('24');
   await expect(page.locator('#chat-list')).not.toContainText('Grupo fixado');
-  await page.reload();await expect(page.locator('#groups-row-count')).toHaveText('1');await page.locator('#groups-row').click();await page.locator('#group-archived-row').click();
+  await page.reload();await expect(page.locator('#chat-list')).toContainText('Grupo normal');await page.locator('#groups-row').click();await page.locator('#group-archived-row').click();
   await expect(page.locator('#chat-list')).toContainText('Grupo fixado');await expect(page).toHaveTitle('Whats AI');
   const archivedRow=page.locator('.group-chat-row').filter({hasText:'Grupo fixado'});
   await archivedRow.getByRole('button',{name:'Opções do grupo Grupo fixado'}).click();
@@ -493,7 +531,7 @@ test('conversation organization: pin, archive, mute and unread stay explicit',as
   await openChat(page);await page.locator('#show-contact').click();
   await page.locator('#chat-pin').click();await expect(page.locator('#chat-pin')).toContainText('Desafixar');await expect(page.locator('.chat-item').first()).toContainText('Alex Morgan');
   await page.locator('#chat-mute').click();await page.locator('[data-mute="-1"]').click();await expect(page.locator('#chat-mute')).toContainText('Reativar');await expect(page.locator('#contact-flags')).toContainText('Silenciada');
-  await page.locator('#chat-archive').click();await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#archived-row')).toHaveAttribute('title','1 conversa arquivada');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#chat-archive').click();await expect(page.locator('#archived-row')).toHaveText('Arquivadas');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#archived-row')).toContainText('Voltar às conversas');
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
 });
@@ -533,13 +571,37 @@ test('team tools: waiting queue, slash replies, bulk actions, transfer and dashb
   await page.locator('#page-team .segmented label').filter({hasText:'Hoje'}).click();await expect(page.locator('#hours-caption')).toContainText('Hoje');await page.mouse.move(0,0);
   await page.screenshot({path:capturePath('team-dashboard.png')});
 });
+test('arquivadas abrem no início mesmo depois de rolar uma lista grande até o fim',async({page})=>{
+  const makeChat=(index,archived)=>({jid:`55119${String(index+(archived?1000:0)).padStart(8,'0')}@s.whatsapp.net`,name:(archived?'Arquivada ':'Ativa ')+index,status:'open',labels:[],unread:0,archived});
+  const active=Array.from({length:600},(_,i)=>makeChat(i,false)),archived=Array.from({length:300},(_,i)=>makeChat(i,true));
+  Object.assign(active[0],{jid:'111@g.us',isGroup:true});
+  Object.assign(archived[0],{jid:'222@g.us',isGroup:true});
+  await page.route('**/api/chats?**',route=>route.fulfill({json:[...active,...archived]}));
+  await page.route('**/api/group-presentation',route=>route.fulfill({json:{version:2,pinned:[],normal:[active[0].jid],archived:[archived[0].jid]}}));
+  await page.locator('#refresh-top').click();
+  const list=page.locator('#chat-list'),rows=list.locator('.chat-item');
+  await expect(list).toHaveAttribute('aria-rowcount','600');
+  await list.evaluate(element=>{element.scrollTop=element.scrollHeight;});
+  await expect(rows.last()).toContainText('Ativa 599');
+  await page.locator('#archived-row').click();
+  await expect(list).toHaveAttribute('aria-rowcount','300');
+  await expect(rows.first()).toContainText('Arquivada 0');
+  await expect.poll(()=>list.evaluate(element=>element.scrollTop)).toBe(0);
+  await list.evaluate(element=>{element.scrollTop=element.scrollHeight;});
+  await expect(rows.last()).toContainText('Arquivada 299');
+  await page.locator('#archived-row').click();
+  await expect(rows.first()).toContainText('Ativa 0');
+  await expect.poll(()=>list.evaluate(element=>element.scrollTop)).toBe(0);
+});
+
 test('chats archived on the phone appear under Arquivadas and every filter stays in view',async({page,demo})=>{
-  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('');
+  await expect(page.locator('#archived-row')).toHaveText('Arquivadas');
   demo.archiveOnPhone(9);await page.locator('#refresh-top').click();
-  await expect(page.locator('#archived-row')).toBeVisible();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#archived-row')).toHaveAttribute('title','1 conversa arquivada');
-  // Arquivada com mensagem não vista: só ela conta no número, como no WhatsApp.
-  demo.archiveOnPhone(1);await page.locator('#refresh-top').click();await expect(page.locator('#archived-row-count')).toHaveText('1');await expect(page.locator('#archived-row')).toHaveAttribute('title','2 conversas arquivadas · 1 com mensagem não vista');
-  demo.archiveOnPhone(1,false);await page.locator('#refresh-top').click();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  demo.archiveOnPhone(1);await page.locator('#refresh-top').click();
+  await expect(page.locator('#chat-list .chat-item')).toHaveCount(8);
+  await expect(page.locator('#archived-row')).toHaveText('Arquivadas');
+  demo.archiveOnPhone(1,false);await page.locator('#refresh-top').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
   await page.locator('#archived-row').click();await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);await expect(page.locator('#chat-list .chat-item')).toContainText('Riley Alves');
   await page.locator('#archived-row').click();
   await page.locator('#toggle-filters').click();
@@ -555,7 +617,7 @@ test('chats archived on the phone before the extension are fetched from WhatsApp
   await expect(page.locator('#chat-list .chat-item')).toHaveCount(2);await expect(page.locator('#chat-list')).toContainText('Avery Rocha');
   // Arquivada no WhatsApp sem conversa na Evolution: aparece com o nome da agenda e abre normalmente.
   await page.locator('#chat-list .chat-item').filter({hasText:'Morgan Blake'}).click();await expect(page.locator('#conversation-content')).toBeVisible();
-  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row-count')).toHaveText('');await expect(page.locator('#archived-row')).toHaveAttribute('title','2 conversas arquivadas');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
+  await page.locator('#archived-row').click();await expect(page.locator('#archived-sync')).toBeHidden();await expect(page.locator('#archived-row')).toHaveText('Arquivadas');await expect(page.locator('#chat-list .chat-item')).toHaveCount(9);
 });
 test('the inbox search and unanswered filter keep archived chats separate',async({page,demo})=>{
   await page.evaluate(async()=>{
@@ -566,7 +628,7 @@ test('the inbox search and unanswered filter keep archived chats separate',async
     }
   });
   demo.archiveOnPhone(0);await page.locator('#refresh-top').click();
-  await expect(page.locator('#archived-row')).toHaveAttribute('title','1 conversa arquivada');
+  await expect(page.locator('#archived-row')).toHaveText('Arquivadas');
   const search=page.locator('#search'),alex=page.locator('#chat-list .chat-item').filter({hasText:'Alex Morgan'});
   await search.fill('Alex Morgan');await expect(alex).toHaveCount(0,{timeout:3000});
   await page.locator('#archived-row').click();await expect(alex).toHaveCount(1);

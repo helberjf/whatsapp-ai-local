@@ -210,7 +210,7 @@ test('imagem e vídeo anexados mostram prévia local e liberam URLs ao substitui
 test('menu de anexos envia arquivos para o grupo aberto e mantém o microfone desativado',async()=>{
   class Reader {readAsDataURL(){this.result='data:image/png;base64,aGVsbG8=';this.onload();}}
   const group='123-456@g.us',browser=await createBrowser({withMedia:true,FileReader:Reader,chatRecords:[{jid:group,name:'Grupo da família',isGroup:true,unread:0,status:'open',labels:[]}]});
-  browser.get('chat-list-filter').value='groups';await browser.get('chat-list-filter').emit('change');await browser.selectChat(0);
+  await browser.get('groups-row').emit('click');await browser.selectChat(0);
   assert.equal(browser.get('record-audio').disabled,true,'Gravação pelo microfone continua exclusiva de conversas individuais.');
   browser.get('attachment').files=[new File(['foto'],'foto.png',{type:'image/png'})];await browser.get('attachment').emit('change');
   assert.equal(browser.get('attachment-preview').children.length,1,'O grupo deve receber a mesma prévia de anexo.');

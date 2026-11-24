@@ -32,7 +32,8 @@ test('extensão guarda arquivadas do WhatsApp (celular, sincronização e centra
   for(const handler of handlers['chats.upsert']) handler([{id:lid,archived:true}]);
   await wait(30);
   assert.equal(saved.length,1,'várias mudanças seguidas viram uma gravação');
-  const chats=saved[0].inst;assert.deepEqual(Object.keys(chats).sort(),[lid,jidOf(1),jidOf(3)].sort());
+  const chats=saved[0].inst;assert.deepEqual(Object.keys(chats).sort(),[lid,jidOf(1),jidOf(3),'120363@g.us'].sort());
+  assert.equal(chats['120363@g.us'].archived,true);
   assert.equal(chats[jidOf(1)].archived,false);assert.equal(chats[jidOf(3)].archived,true);assert.ok(Number.isFinite(chats[lid].updatedAt));
   let body,status;const response={status(code) {status=code;return this;},json(value) {body=value;return this;}};
   await extension.archivedHandler(controller)({params:{instanceName:'teste'},query:{}},response);
@@ -40,11 +41,11 @@ test('extensão guarda arquivadas do WhatsApp (celular, sincronização e centra
   await extension.archivedHandler(controller)({params:{instanceName:'outra'},query:{}},response);assert.equal(status,503);
 });
 
-async function serverWith(t,routes) {
+async function serverWith(t,routes,options={}) {
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'whatsapp-local-archive-'));
   const fetchImpl=async(url,options={})=>{const route=new URL(url).pathname,input=options.body?JSON.parse(options.body):{};const handler=Object.entries(routes).find(([part])=>route.includes(part))?.[1];if(!handler) return new Response('{}',{status:404});return new Response(JSON.stringify(typeof handler==='function'?handler(input):handler));};
   const credentials={has:async()=>false,get:async()=>null,set:async()=>{},remove:async()=>{},close:async()=>{}};
-  const server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:1',apiKey:'x',instanceName:'t'},storeDir:dir,fetchImpl,credentials,disableWorkers:true});
+  const server=createWhatsAppServer({config:{apiUrl:'http://127.0.0.1:1',apiKey:'x',instanceName:'t'},storeDir:dir,fetchImpl,credentials,disableWorkers:true,...options});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(async()=>{await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});await server.cleanup;await fs.rm(dir,{recursive:true,force:true});});
   const base='http://127.0.0.1:'+server.address().port,token=(await (await fetch(base)).text()).match(/content="([a-f0-9]{64})"/)[1];
@@ -127,18 +128,32 @@ test('extensão lê as arquivadas antigas do WhatsApp sem alterar a sessão e se
   const service={instanceId:'inst',client:socket},controller={waMonitor:{waInstances:{teste:service}}};
   let body,status;const response={status(code) {status=code;return this;},json(value) {body=value;return this;}};
   await extension.archiveSnapshotHandler(controller)({params:{instanceName:'teste'},query:{}},response);
-  assert.equal(status,200);assert.deepEqual({archived:body.archived,changed:body.changed,unarchiveChats:body.unarchiveChats},{archived:3,changed:2,unarchiveChats:true});
+  assert.equal(status,200);assert.deepEqual({archived:body.archived,changed:body.changed,unarchiveChats:body.unarchiveChats},{archived:4,changed:3,unarchiveChats:true});
   assert.deepEqual(queries,[{name:'regular_low',version:'0',return_snapshot:'true'},{name:'regular_low',version:'5',return_snapshot:'false'}],'pede o snapshot e depois as mudanças seguintes');
   assert.equal(writes.length,0,'nunca grava no estado de sincronização da sessão');
   await wait(30);const chats=saved.at(-1).inst;
   assert.equal(chats[jidOf(1)].archived,true);assert.equal(chats[jidOf(1)].lastMessageAt,1700000000_000);
   assert.equal(chats[jidOf(2)].archived,false,'desarquivar registrado depois vale mais que o snapshot antigo');
-  assert.equal(chats[lid].archived,true);assert.equal(chats['120363@g.us'],undefined);assert.equal(chats[jidOf(3)],undefined);
+  assert.equal(chats[lid].archived,true);assert.equal(chats['120363@g.us'].archived,true);assert.equal(chats[jidOf(3)],undefined);
   await extension.archivedHandler(controller)({params:{instanceName:'teste'},query:{}},response);
   assert.equal(body.snapshot,true);assert.ok(body.snapshotAt>=at);assert.equal(body.unarchiveChats,true);
   await extension.archiveSnapshotHandler({waMonitor:{waInstances:{}}})({params:{instanceName:'teste'},query:{}},response);assert.equal(status,503);
   const failing=createExtension({load:()=>({}),save:()=>{}},{load:()=>({}),save:()=>{}},{loadBaileys:async()=>({...library,extractSyncdPatches:async()=>{throw new Error('failed to find key "abc" to decode mutation');}})});
   await failing.archiveSnapshotHandler(controller)({params:{instanceName:'teste'},query:{}},response);assert.equal(status,200);assert.equal(body.success,false);assert.equal(body.reason,'missing-key');assert.match(body.error,/chaves/);assert.match(body.detail,/failed to find key/);
+});
+
+test('grupos arquivados no celular aparecem na pasta, inclusive sem conversa na Evolution',async t=>{
+  const group='120363123@g.us',unknown='120363456@g.us',now=Date.now();
+  let remote={[group]:{archived:true,updatedAt:now-1000},[unknown]:{archived:true,updatedAt:now-1000}};
+  const {call,server}=await serverWith(t,{'/findChats/':[chatRow(group,'Grupo do celular')],'/findContacts/':[],'/localGroups/':{groups:[{id:group,subject:'Grupo do celular'}]},'/localArchived/':()=>({archiveSync:true,snapshot:true,snapshotAt:now,unarchiveChats:false,chats:remote}),'/archiveChat/':()=>({archived:true})});
+  const chats=(await call('/api/chats')).body;
+  assert.equal(chats.find(chat=>chat.jid===group)?.archived,true);
+  assert.equal(chats.find(chat=>chat.jid===unknown)?.isGroup,true);
+  assert.deepEqual((await call('/api/group-presentation')).body.archived.sort(),[group,unknown].sort());
+  remote={...remote,[group]:{archived:false,updatedAt:Date.now()+1000}};server.invalidateChats();
+  assert.equal((await call('/api/group-presentation')).body.archived.includes(group),false);
+  const changed=await call('/api/group-presentation/archive','PATCH',{jid:unknown,archived:false});
+  assert.equal(changed.status,200);assert.equal(changed.body.archived.includes(unknown),false);
 });
 
 test('central busca as arquivadas antigas, avisa extensão desatualizada e aplica "mensagem nova desarquiva"',async t=>{
@@ -173,6 +188,19 @@ test('central sobe a leitura automática uma vez quando a extensão ainda não l
   const chats=()=>fetch(base+'/api/chats',{headers:{'X-WhatsApp-Token':token}}).then(response=>response.json());
   await Promise.all([chats(),chats(),chats()]);await wait(30);await chats();await chats();
   assert.equal(snapshots,1,'uma leitura só, mesmo com várias telas abertas');
+});
+
+test('atualização importa grupos mesmo após snapshot antigo e não repete leitura parcial em cada polling',async t=>{
+  for(const partial of [false,true]) {
+    let snapshots=0,groupsSnapshotAt=null;
+    const {call}=await serverWith(t,{
+      '/findChats/':[], '/findContacts/':[],
+      '/localArchived/':()=>({archiveSync:true,snapshot:true,snapshotAt:1,groupArchiveSync:true,groupsSnapshotAt,chats:{}}),
+      '/localArchivedSnapshot/':()=>{snapshots++;if(!partial) groupsSnapshotAt=Date.now();return {success:true,partial,snapshotAt:Date.now()};}
+    },{autoArchiveSnapshot:true});
+    await call('/api/chats');await wait(30);await call('/api/chats');await wait(30);await call('/api/chats');
+    assert.equal(snapshots,1,'o snapshot antigo é atualizado uma vez; leitura parcial aguarda antes de repetir');
+  }
 });
 
 test('health informa a versão do código em execução para o iniciador reiniciar uma central antiga',async t=>{

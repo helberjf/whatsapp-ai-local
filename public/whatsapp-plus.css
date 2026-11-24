@@ -1,12 +1,9 @@
 /* Recursos do WhatsApp na central e fluxo de voz. Segue o tema escuro de app.css. */
-.chat-flags{display:inline-flex;align-items:center;gap:3px;margin-left:auto;color:#8fa3ad}
-.chat-flags+time{margin-left:4px}
+.chat-flags{display:inline-flex;flex:none;align-items:center;gap:4px;color:#a6b5b9}
 .chat-flag{display:inline-grid;place-items:center;width:14px;height:14px}
 .chat-flag .icon{width:12px;height:12px}
 .chat-flag.block{color:#e58a8a}
-.chat-item.pinned{box-shadow:inset 3px 0 0 #00a98d55}
 .unread-count.marked{min-width:12px;height:12px;line-height:12px;padding:0}
-#filter-archived[hidden]{display:none}
 .contact-flags{display:inline-flex;flex-wrap:wrap;gap:4px;margin-left:auto}
 .contact-flags:empty{display:none}
 .pill.small{font-size:9px;padding:2px 7px;border-color:#3d5a54;color:#a9d8c6}
@@ -168,7 +165,6 @@ section.panel{position:relative}
 .archived-row[hidden]{display:none}
 .archived-row .icon{width:18px;height:18px;color:#6fd8b4}
 .archived-row:hover,.archived-row:focus-visible{background:#ffffff0a}
-.archived-row .archived-count{margin-left:auto;font-size:11px;color:#6fd8b4;font-weight:650}
 .archived-row.back{color:#9ff0cd}
 .archived-sync{display:flex;align-items:center;gap:10px;padding:8px 16px 10px;font-size:12px;color:#9fb6b0;flex-shrink:0;flex-wrap:wrap}
 .archived-sync[hidden]{display:none}

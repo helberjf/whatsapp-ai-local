@@ -25,13 +25,14 @@
     }
     const owner=memberOf(chat.assignee);
     if(owner) {const chip=el('span','assignee-chip',initials(owner.name));chip.style.background=owner.color;chip.title='Responsável: '+owner.name;chip.setAttribute('aria-label',chip.title);title.append(chip);}
-    if(selecting) {
+    if(selecting && !chat.isGroup) {
       const box=el('span','select-box'+(chosen.has(chat.jid)?' checked':''),chosen.has(chat.jid)?'✓':'');box.setAttribute('aria-hidden','true');
       button.prepend(box);button.setAttribute('aria-pressed',String(chosen.has(chat.jid)));button.classList.add('selectable');
     }
   }
   function onChatClick(chat) {
     if(!selecting) return false;
+    if(chat.isGroup) return true;
     if(chosen.has(chat.jid)) chosen.delete(chat.jid);else chosen.add(chat.jid);
     renderBulk();C.renderChats();return true;
   }
@@ -48,6 +49,7 @@
     for(const [id,name] of [['filter-waiting','waiting'],['filter-mine','mine']]) {$(id).classList.toggle('active',filter===name);$(id).setAttribute('aria-pressed',String(filter===name));}
   }
   function toggleFilter(name) {
+    C.leaveArchive();
     globalThis.WhatsAppExtras?.resetFilters?.();filter=filter===name?null:name;
     setTitle(filter==='waiting'?'Aguardando':filter==='mine'?'Minhas conversas':'Conversas');updateTabs();C.renderChats();
   }
@@ -67,13 +69,10 @@
   $('bulk-toggle').addEventListener('click',()=>setSelecting(!selecting));
   $('bulk-cancel').addEventListener('click',()=>setSelecting(false));
   $('bulk-visible').addEventListener('click',()=>{
-    const visible=[...document.querySelectorAll('#chat-list .chat-item')].length;
     // Seleciona o que o filtro atual mostra (inclusive linhas fora da tela em listas grandes).
-    const search=normalize($('search').value.trim());
-    const base=C.chats().filter(chat=>!search || normalize(`${chat.name} ${chat.phone || ''} ${chat.jid} ${(chat.labels || []).join(' ')}`).includes(search));
-    const list=globalThis.WhatsAppExtras?.arrangeChats?.(base) || base;
+    const list=C.displayedChats().filter(chat=>!chat.isGroup);
     for(const chat of list.slice(0,200)) chosen.add(chat.jid);
-    renderBulk();C.renderChats();if(list.length>200) notice('Selecionadas as primeiras 200 conversas (limite por ação).');else if(!visible) notice('Nenhuma conversa visível para selecionar.');
+    renderBulk();C.renderChats();if(list.length>200) notice('Selecionadas as primeiras 200 conversas (limite por ação).');else if(!list.length) notice('Nenhuma conversa individual para selecionar.');
   });
   let bulkAction=null;
   async function runBulk(action,value) {
@@ -251,6 +250,6 @@
   $('team-refresh').addEventListener('click',loadMetrics);
   $('nav-team').addEventListener('click',async()=>{C.showView('page-team','nav-team');try {await loadSettings();fillSettings();}catch(error) {notice(error.message);}loadMetrics();});
 
-  globalThis.WhatsAppTeam={filter:filterList,decorate,onChatClick,resetFilter:()=>{if(!filter) return;filter=null;setTitle('Conversas');updateTabs();C.renderChats();},selecting:()=>selecting};
+  globalThis.WhatsAppTeam={filter:filterList,currentFilter:()=>filter,decorate,onChatClick,resetFilter:()=>{if(!filter) return;filter=null;setTitle('Conversas');updateTabs();C.renderChats();},selecting:()=>selecting};
   loadSettings().catch(()=>{});renderBulk();
 })();

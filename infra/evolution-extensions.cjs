@@ -39,7 +39,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     archiveTimer=setTimeout(()=>{archiveTimer=null;try {saveArchive(archives());}catch { /* the next change tries again */ }},archiveStorage.delayMs ?? 1000);archiveTimer.unref?.();
   }
   function rememberArchive(service,jid,archived,updatedAt=Date.now(),{lastMessageAt,onlyNewer=false,alias}={}) {
-    const id=instanceKey(service);if(!id || !individual(jid) || typeof archived!=='boolean') return false;
+    const id=instanceKey(service);if(!id || (!individual(jid) && !group(jid)) || typeof archived!=='boolean') return false;
     const chats=archives()[id] ||= {},previous=chats[jid];
     if(onlyNewer && previous && previous.updatedAt>=updatedAt) return false;
     if(!onlyNewer && previous && previous.archived===archived) {if(individual(alias) && previous.alias!==alias) {previous.alias=alias;scheduleArchiveSave();}return false;}
@@ -214,7 +214,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(!id) return fail(response,503,'O WhatsApp precisa estar conectado.');
     try {
       observe(service);const meta=archiveMeta(service);
-      return response.status(200).json({extensionVersion:2,archiveSync:true,snapshot:true,snapshotAt:meta.snapshotAt || null,unarchiveChats:unarchiveSetting(service),chats:archives()[id] || {}});
+      return response.status(200).json({extensionVersion:2,archiveSync:true,snapshot:true,groupArchiveSync:true,groupsSnapshotAt:meta.groupsSnapshotAt || null,snapshotAt:meta.snapshotAt || null,unarchiveChats:unarchiveSetting(service),chats:archives()[id] || {}});
     }
     catch {return fail(response,503,'Não foi possível ler as conversas arquivadas.');}
   };}
@@ -323,8 +323,8 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
         if(rememberArchive(service,chat.jid,chat.archived,chat.updatedAt,{...options,alias:phone || undefined})) changed++;
         if(phone) {linked++;rememberArchive(service,phone,chat.archived,chat.updatedAt,{...options,alias:chat.jid});}
       }
-      const meta=archiveMeta(service);meta.snapshotAt=Date.now();if(typeof unarchiveChats==='boolean') meta.unarchiveChats=unarchiveChats;scheduleArchiveSave();
-      return {archived:chats.filter(chat=>chat.archived && individual(chat.jid)).length,lid:chats.filter(chat=>chat.archived && String(chat.jid).endsWith('@lid')).length,linked,changed,partial,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
+      const meta=archiveMeta(service);meta.snapshotAt=Date.now();if(!partial) meta.groupsSnapshotAt=meta.snapshotAt;if(typeof unarchiveChats==='boolean') meta.unarchiveChats=unarchiveChats;scheduleArchiveSave();
+      return {archived:chats.filter(chat=>chat.archived && (individual(chat.jid) || group(chat.jid))).length,lid:chats.filter(chat=>chat.archived && String(chat.jid).endsWith('@lid')).length,linked,changed,partial,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};
     })().finally(()=>snapshots.delete(id));
     snapshots.set(id,job);return job;
   }

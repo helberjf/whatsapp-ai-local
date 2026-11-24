@@ -41,12 +41,12 @@ const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const normalizeText=text=>String(text).normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
 // Arquivada: vale o registro mais recente entre o WhatsApp (extensão local) e o que foi feito pela central.
 // Com "Manter conversas arquivadas" desligado no WhatsApp, uma mensagem depois de arquivar tira a conversa das arquivadas.
-function archivedOf(chat,contacts,remote) {
+function archivedOf(chat,contacts,remote,groupState) {
   const ids=[chat.jid,...(chat.aliasJids || [])];
   const reported=ids.map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
   const local=ids.map(id=>contacts?.[id]).filter(contact=>typeof contact?.archived==='boolean')
     .map(contact=>({archived:contact.archived,updatedAt:Date.parse(contact.archivedAt || '') || 0}))
-    .sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+    .sort((a,b)=>b.updatedAt-a.updatedAt)[0] || (groupState?.archived?.includes(chat.jid)?{archived:true,updatedAt:0}:null);
   const fromWhatsApp=Boolean(reported && reported.updatedAt>=(local?.updatedAt || 0));
   const archived=fromWhatsApp?reported.archived:local?.archived===true;
   const since=fromWhatsApp?reported.lastMessageAt || reported.updatedAt:local?.updatedAt;
@@ -67,6 +67,11 @@ async function archivedOnlyChats(list,remote,contacts,client) {
   for(const entry of book) for(const id of [entry.jid,...(entry.aliasJids || [])]) byJid.set(id,entry);
   const result=[];
   for(const [jid,item] of missing) {
+    if(groupJid(jid)) {
+      const chat={jid,isGroup:true,name:'Grupo arquivado',nameSource:'number',unread:0,lastMessage:null,archivedOnly:true};
+      if(archivedOf(chat,contacts,remote)) result.push(chat);
+      continue;
+    }
     const entry=byJid.get(jid) || byJid.get(item.alias),phoneJid=[jid,item.alias].find(id=>id?.endsWith('@s.whatsapp.net'));
     const id=entry?.jid || phoneJid || jid,phone=entry?.phone || phoneJid?.split('@')[0] || null;
     const chat={jid:id,aliasJids:[jid,item.alias].filter(value=>value && value!==id),name:entry?.name || (phone?'+'+phone:'Conversa arquivada'),nameSource:entry?.nameSource || 'number',...(phone?{phone}:{}),unread:0,lastMessage:null,archivedOnly:true};
@@ -142,7 +147,7 @@ function createWhatsAppServer(options={}) {
     let archiveSnapshotJob=null,archiveSnapshotRetryAt=0;
     function autoArchiveSnapshot() {
       if(archiveSnapshotJob || Date.now()<archiveSnapshotRetryAt || typeof client.archiveSnapshot!=='function') return;
-      archiveSnapshotJob=client.archiveSnapshot().then(()=>client.invalidateChats(),()=>{archiveSnapshotRetryAt=Date.now()+10*60_000;}).finally(()=>{archiveSnapshotJob=null;});
+      archiveSnapshotJob=client.archiveSnapshot().then(result=>{if(result.partial) archiveSnapshotRetryAt=Date.now()+10*60_000;client.invalidateChats();},()=>{archiveSnapshotRetryAt=Date.now()+10*60_000;}).finally(()=>{archiveSnapshotJob=null;});
     }
     async function sendOnce(input,send,prepare) {
       const id=textField(input.requestId,100,'Identificador do envio');if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new ApiError('Identificador do envio inválido.',422);
@@ -286,10 +291,19 @@ function createWhatsAppServer(options={}) {
       if(scheduledMatch && req.method==='PATCH' && !scheduledMatch[2]) return json(res,200,await scheduler.update(scheduledMatch[1],await readBody(req)));
       if(scheduledMatch && req.method==='POST' && scheduledMatch[2]) {await readBody(req);return json(res,200,await scheduler.cancel(scheduledMatch[1]));}
       if(req.method==='POST' && route==='/api/contacts/sync') {await readBody(req);return json(res,200,await client.syncContacts(true));}
-      if(route==='/api/group-presentation' && req.method==='GET') return json(res,200,await groupPresentation.reconcile((await client.inboxChats()).filter(chat=>chat.isGroup || groupJid(chat.jid)).map(chat=>chat.jid)));
+      if(route==='/api/group-presentation' && req.method==='GET') {
+        const [list,remote,data]=await Promise.all([client.inboxChats(),client.archivedState(),store.read()]);
+        const groups=new Map(list.filter(chat=>chat.isGroup || groupJid(chat.jid)).map(chat=>[chat.jid,chat]));
+        for(const [jid,item] of remote || []) if(groupJid(jid) && item.archived && !groups.has(jid)) groups.set(jid,{jid});
+        return json(res,200,await groupPresentation.reconcile([...groups.keys()],new Map([...groups].map(([jid,chat])=>[jid,archivedOf(chat,data.contacts,remote,data.groupPresentation)]))));
+      }
       if(route==='/api/group-presentation' && req.method==='PUT') return json(res,200,await groupPresentation.reorder(await readBody(req)));
       if(route==='/api/group-presentation/pin' && req.method==='PATCH') {const input=await readBody(req);return json(res,200,await groupPresentation.setPinned(input.jid,input.pinned));}
-      if(route==='/api/group-presentation/archive' && req.method==='PATCH') {const input=await readBody(req);return json(res,200,await groupPresentation.setArchived(input.jid,input.archived));}
+      if(route==='/api/group-presentation/archive' && req.method==='PATCH') {
+        const input=await readBody(req);
+        if(!groupJid(input.jid) || typeof input.archived!=='boolean') throw new ApiError('Grupo inválido.',422);
+        return json(res,200,await groupPresentation.setArchived(input.jid,input.archived));
+      }
       if(req.method==='POST' && route==='/api/forward') {const input=await readBody(req);assertJid(input.sourceJid);assertJid(input.targetJid);return json(res,200,await sendOnce(input,send=>send(),()=>prepareForward(client,input)));}
       if(route==='/api/transcription/settings' && ['GET','PATCH'].includes(req.method)) return json(res,200,req.method==='GET'?await transcriptions.settings():await transcriptions.saveSettings(await readBody(req)));
       if(req.method==='GET' && route==='/api/transcriptions') return json(res,200,await transcriptions.list(url.searchParams.get('jid')));
@@ -316,12 +330,12 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
-        if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && !archived.meta.snapshotAt) runtime.autoArchiveSnapshot();
+        if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && (!archived.meta.snapshotAt || (archived.meta.groupArchiveSync && !archived.meta.groupsSnapshotAt))) runtime.autoArchiveSnapshot();
         // readState: a última mensagem já lida pela central zera o contador, mesmo antes de o WhatsApp confirmar a leitura.
         const listed=mergeAliasChats(await client.inboxChats(),data.contacts,waiting),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
         const chats=[...listed,...extra].map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage,since=chat.waitingSince ?? waiting[chat.jid]?.since;
           const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
-          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,data.contacts,archived),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
+          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,data.contacts,archived,data.groupPresentation),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));
@@ -344,11 +358,11 @@ function createWhatsAppServer(options={}) {
         const {id}=await readBody(req);await store.update(data=>{data.localLists=(data.localLists || []).filter(list=>list.id!==id);});return json(res,200,{removed:true});
       }
       if(req.method==='GET' && route==='/api/chat-lists') {
-        const [remote,book,data]=await Promise.all([client.chatLists().catch(()=>[]),client.contactsList().catch(()=>[]),store.read()]);
-        const lists=[...remote,...(data.localLists || [])];
+        const [remote,book,data]=await Promise.all([client.chatLists().catch(()=>null),client.contactsList().catch(()=>[]),store.read()]);
+        const lists=[...(remote || []),...(data.localLists || [])];
         const members=new Set(lists.flatMap(list=>list.jids));
-        const contacts=book.filter(contact=>[contact.jid,...contact.aliasJids].some(jid=>members.has(jid)));
-        return json(res,200,{lists,contacts});
+        const contacts=book.filter(contact=>[contact.jid,...(contact.aliasJids || [])].some(jid=>members.has(jid)));
+        return json(res,200,{lists,contacts,whatsappListsAvailable:remote!==null});
       }
       // Contatos: agenda do WhatsApp e conversas numa lista só, com os dados do atendimento e paginação.
       if(req.method==='GET' && route==='/api/contacts') {

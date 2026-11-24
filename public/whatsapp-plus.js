@@ -8,7 +8,7 @@
   const PRIVACY_LABELS={all:'Todos',contacts:'Meus contatos',contact_blacklist:'Meus contatos, exceto…',none:'Ninguém'};
   const NO_REPLY='Sem resposta';
   let archiveSyncing=false;
-  let reply=null,showArchived=false,showUnanswered=false,starred=new Map(),editState=null,searchState={query:'',hits:[],index:-1};
+  let reply=null,showUnanswered=false,starred=new Map(),editState=null,searchState={query:'',hits:[],index:-1};
   let typing={jid:null,at:0},recordingTimer=null,shareTyping=true,notifiedAt=new Map(),notificationsReady=false;
   const pending=new Map(),requestIds=new Map();
   const store=(()=>{try {return globalThis.localStorage;}catch {return null;}})();
@@ -29,54 +29,42 @@
   }
   function stableRequest(key) {if(!requestIds.has(key)) requestIds.set(key,crypto.randomUUID());return requestIds.get(key);}
 
-  // ---------- Lista de conversas: fixadas no topo, arquivadas à parte, ícones de estado ----------
-  function arrangeChats(list) {
-    const searching=Boolean($('search')?.value.trim()),waiting=chat=>Array.isArray(chat.labels) && chat.labels.includes(NO_REPLY);
-    const archivedCount=C.chats().filter(chat=>chat.archived===true).length;
-    // Como no WhatsApp: o número ao lado de "Arquivadas" conta só as arquivadas com mensagem ainda não vista.
-    const archivedUnread=C.chats().filter(chat=>chat.archived===true && Number(chat.unread)>0).length;
-    const unansweredCount=C.chats().filter(chat=>chat.archived!==true && waiting(chat)).length;
-    $('filter-archived').hidden=true;$('filter-archived-count').textContent=archivedCount;
-    // A linha fica sempre à mão (como no WhatsApp com arquivadas): por ela também se busca as arquivadas antigas do celular.
-    $('archived-row').hidden=!archivedCount && !showArchived && !C.chats().length;
+  // ---------- Listagem, filas de atendimento e estado das conversas ----------
+  const waiting=chat=>Array.isArray(chat.labels) && chat.labels.includes(NO_REPLY);
+  function renderArchiveSync(showArchived,hasArchived) {
     $('archived-sync').hidden=!showArchived;
-    if(showArchived && !archiveSyncing) $('archived-sync-text').textContent=archivedCount?'Arquivou no celular e não aparece? Busque de novo.':'Nenhuma arquivada por aqui. Busque as que estão arquivadas no celular.';$('archived-row').setAttribute('aria-pressed',String(showArchived));$('archived-row').classList.toggle('back',showArchived);
-    $('archived-row-label').textContent=showArchived?'← Voltar às conversas':'Arquivadas';$('archived-row-count').textContent=showArchived || !archivedUnread?'':String(archivedUnread);
-    $('archived-row').title=`${archivedCount} conversa${archivedCount===1?'':'s'} arquivada${archivedCount===1?'':'s'}${archivedUnread?` · ${archivedUnread} com mensagem não vista`:''}`;
+    if(showArchived && !archiveSyncing) $('archived-sync-text').textContent=hasArchived?'Arquivou no celular e não aparece? Busque de novo.':'Nenhuma arquivada por aqui. Busque as que estão arquivadas no celular.';
+    const unansweredCount=C.chats().filter(chat=>!chat.isGroup && chat.archived!==true && waiting(chat)).length;
     $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
-    // A busca e as filas operam dentro da lista atual.
-    const visible=list.filter(chat=>(chat.archived===true)===showArchived);
-    if(showArchived) return visible;
-    const teamView=globalThis.WhatsAppTeam?.filter?.(visible);if(teamView) return teamView;
-    // "Sem resposta" é a fila do atendente: quem espera há mais tempo aparece primeiro.
-    if(showUnanswered) return visible.filter(waiting).sort((a,b)=>Number(a.lastMessage?.timestamp || 0)-Number(b.lastMessage?.timestamp || 0));
-    if(searching) return visible;
-    const pinned=visible.filter(chat=>chat.pinned===true).sort((a,b)=>String(b.pinnedAt || '').localeCompare(String(a.pinnedAt || '')));
-    return [...pinned,...visible.filter(chat=>chat.pinned!==true)];
   }
-  function decorateChat(button,chat,title) {
+  function filterOperationalChats(list) {
+    const teamView=globalThis.WhatsAppTeam?.filter?.(list);if(teamView) return teamView;
+    // "Sem resposta" é a fila do atendente: quem espera há mais tempo aparece primeiro.
+    return showUnanswered?list.filter(waiting).sort((a,b)=>Number(a.lastMessage?.timestamp || 0)-Number(b.lastMessage?.timestamp || 0)):null;
+  }
+  function decorateChat(button,chat,title,preview,pinned) {
     globalThis.WhatsAppTeam?.decorate?.(button,chat,title);
     const flags=[];
-    if(chat.pinned) flags.push(['pin','Conversa fixada']);
+    if(pinned) {button.classList.add('pinned');flags.push(['pin','Conversa fixada']);}
     if(muted(chat)) flags.push(['mute','Notificações silenciadas']);
     if(chat.archived) flags.push(['archive','Conversa arquivada']);
     if(chat.blocked) flags.push(['block','Contato bloqueado']);
     if(!flags.length) return;
     const box=el('span','chat-flags');
     for(const [name,label] of flags) {const item=el('span','chat-flag '+name);item.title=label;item.setAttribute('aria-label',label);item.append(icon(name));box.append(item);}
-    title.append(box);if(chat.pinned) button.classList.add('pinned');
+    preview.append(box);
   }
   function resetFilters() {
-    showArchived=false;showUnanswered=false;
-    for(const id of ['filter-archived','filter-unanswered']) {$(id).classList.remove('active');$(id).setAttribute('aria-pressed','false');}
+    showUnanswered=false;
+    $('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');
   }
   $('filter-unanswered').addEventListener('click',()=>{
+    C.leaveArchive();
     globalThis.WhatsAppTeam?.resetFilter?.();
-    showUnanswered=!showUnanswered;if(showUnanswered && showArchived) {showArchived=false;$('filter-archived').classList.remove('active');$('filter-archived').setAttribute('aria-pressed','false');}
+    showUnanswered=!showUnanswered;
     $('filter-unanswered').classList.toggle('active',showUnanswered);$('filter-unanswered').setAttribute('aria-pressed',String(showUnanswered));
     $('inbox-title').firstChild.textContent=showUnanswered?'Sem resposta ':'Conversas ';C.renderChats();
   });
-  $('archived-row').addEventListener('click',()=>$('filter-archived').click());
   $('archived-sync-button').addEventListener('click',async()=>{
     if(archiveSyncing) return;archiveSyncing=true;$('archived-sync-button').disabled=true;$('archived-sync-text').textContent='Buscando as arquivadas no WhatsApp…';
     try {
@@ -88,13 +76,6 @@
     } catch(error) {notice(error.message);}
     finally {archiveSyncing=false;$('archived-sync-button').disabled=false;C.renderChats();}
   });
-  $('filter-archived').addEventListener('click',()=>{
-    globalThis.WhatsAppTeam?.resetFilter?.();
-    if(showUnanswered) {showUnanswered=false;$('filter-unanswered').classList.remove('active');$('filter-unanswered').setAttribute('aria-pressed','false');}
-    showArchived=!showArchived;$('filter-archived').classList.toggle('active',showArchived);$('filter-archived').setAttribute('aria-pressed',String(showArchived));
-    $('inbox-title').firstChild.textContent=showArchived?'Arquivadas ':'Conversas ';C.renderChats();
-  });
-
   // ---------- Ações em cada mensagem ----------
   function pendingReactions(jid) {
     const list=(pending.get(jid) || []).filter(item=>Date.now()-item.timestamp<120_000);pending.set(jid,list);return list;
@@ -388,7 +369,7 @@
   }
   C.hooks.sync.push(()=>{if(selected()) renderChatActions();if(searchState.query) runSearch();});
   globalThis.WhatsAppExtras={
-    arrangeChats,decorateChat,extendActions,pendingReactions,resetFilters,
+    filterOperationalChats,renderArchiveSync,decorateChat,extendActions,pendingReactions,resetFilters,inboxFilter:()=>showUnanswered?'unanswered':null,
     onChatClick:chat=>globalThis.WhatsAppTeam?.onChatClick?.(chat) || false,
     isStarred:(jid,id)=>starred.has(jid+'|'+id),
     replyFor:jid=>reply?.jid===jid?reply.id:null,

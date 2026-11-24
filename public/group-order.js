@@ -1,10 +1,8 @@
 (()=>{
   let api,notice,render,state={version:2,pinned:[],normal:[],archived:[]},dragged=null,openMenu=null;
-  const pinned=jid=>state.pinned.includes(jid),isArchived=jid=>state.archived.includes(jid);
+  const pinned=jid=>state.pinned.includes(jid),isArchived=(jid,chat)=>typeof chat?.archived==='boolean'?chat.archived:state.archived.includes(jid);
   const clone=()=>({version:2,pinned:[...state.pinned],normal:[...state.normal],archived:[...state.archived]});
   const known=jid=>state.pinned.includes(jid) || state.normal.includes(jid) || state.archived.includes(jid);
-  const active=chats=>chats.filter(chat=>!isArchived(chat.jid));
-  const archived=chats=>chats.filter(chat=>isArchived(chat.jid));
   function arrange(chats) {
     const byId=new Map(chats.map(chat=>[chat.jid,chat])),ordered=[];
     for(const jid of [...state.pinned,...state.normal,...state.archived]) if(byId.has(jid)) {ordered.push(byId.get(jid));byId.delete(jid);}
@@ -29,11 +27,12 @@
     catch(error) {await recover(before,error);}
   }
   async function toggleArchive(chat) {
-    const before=clone(),willArchive=!isArchived(chat.jid);closeMenu();
+    const before=clone(),previousArchived=chat.archived,willArchive=!isArchived(chat.jid,chat);closeMenu();
+    chat.archived=willArchive;
     state.pinned=state.pinned.filter(id=>id!==chat.jid);state.normal=state.normal.filter(id=>id!==chat.jid);state.archived=state.archived.filter(id=>id!==chat.jid);
     (willArchive?state.archived:state.normal).unshift(chat.jid);render?.();
-    try {accept(await api('/group-presentation/archive','PATCH',{jid:chat.jid,archived:willArchive}));render?.();notice?.(willArchive?'Grupo arquivado. Veja em “Grupos arquivados”.':'Grupo desarquivado.',true);}
-    catch(error) {await recover(before,error);}
+    try {accept(await api('/group-presentation/archive','PATCH',{jid:chat.jid,archived:willArchive}));render?.();notice?.(willArchive?'Grupo arquivado. Veja em “Arquivadas”.':'Grupo desarquivado.',true);}
+    catch(error) {chat.archived=previousArchived;await recover(before,error);}
   }
   function blockOf(jid) {return state.pinned.includes(jid)?'pinned':state.normal.includes(jid)?'normal':state.archived.includes(jid)?'archived':null;}
   async function persistOrder(target,beforeTarget) {
@@ -45,17 +44,21 @@
     catch(error) {await recover(snapshot,error);}
   }
   function action(text,handler) {const button=document.createElement('button');button.type='button';button.setAttribute('role','menuitem');button.textContent=text;button.addEventListener('click',event=>{event.stopPropagation();handler();});return button;}
-  function wrap(button,chat) {
-    const row=document.createElement('div'),archivedGroup=isArchived(chat.jid);row.className='group-chat-row'+(pinned(chat.jid)?' pinned':'');row.dataset.jid=chat.jid;row.draggable=true;
+  function wrap(button,chat,reorder) {
+    const row=document.createElement('div'),archivedGroup=isArchived(chat.jid,chat);row.className='group-chat-row';row.dataset.jid=chat.jid;
     const toggle=document.createElement('button');toggle.type='button';toggle.className='group-menu-button';toggle.textContent='☰';toggle.setAttribute('aria-label',`Opções do grupo ${chat.name}`);toggle.setAttribute('aria-haspopup','menu');toggle.setAttribute('aria-expanded','false');toggle.title='Opções do grupo';
     const menu=document.createElement('div');menu.className='group-action-menu';menu.setAttribute('role','menu');menu.hidden=true;
     if(!archivedGroup) menu.append(action(pinned(chat.jid)?'Desafixar grupo':'Fixar grupo',()=>togglePin(chat)),action('Arquivar grupo',()=>toggleArchive(chat)));
     else menu.append(action('Desarquivar grupo',()=>toggleArchive(chat)));
     toggle.addEventListener('click',event=>{event.stopPropagation();if(openMenu?.menu===menu) return closeMenu(true);closeMenu();menu.hidden=false;toggle.setAttribute('aria-expanded','true');openMenu={menu,toggle};menu.querySelector('button')?.focus();});
-    row.addEventListener('dragstart',event=>{closeMenu();dragged=chat.jid;row.classList.add('dragging');event.dataTransfer?.setData('text/plain',chat.jid);});
-    row.addEventListener('dragend',()=>{dragged=null;row.classList.remove('dragging');});
-    row.addEventListener('dragover',event=>{if(dragged) event.preventDefault();});
-    row.addEventListener('drop',event=>{event.preventDefault();const box=row.getBoundingClientRect?.() || {top:0,height:1};persistOrder(chat.jid,event.clientY<box.top+box.height/2);});
+    row.addEventListener('contextmenu',event=>{event.preventDefault();if(openMenu?.menu!==menu) toggle.click();});
+    if(reorder) {
+      row.draggable=true;
+      row.addEventListener('dragstart',event=>{closeMenu();dragged=chat.jid;row.classList.add('dragging');event.dataTransfer?.setData('text/plain',chat.jid);});
+      row.addEventListener('dragend',()=>{dragged=null;row.classList.remove('dragging');});
+      row.addEventListener('dragover',event=>{if(dragged) event.preventDefault();});
+      row.addEventListener('drop',event=>{event.preventDefault();const box=row.getBoundingClientRect?.() || {top:0,height:1};persistOrder(chat.jid,event.clientY<box.top+box.height/2);});
+    }
     row.append(button,toggle,menu);return row;
   }
   function init(input) {
@@ -64,6 +67,6 @@
     document.addEventListener('keydown',event=>{if(event.key==='Escape' && openMenu) {event.preventDefault();closeMenu(true);}});
     return refresh();
   }
-  const sync=chats=>chats.some(chat=>!known(chat.jid))?refresh():Promise.resolve(state);
-  globalThis.WhatsAppGroups={init,active,archived,arrange,wrap,refresh,sync};
+  const sync=chats=>chats.some(chat=>!known(chat.jid) || (typeof chat.archived==='boolean' && chat.archived!==state.archived.includes(chat.jid)))?refresh():Promise.resolve(state);
+  globalThis.WhatsAppGroups={init,isPinned:pinned,isArchived:chat=>isArchived(chat.jid,chat),arrange,wrap,refresh,sync};
 })();

@@ -14,9 +14,10 @@
   checkCentralVersion();document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible') checkCentralVersion();});
   let connection=null,chats=[],selected=null,templates=[],messages=[],page=1,pages=1,selection=0,syncing=false,sending=false,submitQueued=false,qrTimer=null,qrBusy=false,attachment=null,pendingSend=null,editRevision=0,detailsOpen=false,historyLoaded=false;
   const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
-  let virtualRows=null,rowHeight=0,chatsVersion=null;
+  let virtualRows=null,rowHeight=0,chatsVersion=null,inboxContext=null;
   let inboxScroll=0, detailsTrigger=null;
   let chatLists=[],listContacts=[],listFilter='',listsPending=false,listsRefreshAt=0;
+  let localListsRevision=0,whatsappListsAvailable;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),mediaRequests=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
   const mediaControllers=new Map(),previewViews=new Map(),previewTargets=new WeakMap(),mediaLocks=new Set();
   const MEDIA_CACHE_ENTRIES=24,MEDIA_CACHE_BYTES=32*1024*1024;
@@ -30,6 +31,18 @@
   const statuses={open:'Em aberto',pending:'Pendente',closed:'Concluído'};
   const time=value=>value?new Intl.DateTimeFormat('pt-BR',{hour:'2-digit',minute:'2-digit'}).format(new Date(value)):'';
   const dateTime=value=>new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
+  const shortDate=new Intl.DateTimeFormat('pt-BR',{dateStyle:'short'});
+  const isPinned=chat=>chat.isGroup?globalThis.WhatsAppGroups?.isPinned?.(chat.jid):chat.pinned===true;
+  const isArchived=chat=>chat.isGroup?(globalThis.WhatsAppGroups?.isArchived?.(chat) ?? chat.archived===true):chat.archived===true;
+  const groupsFilter=()=>listFilter==='groups' || listFilter==='groups-archived';
+  const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
+  function chatTime(value) {
+    if(!value) return '';
+    const now=new Date(),date=shortDate.format(new Date(value));
+    if(date===shortDate.format(now)) return time(value);
+    now.setDate(now.getDate()-1);
+    return date===shortDate.format(now)?'Ontem':date;
+  }
   const initials=name=>String(name || '?').split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase();
   const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
   function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
@@ -57,47 +70,65 @@
     if(online && $('qr-dialog').open) {$('qr-dialog').close();notice('WhatsApp conectado. Suas conversas aparecerão conforme forem sincronizadas.',true);}
   }
   function renderChats() {
-    const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
-    const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
-    const matching=conversationsForFilter().filter(chat=>(!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status) && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
-    const groupMode=['groups','groups-archived'].includes(listFilter),visibleGroups=listFilter==='groups-archived'?globalThis.WhatsAppGroups?.archived?.(matching) || matching:listFilter==='groups'?globalThis.WhatsAppGroups?.active?.(matching) || matching:matching;
-    const arranged=groupMode?globalThis.WhatsAppGroups?.arrange?.(visibleGroups) || visibleGroups:visibleGroups;
-    const filtered=extras()?.arrangeChats?.(arranged) || arranged;renderGroupsRow();
+    const search=$('search').value,status=$('status-filter').value,filtered=displayedChats();
+    renderInboxFolders();
+    const operational=extras()?.inboxFilter?.() || globalThis.WhatsAppTeam?.currentFilter?.();
+    const context=JSON.stringify([listFilter,search,status,$('unread-only').checked,operational]);
+    if(context!==inboxContext) {$('chat-list').scrollTop=0;inboxContext=context;}
     const active=chats.filter(chat=>chat.archived!==true && !chat.isGroup),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
     const unreadMessages=active.reduce((sum,chat)=>sum+Math.max(0,Number(chat.unread)||0),0);document.title=unreadMessages?`(${unreadMessages}) Whats AI`:'Whats AI';
     $('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=active.filter(chat=>chat.status==='closed').length;
-    $('nav-chat-count').textContent='';$('filter-unread-count').textContent=unreadCount;$('nav-pending-count').textContent=pendingCount;
-    $('filter-all').classList.toggle('active',!listFilter && !status && !$('unread-only').checked);$('filter-pending').classList.toggle('active',status==='pending');
-    $('filter-all').setAttribute('aria-pressed',String(!listFilter && !status && !$('unread-only').checked));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
+    $('nav-chat-count').textContent='';$('filter-unread-count').textContent=chats.filter(chat=>!isArchived(chat) && unreadChat(chat)).length;$('nav-pending-count').textContent=pendingCount;
+    const all=!listFilter && !status && !$('unread-only').checked && !operational;
+    $('filter-all').classList.toggle('active',all);$('filter-pending').classList.toggle('active',status==='pending');
+    $('filter-all').setAttribute('aria-pressed',String(all));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
     // Listas grandes: só as linhas visíveis vão para a página (o restante vira espaço reservado).
     if(filtered.length>VIRTUAL_AT) {virtualRows=filtered;renderChatWindow();return;}
     virtualRows=null;
+    $('chat-list').removeAttribute('aria-rowcount');
     const fragment=document.createDocumentFragment();
     for(const chat of filtered) fragment.append(chatButton(chat));
     if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
     $('chat-list').replaceChildren(fragment);
   }
-  function renderGroupsRow() {
-    const groups=chats.filter(chat=>chat.isGroup),activeGroups=globalThis.WhatsAppGroups?.active?.(groups) || groups,open=['groups','groups-archived'].includes(listFilter),archivedOpen=listFilter==='groups-archived',unread=activeGroups.filter(chat=>Number(chat.unread)>0).length;
-    $('groups-row').hidden=!groups.length && !open;
-    $('groups-row').setAttribute('aria-pressed',String(open));$('groups-row').classList.toggle('back',open);
-    $('groups-row-label').textContent=archivedOpen?'← Voltar aos grupos':open?'← Voltar às conversas':'Grupos';
-    $('groups-row-count').textContent=open || !unread?'':String(unread);
-    $('groups-row').title=`${activeGroups.length} grupo${activeGroups.length===1?'':'s'}${unread?` · ${unread} com mensagem não vista`:''}`;
-    $('group-archived-row').hidden=!open || archivedOpen;$('group-archived-row').setAttribute('aria-pressed',String(archivedOpen));
-    // Dentro dos grupos, a linha de arquivadas some para as duas visões não se misturarem.
-    if(open) {$('archived-row').hidden=true;const title=$('inbox-title').firstChild;if(title) title.textContent=archivedOpen?'Grupos arquivados ':'Grupos ';}
+  function displayedChats() {
+    const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
+    const archived=listFilter==='archived' || listFilter==='groups-archived';
+    const matching=conversationsForFilter().filter(chat=>isArchived(chat)===archived
+      && (!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status)
+      && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${(chat.labels || []).join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
+    const groups=globalThis.WhatsAppGroups;
+    if(groupsFilter()) return groups?.arrange?.(matching) || matching;
+    if(archived) return matching;
+    const operational=extras()?.filterOperationalChats?.(matching);
+    if(operational) return operational;
+    const pinned=matching.filter(isPinned);
+    const people=pinned.filter(chat=>!chat.isGroup).sort((a,b)=>String(b.pinnedAt || '').localeCompare(String(a.pinnedAt || '')));
+    const pinnedGroups=pinned.filter(chat=>chat.isGroup);
+    return [...people,...(groups?.arrange?.(pinnedGroups) || pinnedGroups),...matching.filter(chat=>!isPinned(chat))];
+  }
+  function renderInboxFolders() {
+    const groupMode=groupsFilter(),archived=listFilter==='archived',groupArchived=listFilter==='groups-archived';
+    $('groups-row').setAttribute('aria-pressed',String(groupMode));$('groups-row').classList.toggle('active',groupMode);
+    $('archived-row').hidden=groupMode;
+    $('archived-row').setAttribute('aria-pressed',String(archived));$('archived-row').classList.toggle('back',archived);
+    $('archived-row-label').textContent=archived?'← Voltar às conversas':'Arquivadas';
+    $('group-archived-row').hidden=!groupMode;
+    $('group-archived-row').setAttribute('aria-pressed',String(groupArchived));$('group-archived-row').classList.toggle('back',groupArchived);
+    $('group-archived-row-label').textContent=groupArchived?'← Voltar aos grupos':'Grupos arquivados';
+    const title=$('inbox-title').firstChild;
+    if(title && (groupMode || archived)) title.textContent=archived?'Arquivadas':groupArchived?'Grupos arquivados':'Grupos';
+    extras()?.renderArchiveSync?.(archived,chats.some(isArchived));
   }
   function conversationsForFilter() {
-    // Grupos ficam à parte, como as arquivadas: aparecem pela linha "Grupos" ou numa busca.
-    if(!listFilter) return $('search').value.trim()?chats:chats.filter(chat=>!chat.isGroup);
-    if(['groups','groups-archived'].includes(listFilter)) return chats.filter(chat=>chat.isGroup);
+    if(groupsFilter()) return chats.filter(chat=>chat.isGroup);
+    if(!listFilter.startsWith('list:')) return chats;
     const members=new Set(chatLists.find(list=>'list:'+list.id===listFilter)?.jids || []);
     const result=[];
     for(const chat of [...chats,...listContacts]) {
       const ids=[chat.jid,...(chat.aliasJids || [])];
       if(!ids.some(jid=>members.has(jid))) continue;
-      result.push({status:'open',labels:[],...chat});
+      result.push(chat.status?chat:{status:'open',labels:[],...chat});
       ids.forEach(jid=>members.delete(jid));
     }
     for(const jid of members) {
@@ -106,68 +137,157 @@
     }
     return result;
   }
+  const isLocalList=list=>list.local===true || list.id.startsWith('local-');
+  function updateListFilter() {
+    const filter=$('chat-list-filter'),all=el('option','','Todas as listas');
+    all.value='';
+    const options=chatLists.map(list=>{const option=el('option','',list.name);option.value='list:'+list.id;return option;});
+    if(listFilter.startsWith('list:') && !options.some(option=>option.value===listFilter)) listFilter='';
+    filter.replaceChildren(all,...options);
+    filter.value=listFilter.startsWith('list:')?listFilter:'';
+    filter.classList.toggle('active',Boolean(filter.value));
+    renderChats();
+  }
   async function syncChatLists(force) {
     if(listsPending || (!force && Date.now()<listsRefreshAt)) return;
     listsPending=true;
+    const revision=localListsRevision;
     try {
       const result=await api('/chat-lists','GET',undefined,115000);
-      chatLists=result.lists;listContacts=result.contacts || [];
-      const filter=$('chat-list-filter'),options=[el('option','','Conversas individuais'),el('option','','Grupos')];
-      options[0].value='';options[1].value='groups';
-      for(const list of chatLists) {const option=el('option','',list.name);option.value='list:'+list.id;options.push(option);}
-      if(listFilter!=='groups-archived' && !options.some(option=>option.value===listFilter)) listFilter='';
-      filter.replaceChildren(...options);filter.value=listFilter;renderChats();
-    } catch {}
-    finally {listsPending=false;listsRefreshAt=Date.now()+60_000;}
+      whatsappListsAvailable=result.whatsappListsAvailable!==false;
+      const remote=(whatsappListsAvailable?result.lists:chatLists).filter(list=>!isLocalList(list));
+      const local=(revision===localListsRevision?result.lists:chatLists).filter(isLocalList);
+      chatLists=[...remote,...local];
+      const contacts=result.contacts || [];
+      listContacts=whatsappListsAvailable?contacts:[...new Map([...listContacts,...contacts].map(chat=>[chat.jid,chat])).values()];
+      updateListFilter();
+    } catch {whatsappListsAvailable=false;}
+    finally {
+      listsPending=false;listsRefreshAt=Date.now()+60_000;
+      if(listsDialog.open && listsBody.dataset.view==='lists') renderLists();
+    }
   }
-  // Listas criadas na central pertencem à conta selecionada e não apagam conversas.
-  const listsButton=el('button','archived-row','Listas');listsButton.type='button';
-  $('archived-row').after(listsButton);
-  const listsDialog=el('dialog',''),listsBody=el('div','');
-  const listsClose=el('button','','Fechar');listsClose.type='button';listsClose.onclick=()=>listsDialog.close();
-  listsDialog.append(listsBody,listsClose);document.body.append(listsDialog);
+  const listsDialog=$('chat-lists-dialog'),listsBody=$('chat-lists-body');
+  function listButton(label,kind,action) {
+    const button=el('button','button compact '+kind,label);
+    button.type='button';button.onclick=action;
+    return button;
+  }
+  function listError(message='') {
+    $('chat-lists-error').textContent=message;$('chat-lists-error').hidden=!message;
+  }
+  function setLocalLists(local) {
+    localListsRevision++;
+    chatLists=[...chatLists.filter(list=>!isLocalList(list)),...local];
+    updateListFilter();
+  }
+  function renderLists() {
+    listsBody.dataset.view='lists';
+    $('chat-lists-title').textContent='Listas';
+    const toolbar=el('div','chat-lists-toolbar');
+    toolbar.append(listButton('Criar lista','primary',()=>editList()));
+    listsBody.replaceChildren(toolbar);
+    for(const [title,local] of [['Do WhatsApp',false],['Da central',true]]) {
+      const section=el('section','chat-lists-section'),listItems=chatLists.filter(list=>isLocalList(list)===local);
+      section.append(el('h3','',title));
+      if(!local && whatsappListsAvailable===false) section.append(el('p','muted','Não foi possível atualizar as listas do WhatsApp.'));
+      else if(!listItems.length) section.append(el('p','muted',local?'Nenhuma lista criada.':listsPending?'Buscando listas no WhatsApp…':'Nenhuma lista do WhatsApp disponível.'));
+      for(const list of listItems) {
+        const row=el('div','chat-list-card'),details=el('div','chat-list-card-label');
+        const open=listButton(list.name,'list-name',()=>{listsDialog.close();applyFilter('',false,'nav-conversations','list:'+list.id);});
+        const count=list.jids.length;
+        details.append(open,el('span','muted',count===1?'1 conversa':count+' conversas'));row.append(details);
+        if(local) {
+          const actions=el('div','chat-list-actions'),edit=listButton('Editar','secondary',()=>editList(list));
+          const remove=listButton('Excluir lista','danger',async()=>{
+            if(!confirm('Excluir esta lista? As conversas serão mantidas.')) return;
+            edit.disabled=remove.disabled=true;listError();
+            try {
+              await api('/local-lists','DELETE',{id:list.id});
+              setLocalLists(chatLists.filter(item=>isLocalList(item) && item.id!==list.id));
+              if(listsBody.dataset.view==='lists') renderLists();
+            } catch(error) {listError(error.message);}
+            finally {edit.disabled=remove.disabled=false;}
+          });
+          actions.append(edit,remove);row.append(actions);
+        }
+        section.append(row);
+      }
+      listsBody.append(section);
+    }
+  }
   async function showLists() {
-    listsBody.replaceChildren(el('h2','','Listas'));
-    if(!listsDialog.open) listsDialog.showModal();
+    listError();
+    if(connection?.state==='connected') void syncChatLists(false);
+    renderLists();
+    listsDialog.showModal();
+    const revision=localListsRevision;
     try {
       const local=await api('/local-lists');
-      const create=el('button','','Criar lista');create.onclick=()=>editList();listsBody.append(create);
-      if(!local.length) listsBody.append(el('p','','Crie uma lista para organizar contatos e grupos.'));
-      for(const list of local) {
-        const row=el('div',''),open=el('button','',list.name),edit=el('button','','Editar'),remove=el('button','','Excluir lista');
-        open.onclick=async()=>{await syncChatLists(true);listsDialog.close();applyFilter('',false,'nav-conversations','list:'+list.id);};
-        edit.onclick=()=>editList(list);
-        remove.onclick=async()=>{if(!confirm('Excluir esta lista? As conversas serão mantidas.')) return;try {await api('/local-lists','DELETE',{id:list.id});await syncChatLists(true);await showLists();}catch(error){notice(error.message);}};
-        row.append(open,edit,remove);listsBody.append(row);
-      }
-    }catch(error){listsBody.append(el('p','',error.message));}
+      if(revision!==localListsRevision) return;
+      setLocalLists(local);
+      if(listsDialog.open && listsBody.dataset.view==='lists') renderLists();
+    } catch(error) {if(listsDialog.open && listsBody.dataset.view==='lists') listError(error.message);}
   }
   function editList(list={name:'',jids:[]}) {
-    const name=el('input',''),search=el('input',''),members=el('div',''),save=el('button','','Salvar lista'),back=el('button','','Voltar'),selectedIds=new Set(list.jids);
-    name.value=list.name;name.maxLength=60;name.placeholder='Nome da lista';name.setAttribute('aria-label','Nome da lista');
-    search.placeholder='Buscar contato ou grupo';search.setAttribute('aria-label','Buscar contato ou grupo');
-    const candidates=new Map([...chats,...listContacts].map(chat=>[chat.jid,chat]));
-    for(const jid of list.jids) if(!candidates.has(jid)) candidates.set(jid,{jid,name:jid});
-    const draw=()=>{members.replaceChildren();for(const chat of candidates.values()) {
-      if(!String(chat.name).toLocaleLowerCase().includes(search.value.toLocaleLowerCase())) continue;
-      const label=el('label',''),check=el('input','');check.type='checkbox';check.checked=selectedIds.has(chat.jid);check.onchange=()=>check.checked?selectedIds.add(chat.jid):selectedIds.delete(chat.jid);
-      label.append(check,document.createTextNode(chat.name));members.append(label,document.createElement('br'));
-    }};
-    search.oninput=draw;back.onclick=showLists;
-    save.onclick=async()=>{save.disabled=true;try {await api('/local-lists','POST',{...(list.id?{id:list.id}:{}),name:name.value,jids:[...selectedIds]});await syncChatLists(true);await showLists();}catch(error){notice(error.message);}finally{save.disabled=false;}};
-    listsBody.replaceChildren(el('h2','',list.id?'Editar lista':'Criar lista'),name,search,members,save,back);draw();
+    listsBody.dataset.view='editor';
+    $('chat-lists-title').textContent=list.id?'Editar lista':'Criar lista';
+    listError();
+    const form=el('form','chat-lists-editor'),nameField=el('label','field','Nome da lista');
+    const name=el('input'),search=el('input'),members=el('div','chat-list-members'),actions=el('div','chat-list-actions');
+    const save=listButton('Salvar lista','primary'),back=listButton('Voltar','secondary',()=>{listError();renderLists();});
+    name.value=list.name;name.maxLength=60;name.required=true;nameField.append(name);
+    search.type='search';search.placeholder='Buscar contato ou grupo';search.setAttribute('aria-label','Buscar contato ou grupo');
+    members.setAttribute('role','group');members.setAttribute('aria-label','Conversas na lista');
+    const candidates=new Map(),byAlias=new Map();
+    for(const chat of [...chats,...listContacts]) {
+      const ids=[chat.jid,...(chat.aliasJids || [])];
+      const jid=ids.map(id=>byAlias.get(id)).find(Boolean) || chat.jid;
+      if(!candidates.has(jid)) candidates.set(jid,chat);
+      for(const id of ids) byAlias.set(id,jid);
+    }
+    const selectedIds=new Set(list.jids.map(jid=>byAlias.get(jid) || jid));
+    for(const jid of selectedIds) if(!candidates.has(jid)) candidates.set(jid,{jid,name:jid});
+    const draw=()=>{
+      const rows=document.createDocumentFragment(),query=search.value.trim().toLocaleLowerCase('pt-BR');
+      for(const chat of candidates.values()) {
+        if(query && !`${chat.name} ${chat.phone || ''} ${chat.jid}`.toLocaleLowerCase('pt-BR').includes(query)) continue;
+        const label=el('label','chat-list-member'),check=el('input');
+        check.type='checkbox';check.checked=selectedIds.has(chat.jid);check.onchange=()=>check.checked?selectedIds.add(chat.jid):selectedIds.delete(chat.jid);
+        label.append(check,el('span','',chat.name));rows.append(label);
+      }
+      if(!rows.childNodes.length) rows.append(el('p','muted','Nenhum contato ou grupo encontrado.'));
+      members.replaceChildren(rows);
+    };
+    search.oninput=draw;save.type='submit';actions.append(back,save);
+    form.onsubmit=async event=>{
+      event.preventDefault();save.disabled=true;listError();
+      try {
+        const saved=await api('/local-lists','POST',{...(list.id?{id:list.id}:{}),name:name.value,jids:[...selectedIds]});
+        const local=chatLists.filter(isLocalList);
+        const position=local.findIndex(item=>item.id===saved.id);
+        if(position===-1) local.push(saved);
+        else local[position]=saved;
+        setLocalLists(local);
+        if(form.isConnected) renderLists();
+      } catch(error) {if(form.isConnected) listError(error.message);}
+      finally {save.disabled=false;}
+    };
+    form.append(nameField,search,members,actions);listsBody.replaceChildren(form);draw();name.focus();
   }
-  listsButton.onclick=showLists;
+  $('manage-chat-lists').onclick=showLists;
   function renderChatWindow() {
     const list=$('chat-list'),rows=virtualRows;if(!rows) return;
     const height=rowHeight || 76,top=list.scrollTop || 0,view=list.clientHeight || 900;
+    const maxTop=Math.max(0,rows.length*height-view);
+    if(top>maxTop) {list.scrollTop=maxTop;return renderChatWindow();}
     const start=Math.max(0,Math.floor(top/height)-8),end=Math.min(rows.length,Math.ceil((top+view)/height)+8);
     const fragment=document.createDocumentFragment(),before=el('div','chat-spacer'),after=el('div','chat-spacer');
     before.style.height=start*height+'px';after.style.height=(rows.length-end)*height+'px';before.setAttribute('aria-hidden','true');after.setAttribute('aria-hidden','true');
     fragment.append(before);for(let index=start;index<end;index++) fragment.append(chatButton(rows[index]));fragment.append(after);
     list.replaceChildren(fragment);list.setAttribute('aria-rowcount',String(rows.length));
-    // Mede a altura real de uma linha (com borda) na primeira vez e redesenha com a medida certa.
-    if(!rowHeight) {const items=list.querySelectorAll?.('.chat-item');const measured=items?.length>1?items[1].offsetTop-items[0].offsetTop:items?.[0]?.offsetHeight;if(measured>20) {rowHeight=measured;renderChatWindow();}}
+    // Grupos têm um contêiner para o menu. Mede a linha inteira nos dois casos.
+    if(!rowHeight) {const measured=before.nextElementSibling?.offsetHeight;if(measured>20) {rowHeight=measured;renderChatWindow();}}
   }
   function chatButton(chat) {
       const button=el('button','chat-item'+(selected?.jid===chat.jid?' selected':''));button.type='button';button.setAttribute('aria-pressed',String(selected?.jid===chat.jid));
@@ -176,12 +296,13 @@
       if(chat.isGroup) title.append(el('span','chat-status','Grupo'));
       if(['pending','closed'].includes(chat.status)) title.append(el('span','chat-status '+chat.status,statuses[chat.status]));
       if(chat.aiMode==='draft' || chat.aiMode==='auto') title.append(el('span','chat-status ai',chat.aiDraft && chat.lastMessage && !chat.lastMessage.fromMe?'IA: rascunho pronto':chat.aiMode==='auto'?'IA automática':'IA rascunho'));
-      title.append(el('time','',time(chat.lastMessage?.timestamp)));
+      title.append(el('time','',chatTime(chat.lastMessage?.timestamp)));
       const preview=el('span','chat-preview');preview.append(el('p','',previewText(chat.lastMessage) || (chat.isGroup?'Sem mensagens sincronizadas':statuses[chat.status])));
+      extras()?.decorateChat?.(button,chat,title,preview,isPinned(chat));
       if(chat.unread) preview.append(el('span','unread-count',Math.min(chat.unread,999)));
       else if(chat.markedUnread) {const dot=el('span','unread-count marked','');dot.setAttribute('aria-label','Marcada como não lida');preview.append(dot);}
-      copy.append(title,preview);button.append(copy);extras()?.decorateChat?.(button,chat,title);button.addEventListener('click',()=>extras()?.onChatClick?.(chat)?undefined:selectChat(chat));
-      return chat.isGroup && ['groups','groups-archived'].includes(listFilter)?(globalThis.WhatsAppGroups?.wrap?.(button,chat) || button):button;
+      copy.append(title,preview);button.append(copy);button.addEventListener('click',()=>extras()?.onChatClick?.(chat)?undefined:selectChat(chat));
+      return chat.isGroup?(globalThis.WhatsAppGroups?.wrap?.(button,chat,groupsFilter()) || button):button;
   }
   let virtualScroll=false;
   $('chat-list').addEventListener('scroll',()=>{if(!virtualRows || virtualScroll) return;virtualScroll=true;(globalThis.requestAnimationFrame || setTimeout)(()=>{virtualScroll=false;renderChatWindow();});});
@@ -1092,11 +1213,11 @@
   function openChat(chat) {showView('workspace','nav-conversations');return selectChat(chat);}
   function setNavigation(id) {for(const name of navIds) {$(name).classList.toggle('active',name===id);if(name===id) $(name).setAttribute('aria-current','page');else $(name).removeAttribute('aria-current');}}
   function resetInboxFilters() {
-    listFilter='';$('chat-list-filter').value='';
+    listFilter='';$('chat-list-filter').value='';$('chat-list-filter').classList.remove('active');
     extras()?.resetFilters?.();globalThis.WhatsAppTeam?.resetFilter?.();
     const title=$('inbox-title').firstChild;if(title) title.textContent='Conversas ';
   }
-  function applyFilter(status='',unread=false,nav='nav-conversations',list='') {resetInboxFilters();listFilter=list;$('chat-list-filter').value=list;showView('workspace');$('search').value='';$('status-filter').value=status;$('unread-only').checked=unread;setNavigation(nav);renderChats();}
+  function applyFilter(status='',unread=false,nav='nav-conversations',list='') {resetInboxFilters();listFilter=list;const filter=$('chat-list-filter');filter.value=list.startsWith('list:')?list:'';filter.classList.toggle('active',Boolean(filter.value));showView('workspace');$('search').value='';$('status-filter').value=status;$('unread-only').checked=unread;setNavigation(nav);renderChats();}
   $('nav-overview').addEventListener('click',()=>{resetInboxFilters();renderDashboard();showView('page-dashboard','nav-overview');});
   $('nav-conversations').addEventListener('click',()=>{applyFilter();$('search').focus();});
   $('nav-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
@@ -1106,8 +1227,9 @@
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
   $('filter-all').addEventListener('click',()=>applyFilter());$('filter-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('chat-list-filter').addEventListener('change',event=>applyFilter('',false,'nav-conversations',event.target.value));
-  $('groups-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups-archived'?'groups':listFilter==='groups'?'':'groups'));
-  $('group-archived-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations','groups-archived'));
+  $('archived-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='archived'?'':'archived'));
+  $('groups-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups'?'':'groups'));
+  $('group-archived-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups-archived'?'groups':'groups-archived'));
   $('toggle-filters').addEventListener('click',()=>{$('advanced-filters').hidden=!$('advanced-filters').hidden;$('toggle-filters').setAttribute('aria-expanded',String(!$('advanced-filters').hidden));});
   for(const section of ['attendance','products','assistant','templates','connection']) $('tab-'+section).addEventListener('click',()=>showPanel(section));
   $('nav-connection').addEventListener('click',()=>$('connection-dialog').showModal());
@@ -1269,7 +1391,7 @@
   setInterval(sync,4000);
   setInterval(pollTranscriptions,2000);
   // Ponte para pages.js (base de conhecimento, produtos, IA e CRM).
-  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,selected:()=>selected,connection:()=>connection,
+  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,displayedChats,leaveArchive:()=>{if(listFilter==='archived') listFilter='';},selected:()=>selected,connection:()=>connection,
     renderChats,templates:()=>templates,reloadContact:()=>loadContact(),renderMessages:()=>{if(selected) renderMessages(true);},messages:()=>messages,messageRow:id=>messageRows.get(id),previewText,sync:()=>sync(true),loadMessages:()=>loadMessages(),contactPhone,
     touchDraft:()=>{editRevision++;pendingSend=null;},draftText:()=>$('message-text').value,setDraftText:value=>{$('message-text').value=value;editRevision++;pendingSend=null;},isSending:()=>sending,contextSnapshot:()=>({jid:selected?.jid || null,selection,revision:editRevision,lastMessageId:messages.at(-1)?.id || null,lastTextId:messages.filter(message=>message.type==='text'&&!message.deleted&&message.canForward!==false&&message.text?.trim()).at(-1)?.id || null})};
 })();
