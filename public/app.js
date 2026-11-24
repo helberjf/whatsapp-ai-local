@@ -16,7 +16,7 @@
   const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
   let virtualRows=null,rowHeight=0,chatsVersion=null,inboxContext=null;
   let inboxScroll=0, detailsTrigger=null;
-  let chatLists=[],listContacts=[],listFilter='',listsPending=false,listsRefreshAt=0;
+  let chatLists=[],listContacts=[],listFilter='',archiveBack='',listsPending=false,listsRefreshAt=0;
   let localListsRevision=0,whatsappListsAvailable;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),mediaRequests=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
   const mediaControllers=new Map(),previewViews=new Map(),previewTargets=new WeakMap(),mediaLocks=new Set();
@@ -35,6 +35,7 @@
   const isPinned=chat=>chat.isGroup?globalThis.WhatsAppGroups?.isPinned?.(chat.jid):chat.pinned===true;
   const isArchived=chat=>chat.isGroup?(globalThis.WhatsAppGroups?.isArchived?.(chat) ?? chat.archived===true):chat.archived===true;
   const groupsFilter=()=>listFilter==='groups' || listFilter==='groups-archived';
+  const archivedFilter=()=>listFilter==='archived' || listFilter==='groups-archived';
   const unreadChat=chat=>chat.unread>0 || chat.markedUnread===true;
   function chatTime(value) {
     if(!value) return '';
@@ -93,7 +94,7 @@
   }
   function displayedChats() {
     const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
-    const archived=listFilter==='archived' || listFilter==='groups-archived';
+    const archived=archivedFilter();
     const matching=conversationsForFilter().filter(chat=>isArchived(chat)===archived
       && (!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status)
       && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${(chat.labels || []).join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
@@ -108,20 +109,23 @@
     return [...people,...(groups?.arrange?.(pinnedGroups) || pinnedGroups),...matching.filter(chat=>!isPinned(chat))];
   }
   function renderInboxFolders() {
-    const groupMode=groupsFilter(),archived=listFilter==='archived',groupArchived=listFilter==='groups-archived';
+    const groupMode=listFilter==='groups',archived=archivedFilter(),groupArchived=listFilter==='groups-archived';
     $('groups-row').setAttribute('aria-pressed',String(groupMode));$('groups-row').classList.toggle('active',groupMode);
     $('archived-row').hidden=groupMode;
     $('archived-row').setAttribute('aria-pressed',String(archived));$('archived-row').classList.toggle('back',archived);
-    $('archived-row-label').textContent=archived?'← Voltar às conversas':'Arquivadas';
+    $('archived-row-label').textContent=archived?(archiveBack==='groups'?'← Voltar aos grupos':'← Voltar às conversas'):'Arquivadas';
     $('group-archived-row').hidden=!groupMode;
-    $('group-archived-row').setAttribute('aria-pressed',String(groupArchived));$('group-archived-row').classList.toggle('back',groupArchived);
-    $('group-archived-row-label').textContent=groupArchived?'← Voltar aos grupos':'Grupos arquivados';
+    $('archive-categories').hidden=!archived;
+    for(const [id,active] of [['archive-people-tab',archived && !groupArchived],['archive-groups-tab',groupArchived]]) {
+      $(id).classList.toggle('active',active);$(id).setAttribute('aria-pressed',String(active));
+    }
     const title=$('inbox-title').firstChild;
-    if(title && (groupMode || archived)) title.textContent=archived?'Arquivadas':groupArchived?'Grupos arquivados':'Grupos';
+    if(title && (groupMode || archived)) title.textContent=archived?'Arquivadas':'Grupos';
     extras()?.renderArchiveSync?.(archived,chats.some(isArchived));
   }
   function conversationsForFilter() {
     if(groupsFilter()) return chats.filter(chat=>chat.isGroup);
+    if(listFilter==='archived') return chats.filter(chat=>!chat.isGroup);
     if(!listFilter.startsWith('list:')) return chats;
     const members=new Set(chatLists.find(list=>'list:'+list.id===listFilter)?.jids || []);
     const result=[];
@@ -1227,9 +1231,18 @@
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
   $('filter-all').addEventListener('click',()=>applyFilter());$('filter-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('chat-list-filter').addEventListener('change',event=>applyFilter('',false,'nav-conversations',event.target.value));
-  $('archived-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='archived'?'':'archived'));
+  $('archived-row').addEventListener('click',()=>{
+    if(archivedFilter()) {applyFilter('',false,'nav-conversations',archiveBack);return;}
+    archiveBack='';
+    applyFilter('',false,'nav-conversations','archived');
+  });
   $('groups-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups'?'':'groups'));
-  $('group-archived-row').addEventListener('click',()=>applyFilter('',false,'nav-conversations',listFilter==='groups-archived'?'groups':'groups-archived'));
+  $('group-archived-row').addEventListener('click',()=>{
+    archiveBack='groups';
+    applyFilter('',false,'nav-conversations','groups-archived');
+  });
+  for(const [id,filter] of [['archive-people-tab','archived'],['archive-groups-tab','groups-archived']])
+    $(id).addEventListener('click',()=>{listFilter=filter;renderChats();});
   $('toggle-filters').addEventListener('click',()=>{$('advanced-filters').hidden=!$('advanced-filters').hidden;$('toggle-filters').setAttribute('aria-expanded',String(!$('advanced-filters').hidden));});
   for(const section of ['attendance','products','assistant','templates','connection']) $('tab-'+section).addEventListener('click',()=>showPanel(section));
   $('nav-connection').addEventListener('click',()=>$('connection-dialog').showModal());
@@ -1391,7 +1404,7 @@
   setInterval(sync,4000);
   setInterval(pollTranscriptions,2000);
   // Ponte para pages.js (base de conhecimento, produtos, IA e CRM).
-  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,displayedChats,leaveArchive:()=>{if(listFilter==='archived') listFilter='';},selected:()=>selected,connection:()=>connection,
+  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,displayedChats,leaveArchive:()=>{if(archivedFilter()) listFilter='';},selected:()=>selected,connection:()=>connection,
     renderChats,templates:()=>templates,reloadContact:()=>loadContact(),renderMessages:()=>{if(selected) renderMessages(true);},messages:()=>messages,messageRow:id=>messageRows.get(id),previewText,sync:()=>sync(true),loadMessages:()=>loadMessages(),contactPhone,
     touchDraft:()=>{editRevision++;pendingSend=null;},draftText:()=>$('message-text').value,setDraftText:value=>{$('message-text').value=value;editRevision++;pendingSend=null;},isSending:()=>sending,contextSnapshot:()=>({jid:selected?.jid || null,selection,revision:editRevision,lastMessageId:messages.at(-1)?.id || null,lastTextId:messages.filter(message=>message.type==='text'&&!message.deleted&&message.canForward!==false&&message.text?.trim()).at(-1)?.id || null})};
 })();

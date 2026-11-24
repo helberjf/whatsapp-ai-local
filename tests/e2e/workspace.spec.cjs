@@ -148,7 +148,7 @@ test('Tudo mostra grupos e contatos, com as conversas fixadas no topo',async({pa
   await page.locator('#search').fill('família');await expect(page.locator('.chat-item')).toContainText('Grupo da família');
 });
 
-test('Arquivadas mostra grupos e contatos sem contador',async({page})=>{
+test('Arquivadas separa pessoas e grupos sem contador',async({page})=>{
   const group={jid:'111@g.us',name:'Grupo arquivado no celular',isGroup:true,status:'open',labels:[],unread:24,archived:true};
   const normal={jid:'222@g.us',name:'Grupo ativo',isGroup:true,status:'open',labels:[],unread:3,archived:false};
   const person={jid:'5511998765432@s.whatsapp.net',name:'Pessoa arquivada',status:'open',labels:[],unread:1,archived:true};
@@ -161,11 +161,22 @@ test('Arquivadas mostra grupos e contatos sem contador',async({page})=>{
   await page.locator('#group-archived-row').click();
   await expect(page.locator('#chat-list .chat-item')).toHaveCount(1);
   await expect(page.locator('#chat-list')).toContainText('Grupo arquivado no celular');
+  await page.locator('#archived-row').click();
+  await expect(page.locator('#chat-list .chat-item')).toHaveText([/Grupo ativo/]);
   await page.locator('#filter-all').click();
   await page.locator('#archived-row').click();
-  await expect(page.locator('#chat-list .chat-item')).toHaveCount(2);
-  await expect(page.locator('#chat-list')).toContainText('Pessoa arquivada');
-  await expect(page.locator('#chat-list')).toContainText('Grupo arquivado no celular');
+  const categories=page.getByRole('group',{name:'Tipo de conversa arquivada'});
+  const people=categories.getByRole('button',{name:'Pessoas'});
+  const groups=categories.getByRole('button',{name:'Grupos'});
+  const rows=page.locator('#chat-list .chat-item');
+  await expect(people).toHaveAttribute('aria-pressed','true');
+  await expect(rows).toHaveText([/Pessoa arquivada/]);
+  await groups.click();
+  await expect(groups).toHaveAttribute('aria-pressed','true');
+  await expect(rows).toHaveText([/Grupo arquivado no celular/]);
+  await expect(page.locator('#archived-sync-button')).toBeVisible();
+  await people.click();
+  await expect(rows).toHaveText([/Pessoa arquivada/]);
 });
 
 test('grupos arquivados ficam em pasta própria e o hambúrguer controla as ações',async({page})=>{
@@ -584,11 +595,16 @@ test('arquivadas abrem no início mesmo depois de rolar uma lista grande até o 
   await list.evaluate(element=>{element.scrollTop=element.scrollHeight;});
   await expect(rows.last()).toContainText('Ativa 599');
   await page.locator('#archived-row').click();
-  await expect(list).toHaveAttribute('aria-rowcount','300');
-  await expect(rows.first()).toContainText('Arquivada 0');
+  await expect(list).toHaveAttribute('aria-rowcount','299');
+  await expect(rows.first()).toContainText('Arquivada 1');
   await expect.poll(()=>list.evaluate(element=>element.scrollTop)).toBe(0);
   await list.evaluate(element=>{element.scrollTop=element.scrollHeight;});
   await expect(rows.last()).toContainText('Arquivada 299');
+  await page.locator('#archive-groups-tab').click();
+  await expect(rows).toHaveText([/Arquivada 0/]);
+  await page.locator('#archive-people-tab').click();
+  await expect(rows.first()).toContainText('Arquivada 1');
+  await expect.poll(()=>list.evaluate(element=>element.scrollTop)).toBe(0);
   await page.locator('#archived-row').click();
   await expect(rows.first()).toContainText('Ativa 0');
   await expect.poll(()=>list.evaluate(element=>element.scrollTop)).toBe(0);

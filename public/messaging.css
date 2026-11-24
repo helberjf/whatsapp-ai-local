@@ -296,6 +296,8 @@ dialog.media-viewer{width:min(1200px,calc(100vw - 32px));height:calc(100dvh - 48
   border-color: #3e6e5d;
   color: #cbf5e4;
 }
+#archive-categories { padding-block: 8px 10px; }
+#archive-categories[hidden] { display: none; }
 .inbox-lists {
   display: flex;
   align-items: stretch;
