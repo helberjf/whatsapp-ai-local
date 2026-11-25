@@ -203,6 +203,24 @@ test('atualização importa grupos mesmo após snapshot antigo e não repete lei
   }
 });
 
+test('renova um snapshot de grupos expirado e corrige a caixa de entrada sem repetir a consulta',async t=>{
+  const group='120363123@g.us';
+  let now=Date.now(),snapshotAt=now,snapshots=0,remote={};
+  const {call,server}=await serverWith(t,{
+    '/findChats/':[chatRow(group,'Grupo arquivado no WhatsApp')],'/findContacts/':[],
+    '/localGroups/':{groups:[{id:group,subject:'Grupo arquivado no WhatsApp'}]},
+    '/localArchived/':()=>({archiveSync:true,snapshot:true,snapshotAt,groupArchiveSync:true,groupsSnapshotAt:snapshotAt,chats:remote}),
+    '/localArchivedSnapshot/':()=>{snapshots++;snapshotAt=now;remote={[group]:{archived:true,updatedAt:now-1000}};return {success:true,archived:1,snapshotAt};}
+  },{autoArchiveSnapshot:true,now:()=>now});
+  const state=async()=> (await call('/api/chats')).body.find(chat=>chat.jid===group)?.archived;
+  assert.equal(await state(),false);
+  assert.equal(snapshots,0);
+  now+=6*60_000;server.invalidateChats();
+  await Promise.all([state(),state(),state()]);
+  assert.equal(await state(),true);
+  assert.equal(snapshots,1);
+});
+
 test('health informa a versão do código em execução para o iniciador reiniciar uma central antiga',async t=>{
   const {buildId}=require('../lib/build-id.cjs');
   const {server}=await serverWith(t,{'/findChats/':[],'/findContacts/':[]});

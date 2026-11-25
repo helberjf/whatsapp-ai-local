@@ -39,6 +39,7 @@ let diskBuild={id:RUNNING_BUILD,at:Date.now()};
 function currentBuild() {if(Date.now()-diskBuild.at>15_000) {try {diskBuild={id:buildId(root),at:Date.now()};}catch {diskBuild.at=Date.now();}}return diskBuild.id;}
 const contactDefault=()=>({status:'open',labels:[],notes:[]});
 const normalizeText=text=>String(text).normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
+const GROUP_ARCHIVE_SNAPSHOT_MAX_AGE=5*60_000;
 // Arquivada: vale o registro mais recente entre o WhatsApp (extensão local) e o que foi feito pela central.
 // Com "Manter conversas arquivadas" desligado no WhatsApp, uma mensagem depois de arquivar tira a conversa das arquivadas.
 function archivedOf(chat,contacts,remote,groupState) {
@@ -143,11 +144,13 @@ function createWhatsAppServer(options={}) {
     const team=createTeamService({store,client,ai:extra.services.ai,now});
     const requests=new Map(),chatDelta=createChatDelta();
     let events=null;
-    // Uma vez por instalação: traz as conversas arquivadas no celular antes da extensão existir.
+    // A leitura completa também corrige mudanças de arquivo que não chegaram por evento.
     let archiveSnapshotJob=null,archiveSnapshotRetryAt=0;
-    function autoArchiveSnapshot() {
-      if(archiveSnapshotJob || Date.now()<archiveSnapshotRetryAt || typeof client.archiveSnapshot!=='function') return;
-      archiveSnapshotJob=client.archiveSnapshot().then(result=>{if(result.partial) archiveSnapshotRetryAt=Date.now()+10*60_000;client.invalidateChats();},()=>{archiveSnapshotRetryAt=Date.now()+10*60_000;}).finally(()=>{archiveSnapshotJob=null;});
+    function autoArchiveSnapshot(meta) {
+      if(!meta?.snapshot || archiveSnapshotJob || now()<archiveSnapshotRetryAt) return;
+      const groupsFresh=meta.groupsSnapshotAt && now()-meta.groupsSnapshotAt<GROUP_ARCHIVE_SNAPSHOT_MAX_AGE;
+      if(meta.snapshotAt && (!meta.groupArchiveSync || groupsFresh)) return;
+      archiveSnapshotJob=client.archiveSnapshot().then(result=>{if(result.partial) archiveSnapshotRetryAt=now()+10*60_000;client.invalidateChats();},()=>{archiveSnapshotRetryAt=now()+10*60_000;}).finally(()=>{archiveSnapshotJob=null;});
     }
     async function sendOnce(input,send,prepare) {
       const id=textField(input.requestId,100,'Identificador do envio');if(!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new ApiError('Identificador do envio inválido.',422);
@@ -330,7 +333,7 @@ function createWhatsAppServer(options={}) {
       if(req.method==='GET' && route==='/api/chats') {
         const data=await store.read(),search=(url.searchParams.get('search') || '').toLocaleLowerCase('pt-BR');
         const waiting=data.team?.waiting || {},archived=await client.archivedState?.().catch(()=>null);
-        if((production || options.autoArchiveSnapshot) && archived?.meta?.snapshot && (!archived.meta.snapshotAt || (archived.meta.groupArchiveSync && !archived.meta.groupsSnapshotAt))) runtime.autoArchiveSnapshot();
+        if(production || options.autoArchiveSnapshot) runtime.autoArchiveSnapshot(archived?.meta);
         // readState: a última mensagem já lida pela central zera o contador, mesmo antes de o WhatsApp confirmar a leitura.
         const listed=mergeAliasChats(await client.inboxChats(),data.contacts,waiting),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
         const chats=[...listed,...extra].map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage,since=chat.waitingSince ?? waiting[chat.jid]?.since;
