@@ -116,6 +116,47 @@ test('lê listas personalizadas de regular e aplica remoções sem alterar a ses
   assert.deepEqual(queries.map(({name,version})=>[name,version]),[['regular','0'],['regular','4']]);
 });
 
+test('snapshot preserva trancamento de grupos e contatos junto do estado de arquivo',async()=>{
+  const at=Date.now(),group='120363123@g.us';
+  const mutation=(type,jid,value)=>({index:[type,jid],syncAction:{value:{timestamp:at,...value}}});
+  const {library}=fakeBaileys([{snapshot:{version:1,mutations:[
+    mutation('lock',group,{lockChatAction:{locked:true}}),
+    mutation('archive',group,{archiveChatAction:{archived:true}}),
+    mutation('lock',jidOf(1),{lockChatAction:{locked:true}}),
+    mutation('lock',jidOf(2),{lockChatAction:{locked:false}})
+  ]}}]);
+  const saved=[];
+  const extension=createExtension({load:()=>({}),save:()=>{}},{load:()=>({}),save:value=>saved.push(structuredClone(value)),delayMs:5},{loadBaileys:async()=>library});
+  const service={instanceId:'inst',client:{ev:{on(){}},query:async()=>({}),authState:{keys:{get:async()=>({})}}}};
+  await extension.archiveSnapshot(service);
+  await wait(30);
+  const state=saved.at(-1).inst;
+  assert.equal(state[group].locked,true);
+  assert.equal(state[group].archived,true);
+  assert.equal(state[jidOf(1)].locked,true);
+  assert.equal(state[jidOf(1)].archived,undefined);
+  assert.equal(state[jidOf(2)].locked,false);
+  extension.rememberArchive(service,group,false,at+1);
+  await wait(30);
+  assert.equal(saved.at(-1).inst[group].locked,true);
+  assert.equal(saved.at(-1).inst[group].archived,false);
+});
+
+test('Central recebe trancamento mesmo quando a conversa nunca teve registro de arquivo',async t=>{
+  const group='120363123@g.us',at=Date.now();
+  const {call}=await serverWith(t,{
+    '/findChats/':[chatRow(group,'Grupo trancado'),chatRow(jidOf(1),'Contato trancado')],
+    '/findContacts/':[], '/localGroups/':{groups:[{id:group,subject:'Grupo trancado'}]},
+    '/localArchived/':{archiveSync:true,chats:{
+      [group]:{locked:true,lockedAt:at},
+      [jidOf(1)]:{locked:true,lockedAt:at}
+    }}
+  });
+  const {body}=await call('/api/chats');
+  assert.equal(body.find(chat=>chat.jid===group).locked,true);
+  assert.equal(body.find(chat=>chat.jid===jidOf(1)).locked,true);
+});
+
 test('extensão lê as arquivadas antigas do WhatsApp sem alterar a sessão e sem apagar o que é mais novo',async()=>{
   const at=Date.now(),m=(type,jid,value,timestamp)=>({index:[type,jid],syncAction:{value:{timestamp:{toNumber:()=>timestamp},...value}}});
   const rounds=[

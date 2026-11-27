@@ -34,7 +34,7 @@
   function renderArchiveSync(showArchived,hasArchived) {
     $('archived-sync').hidden=!showArchived;
     if(showArchived && !archiveSyncing) $('archived-sync-text').textContent=hasArchived?'Arquivou no celular e não aparece? Busque de novo.':'Nenhuma arquivada por aqui. Busque as que estão arquivadas no celular.';
-    const unansweredCount=C.chats().filter(chat=>!chat.isGroup && chat.archived!==true && waiting(chat)).length;
+    const unansweredCount=C.chats().filter(chat=>chat.locked!==true && !chat.isGroup && chat.archived!==true && waiting(chat)).length;
     $('filter-unanswered').hidden=!unansweredCount && !showUnanswered;$('filter-unanswered-count').textContent=unansweredCount;
   }
   function filterOperationalChats(list) {

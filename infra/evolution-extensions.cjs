@@ -44,10 +44,18 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(onlyNewer && previous && previous.updatedAt>=updatedAt) return false;
     if(!onlyNewer && previous && previous.archived===archived) {if(individual(alias) && previous.alias!==alias) {previous.alias=alias;scheduleArchiveSave();}return false;}
     // alias: o outro identificador da mesma pessoa (telefone <-> @lid), para a central não mostrar a conversa duas vezes.
-    chats[jid]={archived,updatedAt,...(Number.isFinite(lastMessageAt) && lastMessageAt>0?{lastMessageAt}:{}),...(individual(alias)?{alias}:individual(previous?.alias)?{alias:previous.alias}:{})};
+    chats[jid]={...previous,archived,updatedAt,...(Number.isFinite(lastMessageAt) && lastMessageAt>0?{lastMessageAt}:{}),...(individual(alias)?{alias}:individual(previous?.alias)?{alias:previous.alias}:{})};
     const ids=Object.keys(chats);if(ids.length>20000) for(const old of ids.sort((a,b)=>chats[a].updatedAt-chats[b].updatedAt).slice(0,ids.length-20000)) delete chats[old];
     scheduleArchiveSave();
     return true;
+  }
+  function rememberLock(service,jid,locked,lockedAt=Date.now(),{alias,onlyNewer=false}={}) {
+    const id=instanceKey(service);
+    if(!id || (!individual(jid) && !group(jid)) || typeof locked!=='boolean' || !Number.isFinite(lockedAt)) return;
+    const chats=archives()[id] ||= {},previous=chats[jid];
+    if(onlyNewer && Number.isFinite(previous?.lockedAt) && previous.lockedAt>lockedAt) return;
+    chats[jid]={...previous,locked,lockedAt,...(individual(alias)?{alias}:{})};
+    scheduleArchiveSave();
   }
   const archiveMeta=service=>{const id=instanceKey(service),meta=archives()[ARCHIVE_META] ||= {};return id?meta[id] ||= {}:{};};
   // "Manter conversas arquivadas" desligado = unarchiveChats true: mensagem nova tira a conversa das arquivadas.
@@ -70,7 +78,14 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     phoneFor(service,jid).then(phone=>{if(phone) {rememberArchive(service,jid,archived,updatedAt ?? Date.now(),{...options,alias:phone});rememberArchive(service,phone,archived,updatedAt ?? Date.now(),{...options,alias:jid});}},()=>{});
     return changed;
   }
-  const archiveFrom=(service,list)=>{for(const chat of Array.isArray(list)?list:[]) if(chat && typeof chat.archived==='boolean') rememberWithPhone(service,chat.id,chat.archived);};
+  const archiveFrom=(service,list)=>{for(const chat of Array.isArray(list)?list:[]) {
+    if(typeof chat?.archived==='boolean') rememberWithPhone(service,chat.id,chat.archived);
+    if(typeof chat?.locked==='boolean') {
+      const lockedAt=Date.now();
+      rememberLock(service,chat.id,chat.locked,lockedAt);
+      phoneFor(service,chat.id).then(phone=>{if(phone) rememberLock(service,phone,chat.locked,lockedAt,{alias:chat.id});},()=>{});
+    }
+  }};
   const load=storage.load || (()=>{try {const stat=fs.statSync(STORE);if(stat.size>2_000_000) throw new Error('Timer store too large');return JSON.parse(fs.readFileSync(STORE,'utf8'));}catch(error) {if(error.code==='ENOENT') return {};throw error;}});
   const save=storage.save || (value=>{const temporary=STORE+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,STORE);});
   let state;
@@ -214,7 +229,7 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(!id) return fail(response,503,'O WhatsApp precisa estar conectado.');
     try {
       observe(service);const meta=archiveMeta(service);
-      return response.status(200).json({extensionVersion:2,archiveSync:true,snapshot:true,groupArchiveSync:true,groupsSnapshotAt:meta.groupsSnapshotAt || null,snapshotAt:meta.snapshotAt || null,unarchiveChats:unarchiveSetting(service),chats:archives()[id] || {}});
+      return response.status(200).json({extensionVersion:2,archiveSync:true,snapshot:true,groupArchiveSync:true,lockSync:true,groupsSnapshotAt:meta.groupsSnapshotAt || null,snapshotAt:meta.snapshotAt || null,unarchiveChats:unarchiveSetting(service),chats:archives()[id] || {}});
     }
     catch {return fail(response,503,'Não foi possível ler as conversas arquivadas.');}
   };}
@@ -256,15 +271,17 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
   }
   async function readArchiveSnapshot(socket) {
     const {mutations,partial}=await readAppState(socket,SNAPSHOT_COLLECTION);
-    const chats=[];let unarchiveChats=null;
+    const chats=[],locks=[];let unarchiveChats=null;
     for(const {syncAction,index} of Object.values(mutations)) {
       const [type,jid]=Array.isArray(index)?index:[],value=syncAction?.value;
       if(value?.unarchiveChatsSetting && typeof value.unarchiveChatsSetting.unarchiveChats==='boolean') unarchiveChats=value.unarchiveChatsSetting.unarchiveChats;
+      if(type==='lock' && typeof value?.lockChatAction?.locked==='boolean')
+        locks.push({jid,locked:value.lockChatAction.locked,lockedAt:numberOf(value.timestamp) || 0});
       const action=value?.archiveChatAction;if(type!=='archive' || !action || typeof action.archived!=='boolean') continue;
       const lastMessage=numberOf(action.messageRange?.lastMessageTimestamp);
       chats.push({jid,archived:action.archived,updatedAt:numberOf(value.timestamp) || 0,lastMessageAt:lastMessage>0?lastMessage*1000:undefined});
     }
-    return {chats,unarchiveChats,partial};
+    return {chats,locks,unarchiveChats,partial};
   }
   function groupsHandler(controller) {return async(request,response)=>{
     const service=serviceFor(controller,request);
@@ -315,13 +332,18 @@ function createExtension(storage={},archiveStorage={},runtime={}) {
     if(!id || typeof socket?.query!=='function' || typeof socket.authState?.keys?.get!=='function') return Promise.reject(Object.assign(new Error('not connected'),{status:503}));
     if(snapshots.has(id)) return snapshots.get(id);
     const job=(async()=>{
-      const {chats,unarchiveChats,partial}=await readArchiveSnapshot(socket);
+      const {chats,locks,unarchiveChats,partial}=await readArchiveSnapshot(socket);
       let changed=0,linked=0;
       for(const chat of chats) {
         const options={lastMessageAt:chat.lastMessageAt,onlyNewer:true};
         const phone=await phoneFor(service,chat.jid);
         if(rememberArchive(service,chat.jid,chat.archived,chat.updatedAt,{...options,alias:phone || undefined})) changed++;
         if(phone) {linked++;rememberArchive(service,phone,chat.archived,chat.updatedAt,{...options,alias:chat.jid});}
+      }
+      for(const entry of locks) {
+        const phone=await phoneFor(service,entry.jid);
+        rememberLock(service,entry.jid,entry.locked,entry.lockedAt,{onlyNewer:true,alias:phone || undefined});
+        if(phone) rememberLock(service,phone,entry.locked,entry.lockedAt,{onlyNewer:true,alias:entry.jid});
       }
       const meta=archiveMeta(service);meta.snapshotAt=Date.now();if(!partial) meta.groupsSnapshotAt=meta.snapshotAt;if(typeof unarchiveChats==='boolean') meta.unarchiveChats=unarchiveChats;scheduleArchiveSave();
       return {archived:chats.filter(chat=>chat.archived && (individual(chat.jid) || group(chat.jid))).length,lid:chats.filter(chat=>chat.archived && String(chat.jid).endsWith('@lid')).length,linked,changed,partial,snapshotAt:meta.snapshotAt,unarchiveChats:unarchiveSetting(service)};

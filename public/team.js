@@ -43,7 +43,7 @@
   }
   function setTitle(text) {$('inbox-title').firstChild.textContent=text+' ';}
   function updateTabs() {
-    const chats=C.chats().filter(chat=>chat.archived!==true),waiting=waitingChats(chats).length,mine=me()?chats.filter(chat=>chat.assignee===me() && chat.status!=='closed').length:0;
+    const chats=C.chats().filter(chat=>chat.locked!==true && chat.archived!==true),waiting=waitingChats(chats).length,mine=me()?chats.filter(chat=>chat.assignee===me() && chat.status!=='closed').length:0;
     $('filter-waiting-count').textContent=waiting;$('nav-waiting-count').textContent=waiting || '—';
     $('filter-mine').hidden=!me() || !memberOf(me());$('filter-mine-count').textContent=mine;
     for(const [id,name] of [['filter-waiting','waiting'],['filter-mine','mine']]) {$(id).classList.toggle('active',filter===name);$(id).setAttribute('aria-pressed',String(filter===name));}

@@ -76,10 +76,10 @@
     const operational=extras()?.inboxFilter?.() || globalThis.WhatsAppTeam?.currentFilter?.();
     const context=JSON.stringify([listFilter,search,status,$('unread-only').checked,operational]);
     if(context!==inboxContext) {$('chat-list').scrollTop=0;inboxContext=context;}
-    const active=chats.filter(chat=>chat.archived!==true && !chat.isGroup),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
+    const active=chats.filter(chat=>chat.locked!==true && chat.archived!==true && !chat.isGroup),unreadCount=active.filter(unreadChat).length,pendingCount=active.filter(chat=>chat.status==='pending').length;
     const unreadMessages=active.reduce((sum,chat)=>sum+Math.max(0,Number(chat.unread)||0),0);document.title=unreadMessages?`(${unreadMessages}) Whats AI`:'Whats AI';
     $('metric-unread').textContent=unreadCount;$('metric-pending').textContent=pendingCount;$('metric-closed').textContent=active.filter(chat=>chat.status==='closed').length;
-    $('nav-chat-count').textContent='';$('filter-unread-count').textContent=chats.filter(chat=>!isArchived(chat) && unreadChat(chat)).length;$('nav-pending-count').textContent=pendingCount;
+    $('nav-chat-count').textContent='';$('filter-unread-count').textContent=chats.filter(chat=>chat.locked!==true && !isArchived(chat) && unreadChat(chat)).length;$('nav-pending-count').textContent=pendingCount;
     const all=!listFilter && !status && !$('unread-only').checked && !operational;
     $('filter-all').classList.toggle('active',all);$('filter-pending').classList.toggle('active',status==='pending');
     $('filter-all').setAttribute('aria-pressed',String(all));$('filter-pending').setAttribute('aria-pressed',String(status==='pending'));
@@ -95,7 +95,7 @@
   function displayedChats() {
     const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
     const archived=archivedFilter();
-    const matching=conversationsForFilter().filter(chat=>isArchived(chat)===archived
+    const matching=conversationsForFilter().filter(chat=>chat.locked!==true && isArchived(chat)===archived
       && (!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status)
       && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${(chat.labels || []).join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
     const groups=globalThis.WhatsAppGroups;
@@ -1153,7 +1153,7 @@
   const navIds=['nav-overview','nav-conversations','nav-contacts','nav-pending','nav-closed','nav-knowledge','nav-products','nav-ai','nav-team','nav-voice','nav-sales','nav-profile','settings','nav-connection','nav-settings'];
   const pageIds=['page-dashboard','page-contacts','page-knowledge','page-products','page-ai','page-team','page-voice','page-sales','page-profile'];
   function renderDashboard() {
-    const cards=document.createDocumentFragment(),activeChats=chats.filter(chat=>!chat.isGroup && chat.archived!==true);
+    const cards=document.createDocumentFragment(),activeChats=chats.filter(chat=>chat.locked!==true && !chat.isGroup && chat.archived!==true);
     for(const [label,count,status,unread] of [
       ['Não lidas',activeChats.filter(c=>c.unread>0 || c.markedUnread===true).length,'',true],
       ['Pendentes',activeChats.filter(c=>c.status==='pending').length,'pending',false],

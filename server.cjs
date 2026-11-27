@@ -44,7 +44,7 @@ const GROUP_ARCHIVE_SNAPSHOT_MAX_AGE=5*60_000;
 // Com "Manter conversas arquivadas" desligado no WhatsApp, uma mensagem depois de arquivar tira a conversa das arquivadas.
 function archivedOf(chat,contacts,remote,groupState) {
   const ids=[chat.jid,...(chat.aliasJids || [])];
-  const reported=ids.map(id=>remote?.get?.(id)).filter(Boolean).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  const reported=ids.map(id=>remote?.get?.(id)).filter(item=>typeof item?.archived==='boolean').sort((a,b)=>b.updatedAt-a.updatedAt)[0];
   const local=ids.map(id=>contacts?.[id]).filter(contact=>typeof contact?.archived==='boolean')
     .map(contact=>({archived:contact.archived,updatedAt:Date.parse(contact.archivedAt || '') || 0}))
     .sort((a,b)=>b.updatedAt-a.updatedAt)[0] || (groupState?.archived?.includes(chat.jid)?{archived:true,updatedAt:0}:null);
@@ -53,6 +53,11 @@ function archivedOf(chat,contacts,remote,groupState) {
   const since=fromWhatsApp?reported.lastMessageAt || reported.updatedAt:local?.updatedAt;
   if(archived && remote?.meta?.unarchiveChats===true && since>0 && Number(chat.lastMessage?.timestamp || 0)>since+1000) return false;
   return archived;
+}
+function lockedOf(chat,remote) {
+  const reported=[chat.jid,...(chat.aliasJids || [])].map(id=>remote?.get?.(id))
+    .filter(item=>typeof item?.locked==='boolean').sort((a,b)=>b.lockedAt-a.lockedAt)[0];
+  return reported?.locked===true;
 }
 // Arquivadas que o WhatsApp informa mas que a Evolution não lista como conversa (antigas, nunca sincronizadas,
 // ou conhecidas só pelo identificador privado): entram em "Arquivadas" mesmo assim, com o nome da agenda quando houver.
@@ -338,7 +343,7 @@ function createWhatsAppServer(options={}) {
         const listed=mergeAliasChats(await client.inboxChats(),data.contacts,waiting),extra=await archivedOnlyChats(listed,archived,data.contacts,client);
         const chats=[...listed,...extra].map(chat=>{const contact=data.contacts[chat.jid],seen=contact?.readState,last=chat.lastMessage,since=chat.waitingSince ?? waiting[chat.jid]?.since;
           const read=last && seen && (seen.lastSeenId===last.id || seen.messageIds?.includes(last.id));
-          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,data.contacts,archived,data.groupPresentation),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
+          return {...chat,...contactDefault(),...contact,archived:archivedOf(chat,data.contacts,archived,data.groupPresentation),locked:lockedOf(chat,archived),...(since!==undefined?{waitingSince:since}:{}),...(read?{unread:0}:{})};});
         // delta=1: a tela recebe só as conversas alteradas desde a versão que já tem.
         if(url.searchParams.get('delta')==='1') return json(res,200,chatDelta.diff(chats.sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)),url.searchParams.get('since')));
         return json(res,200,chats.filter(chat=>(!search || `${chat.name} ${chat.jid} ${chat.labels.join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)) && (url.searchParams.get('unread')!=='1' || chat.unread>0) && (!url.searchParams.get('status') || chat.status===url.searchParams.get('status'))).sort((a,b)=>(b.lastMessage?.timestamp || 0)-(a.lastMessage?.timestamp || 0)));

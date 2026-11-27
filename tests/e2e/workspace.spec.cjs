@@ -148,6 +148,31 @@ test('Tudo mostra grupos e contatos, com as conversas fixadas no topo',async({pa
   await page.locator('#search').fill('família');await expect(page.locator('.chat-item')).toContainText('Grupo da família');
 });
 
+test('conversas trancadas no WhatsApp ficam fora da caixa de entrada, busca, arquivos e listas',async({page})=>{
+  const active={jid:'222@g.us',name:'Grupo ativo',isGroup:true,status:'open',labels:[],unread:0};
+  const locked={...active,jid:'333@g.us',name:'Grupo trancado',locked:true};
+  const archived={...locked,jid:'444@g.us',name:'Trancado e arquivado',archived:true};
+  const person={jid:'5511998765432@s.whatsapp.net',name:'Pessoa trancada',status:'open',labels:[],locked:true,unread:3};
+  await page.route('**/api/chats?**',route=>route.fulfill({json:[active,locked,archived,person]}));
+  await page.route('**/api/chat-lists',route=>route.fulfill({json:{lists:[{id:'1',name:'Trabalho',jids:[active.jid,locked.jid,person.jid]}]}}));
+  await page.locator('#refresh-top').click();
+  const rows=page.locator('#chat-list .chat-item');
+  await expect(rows).toHaveText([/Grupo ativo/]);
+  await expect(page.locator('#filter-unread-count')).toHaveText('0');
+  await page.locator('#search').fill('trancad');
+  await expect(rows).toHaveCount(0);
+  await page.locator('#search').fill('');
+  await page.locator('#groups-row').click();
+  await expect(rows).toHaveText([/Grupo ativo/]);
+  await page.locator('#filter-all').click();
+  await page.locator('#chat-list-filter').selectOption({label:'Trabalho'});
+  await expect(rows).toHaveText([/Grupo ativo/]);
+  await page.locator('#archived-row').click();
+  await expect(rows).toHaveCount(0);
+  await page.locator('#archive-groups-tab').click();
+  await expect(rows).toHaveCount(0);
+});
+
 test('Arquivadas separa pessoas e grupos sem contador',async({page})=>{
   const group={jid:'111@g.us',name:'Grupo arquivado no celular',isGroup:true,status:'open',labels:[],unread:24,archived:true};
   const normal={jid:'222@g.us',name:'Grupo ativo',isGroup:true,status:'open',labels:[],unread:3,archived:false};
