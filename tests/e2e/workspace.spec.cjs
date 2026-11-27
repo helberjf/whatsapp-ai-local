@@ -173,6 +173,58 @@ test('conversas trancadas no WhatsApp ficam fora da caixa de entrada, busca, arq
   await expect(rows).toHaveCount(0);
 });
 
+test('pasta de conversas trancadas reúne pessoas e grupos e permite voltar à lista anterior',async({page})=>{
+  const active={jid:'222@g.us',name:'Grupo ativo',isGroup:true,status:'open',labels:[],unread:0};
+  const locked={...active,jid:'333@g.us',name:'Grupo trancado',locked:true};
+  const archived={...locked,jid:'444@g.us',name:'Trancado e arquivado',archived:true};
+  const person={jid:'5511998765432@s.whatsapp.net',name:'Pessoa trancada',status:'open',labels:[],locked:true,unread:3};
+  let items=[active,locked,archived,person];
+  await page.route('**/api/chats?**',route=>route.fulfill({json:items}));
+  await page.route('**/api/chat-lists',route=>route.fulfill({json:{lists:[{id:'1',name:'Trabalho',jids:[active.jid,locked.jid]}]}}));
+  await page.route('**/api/messages?**',route=>route.fulfill({json:{messages:[],page:1,pages:1}}));
+  await page.locator('#refresh-top').click();
+  const folder=page.locator('#locked-row'),rows=page.locator('#chat-list .chat-item');
+  await expect(folder).toHaveText('Conversas trancadas');
+  await page.locator('#chat-list-filter').selectOption({label:'Trabalho'});
+  await folder.click();
+  await expect(folder).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('#inbox-title')).toHaveText('Conversas trancadas');
+  await expect(rows).toHaveText([/Grupo trancado/,/Trancado e arquivado/,/Pessoa trancada/]);
+  await expect(page.locator('#archived-row')).toBeHidden();
+  await page.locator('#search').fill('Pessoa');
+  await expect(rows).toHaveText([/Pessoa trancada/]);
+  await rows.first().click();
+  await expect(page.locator('#contact-name')).toHaveText('Pessoa trancada');
+  await page.locator('#search').fill('');
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('#back-to-chats').click();
+  await folder.scrollIntoViewIfNeeded();
+  await insideViewport(folder);
+  await folder.click();
+  await expect(page.locator('#chat-list-filter')).toHaveValue('list:1');
+  await expect(rows).toHaveText([/Grupo ativo/]);
+  await page.locator('#groups-row').click();
+  await folder.click();
+  await folder.click();
+  await expect(page.locator('#groups-row')).toHaveAttribute('aria-pressed','true');
+  await folder.click();
+  items=items.map(chat=>({...chat,locked:false}));
+  await page.locator('#refresh-top').click();
+  await expect(rows).toHaveCount(0);
+  await expect(page.locator('#chat-list')).toContainText('Nenhuma conversa trancada');
+  await page.locator('#filter-all').click();
+  await expect(rows).toHaveCount(3);
+  await expect(folder).toHaveAttribute('aria-pressed','false');
+  items=[active,locked,archived,person];
+  await page.locator('#refresh-top').click();
+  await folder.click();
+  await expect(rows).toHaveCount(3);
+  await page.locator('#toggle-filters').click();
+  await page.locator('#filter-waiting').click();
+  await expect(folder).toHaveAttribute('aria-pressed','false');
+  await expect(rows).toHaveCount(0);
+});
+
 test('Arquivadas separa pessoas e grupos sem contador',async({page})=>{
   const group={jid:'111@g.us',name:'Grupo arquivado no celular',isGroup:true,status:'open',labels:[],unread:24,archived:true};
   const normal={jid:'222@g.us',name:'Grupo ativo',isGroup:true,status:'open',labels:[],unread:3,archived:false};

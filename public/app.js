@@ -16,7 +16,7 @@
   const messageRows=new Map(),extras=()=>globalThis.WhatsAppExtras,VIRTUAL_AT=250;
   let virtualRows=null,rowHeight=0,chatsVersion=null,inboxContext=null;
   let inboxScroll=0, detailsTrigger=null;
-  let chatLists=[],listContacts=[],listFilter='',archiveBack='',listsPending=false,listsRefreshAt=0;
+  let chatLists=[],listContacts=[],listFilter='',archiveBack='',lockedBack='',listsPending=false,listsRefreshAt=0;
   let localListsRevision=0,whatsappListsAvailable;
   const drafts=new Map(),readIds=new Set(),mediaUrls=new Map(),mediaRequests=new Map(),audioViews=new Map(),videoViews=new Map(),deletedMessages=new Set(),messageCopyViews=new Map(),forwardRequestIds=new Map(),hooks={sync:[],view:[],select:[],open:[]};
   const mediaControllers=new Map(),previewViews=new Map(),previewTargets=new WeakMap(),mediaLocks=new Set();
@@ -89,18 +89,18 @@
     $('chat-list').removeAttribute('aria-rowcount');
     const fragment=document.createDocumentFragment();
     for(const chat of filtered) fragment.append(chatButton(chat));
-    if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
+    if(!filtered.length) fragment.append(el('div','list-empty',connection?.state==='connected'?(listFilter==='locked'?'Nenhuma conversa trancada corresponde a estes filtros.':chats.length?'Nenhuma conversa corresponde a estes filtros.':'Nenhuma conversa por aqui ainda. Use ＋ para abrir um atendimento.'):'Conecte seu WhatsApp para carregar as conversas.'));
     $('chat-list').replaceChildren(fragment);
   }
   function displayedChats() {
     const search=$('search').value.trim().toLocaleLowerCase('pt-BR'),status=$('status-filter').value;
-    const archived=archivedFilter();
-    const matching=conversationsForFilter().filter(chat=>chat.locked!==true && isArchived(chat)===archived
+    const archived=archivedFilter(),locked=listFilter==='locked';
+    const matching=conversationsForFilter().filter(chat=>(locked?chat.locked===true:chat.locked!==true && isArchived(chat)===archived)
       && (!$('unread-only').checked || unreadChat(chat)) && (!status || chat.status===status)
       && (!search || `${chat.name} ${chat.phone || ''} ${chat.jid} ${(chat.labels || []).join(' ')}`.toLocaleLowerCase('pt-BR').includes(search)));
     const groups=globalThis.WhatsAppGroups;
     if(groupsFilter()) return groups?.arrange?.(matching) || matching;
-    if(archived) return matching;
+    if(archived || locked) return matching;
     const operational=extras()?.filterOperationalChats?.(matching);
     if(operational) return operational;
     const pinned=matching.filter(isPinned);
@@ -109,9 +109,12 @@
     return [...people,...(groups?.arrange?.(pinnedGroups) || pinnedGroups),...matching.filter(chat=>!isPinned(chat))];
   }
   function renderInboxFolders() {
-    const groupMode=listFilter==='groups',archived=archivedFilter(),groupArchived=listFilter==='groups-archived';
+    const groupMode=listFilter==='groups',archived=archivedFilter(),groupArchived=listFilter==='groups-archived',locked=listFilter==='locked';
     $('groups-row').setAttribute('aria-pressed',String(groupMode));$('groups-row').classList.toggle('active',groupMode);
-    $('archived-row').hidden=groupMode;
+    $('locked-row').hidden=archived;
+    $('locked-row').setAttribute('aria-pressed',String(locked));$('locked-row').classList.toggle('back',locked);
+    $('locked-row-label').textContent=locked?'← Voltar à lista anterior':'Conversas trancadas';
+    $('archived-row').hidden=groupMode || locked;
     $('archived-row').setAttribute('aria-pressed',String(archived));$('archived-row').classList.toggle('back',archived);
     $('archived-row-label').textContent=archived?(archiveBack==='groups'?'← Voltar aos grupos':'← Voltar às conversas'):'Arquivadas';
     $('group-archived-row').hidden=!groupMode;
@@ -120,7 +123,7 @@
       $(id).classList.toggle('active',active);$(id).setAttribute('aria-pressed',String(active));
     }
     const title=$('inbox-title').firstChild;
-    if(title && (groupMode || archived)) title.textContent=archived?'Arquivadas':'Grupos';
+    if(title && (groupMode || archived || locked)) title.textContent=locked?'Conversas trancadas':archived?'Arquivadas':'Grupos';
     extras()?.renderArchiveSync?.(archived,chats.some(isArchived));
   }
   function conversationsForFilter() {
@@ -1231,6 +1234,11 @@
   $('metric-closed-button').addEventListener('click',()=>applyFilter('closed',false,'nav-closed'));
   $('filter-all').addEventListener('click',()=>applyFilter());$('filter-pending').addEventListener('click',()=>applyFilter('pending',false,'nav-pending'));
   $('chat-list-filter').addEventListener('change',event=>applyFilter('',false,'nav-conversations',event.target.value));
+  $('locked-row').addEventListener('click',()=>{
+    if(listFilter==='locked') {applyFilter('',false,'nav-conversations',lockedBack);return;}
+    lockedBack=listFilter;
+    applyFilter('',false,'nav-conversations','locked');
+  });
   $('archived-row').addEventListener('click',()=>{
     if(archivedFilter()) {applyFilter('',false,'nav-conversations',archiveBack);return;}
     archiveBack='';
@@ -1404,7 +1412,7 @@
   setInterval(sync,4000);
   setInterval(pollTranscriptions,2000);
   // Ponte para pages.js (base de conhecimento, produtos, IA e CRM).
-  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,displayedChats,leaveArchive:()=>{if(archivedFilter()) listFilter='';},selected:()=>selected,connection:()=>connection,
+  globalThis.WhatsAppCentral={$,el,api,notice,time,dateTime,initials,phoneLabel,showView,insertDraft,openChat,hooks,chats:()=>chats,displayedChats,leaveArchive:()=>{if(archivedFilter() || listFilter==='locked') listFilter='';},selected:()=>selected,connection:()=>connection,
     renderChats,templates:()=>templates,reloadContact:()=>loadContact(),renderMessages:()=>{if(selected) renderMessages(true);},messages:()=>messages,messageRow:id=>messageRows.get(id),previewText,sync:()=>sync(true),loadMessages:()=>loadMessages(),contactPhone,
     touchDraft:()=>{editRevision++;pendingSend=null;},draftText:()=>$('message-text').value,setDraftText:value=>{$('message-text').value=value;editRevision++;pendingSend=null;},isSending:()=>sending,contextSnapshot:()=>({jid:selected?.jid || null,selection,revision:editRevision,lastMessageId:messages.at(-1)?.id || null,lastTextId:messages.filter(message=>message.type==='text'&&!message.deleted&&message.canForward!==false&&message.text?.trim()).at(-1)?.id || null})};
 })();
