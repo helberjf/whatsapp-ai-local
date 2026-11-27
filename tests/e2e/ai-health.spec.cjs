@@ -38,3 +38,19 @@ test('central sem resposta mostra o que fazer em vez de "Failed to fetch"',async
   await page.getByRole('button',{name:/Base de Conhecimento/}).click();
   await expect(page.locator('#notice')).toHaveText('A central não está respondendo. Se ela foi fechada, abra "Iniciar WhatsApp Central" e recarregue a página.');
 });
+
+test('uma aba aberta volta a consultar as conversas após reiniciar a central',async({page,demo})=>{
+  await page.goto(demo.base);
+  await expect(page.locator('#chat-list .chat-item').first()).toBeVisible();
+  await page.locator('#chat-list .chat-item').first().click();
+  await page.locator('#message-text').fill('Rascunho durante a reinicialização');
+  const restored=await page.evaluate(async()=>{
+    const session=document.querySelector('meta[name="whatsapp-session"]');
+    const validToken=session.content;
+    session.content='0'.repeat(64);
+    await globalThis.WhatsAppCentral.sync();
+    return session.content===validToken;
+  });
+  expect(restored).toBe(true);
+  await expect(page.locator('#message-text')).toHaveValue('Rascunho durante a reinicialização');
+});

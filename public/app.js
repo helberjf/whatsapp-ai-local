@@ -1,6 +1,7 @@
 (() => {
   'use strict';
-  const $=id=>document.getElementById(id),token=document.querySelector('meta[name="whatsapp-session"]')?.content;
+  const $=id=>document.getElementById(id),sessionMeta=document.querySelector('meta[name="whatsapp-session"]');
+  let sessionRenewal=null;
   // A página vem dos arquivos em disco: se a central em execução for anterior à atualização, avisa para reiniciá-la.
   async function checkCentralVersion() {
     try {
@@ -47,12 +48,32 @@
   const initials=name=>String(name || '?').split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase();
   const phoneLabel=value=>{const digits=String(value || '').replace(/\D/g,'');return /^55\d{10,11}$/.test(digits)?digits.replace(/^55(\d{2})(\d{4,5})(\d{4})$/,'+55 $1 $2-$3'):digits?'+'+digits:'Nenhuma conta conectada';};
   function el(tag,className,text) {const node=document.createElement(tag);if(className) node.className=className;if(text!==undefined) node.textContent=text;return node;}
+  function renewSession(rejectedToken) {
+    if(sessionMeta?.content!==rejectedToken) return Promise.resolve(Boolean(sessionMeta?.content));
+    if(!sessionRenewal) sessionRenewal=(async()=>{
+      const response=await fetch('/',{cache:'no-store',signal:AbortSignal.timeout(5000)});
+      if(!response.ok) return false;
+      const doc=new DOMParser().parseFromString(await response.text(),'text/html');
+      const nextToken=doc.querySelector('meta[name="whatsapp-session"]')?.content;
+      if(!/^[a-f0-9]{64}$/.test(nextToken || '') || !sessionMeta) return false;
+      sessionMeta.content=nextToken;
+      return true;
+    })().catch(()=>false).finally(()=>{sessionRenewal=null;});
+    return sessionRenewal;
+  }
   async function api(route,method='GET',input,timeout=30000,signal) {
-    let response;
-    try {response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:signal || AbortSignal.timeout(timeout)});}
-    // Sem resposta nenhuma (central fechada ou reiniciando), o navegador só diz "Failed to fetch": explica o que fazer.
-    catch(error) {if(error?.name==='TypeError') throw new Error('A central não está respondendo. Se ela foi fechada, abra "Iniciar WhatsApp Central" e recarregue a página.');throw error;}
-    const result=await response.json();if(!response.ok) throw new Error(result.error || 'Não foi possível completar a operação.');return result;
+    const requestSignal=signal || AbortSignal.timeout(timeout);
+    let response,result;
+    for(let attempt=0;attempt<2;attempt++) {
+      const token=sessionMeta?.content;
+      try {response=await fetch('/api'+route,{method,headers:{'X-WhatsApp-Token':token,...globalThis.WhatsAppAccounts?.headers?.(),...(input===undefined?{}:{'Content-Type':'application/json'})},...(input===undefined?{}:{body:JSON.stringify(input)}),signal:requestSignal});}
+      catch(error) {if(error?.name==='TypeError') throw new Error('A central não está respondendo. Se ela foi fechada, abra "Iniciar WhatsApp Central" e recarregue a página.');throw error;}
+      result=await response.json();
+      if(response.ok) return result;
+      // Este erro é devolvido antes de executar a rota, inclusive para envios.
+      if(attempt>0 || response.status!==403 || result.error!=='Sessão inválida. Recarregue a página.' || !await renewSession(token)) break;
+    }
+    throw new Error(result.error || 'Não foi possível completar a operação.');
   }
   function notice(message,success=false) {$('notice').textContent=message;$('notice').classList.toggle('success',success);$('notice').hidden=!message;}
   function showConnection(value) {
